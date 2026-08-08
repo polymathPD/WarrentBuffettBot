@@ -1,0 +1,10 @@
+.env
+.claude/
+data
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.DS_Store
+*.PNG
+*.png

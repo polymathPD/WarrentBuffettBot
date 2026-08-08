@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card stat-card">
+      <div class="stat-label">보유 종목</div>
+      <div class="stat-value">{{ positions | length }}종목</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card stat-card">
+      <div class="stat-label">총 평가손익</div>
+      <div class="stat-value {% if total_unrealized >= 0 %}text-profit{% else %}text-loss{% endif %}">
+        {% if total_unrealized >= 0 %}+{% endif %}{{ "{:,.0f}".format(total_unrealized) }}원
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card stat-card">
+      <div class="stat-label">오늘 거래</div>
+      <div class="stat-value">{{ today_trades | length }}건</div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-body p-0">
+    <div class="px-4 py-3 border-bottom" style="border-color:#2e3250!important">
+      <h6 class="mb-0">보유 포지션</h6>
+    </div>
+    {% if positions %}
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr>
+          <th>종목코드</th><th>종목명</th><th>진입가</th>
+          <th>현재가</th><th>수익률</th><th>평가손익</th>
+          <th>진입일</th><th>손절가</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in positions %}
+        <tr>
+          <td><code>{{ p.code }}</code></td>
+          <td>{{ p.name }}</td>
+          <td>{{ "{:,.0f}".format(p.entry_px) }}</td>
+          <td>{{ "{:,.0f}".format(p.current_px) if p.current_px else "-" }}</td>
+          <td class="{% if p.pct and p.pct >= 0 %}text-profit{% elif p.pct %}text-loss{% endif %}">
+            {% if p.pct %}{% if p.pct >= 0 %}+{% endif %}{{ p.pct }}%{% else %}-{% endif %}
+          </td>
+          <td class="{% if p.unrealized and p.unrealized >= 0 %}text-profit{% elif p.unrealized %}text-loss{% endif %}">
+            {% if p.unrealized %}{% if p.unrealized >= 0 %}+{% endif %}{{ "{:,.0f}".format(p.unrealized) }}{% else %}-{% endif %}
+          </td>
+          <td>{{ p.entry_date }}</td>
+          <td class="text-loss">{{ "{:,.0f}".format(p.stop_px) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="text-center py-5 text-secondary">보유 종목 없음</div>
+    {% endif %}
+  </div>
+</div>
+
+{% if today_trades %}
+<div class="card">
+  <div class="card-body p-0">
+    <div class="px-4 py-3 border-bottom" style="border-color:#2e3250!important">
+      <h6 class="mb-0">오늘의 거래</h6>
+    </div>
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr><th>구분</th><th>종목코드</th><th>종목명</th><th>체결가</th><th>수익률</th><th>청산사유</th><th>시각</th></tr>
+      </thead>
+      <tbody>
+        {% for t in today_trades %}
+        <tr>
+          <td><span class="badge {% if t.side == 'buy' %}badge-buy{% else %}badge-sell{% endif %}">{{ "매수" if t.side == "buy" else "매도" }}</span></td>
+          <td><code>{{ t.code }}</code></td>
+          <td>{{ t.name }}</td>
+          <td>{{ "{:,.0f}".format(t.price) }}</td>
+          <td class="{% if t.realized_pct and t.realized_pct >= 0 %}text-profit{% elif t.realized_pct %}text-loss{% endif %}">
+            {% if t.realized_pct %}{% if t.realized_pct >= 0 %}+{% endif %}{{ "%.2f"|format(t.realized_pct * 100) }}%{% else %}-{% endif %}
+          </td>
+          <td>{{ t.exit_reason or "-" }}</td>
+          <td><small class="text-secondary">{{ t.ts.strftime("%H:%M") if t.ts else "" }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

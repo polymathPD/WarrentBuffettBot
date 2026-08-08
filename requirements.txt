@@ -1,0 +1,12 @@
+pykrx>=1.2
+anthropic>=0.120
+apscheduler>=3.11
+python-dotenv>=1.0
+psycopg2-binary>=2.9
+numpy>=2.0
+requests
+finance-datareader
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart

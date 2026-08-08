@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Warren Buffett Bot</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { background: #0f1117; color: #e0e0e0; }
+    .navbar { background: #1a1d27 !important; border-bottom: 1px solid #2e3250; }
+    .card { background: #1a1d27; border: 1px solid #2e3250; }
+    .table { color: #e0e0e0; }
+    .table thead th { color: #8b92b3; border-color: #2e3250; font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; }
+    .table td { border-color: #2e3250; vertical-align: middle; }
+    .badge-buy { background: #1a4731; color: #4ade80; }
+    .badge-sell { background: #4a1a1a; color: #f87171; }
+    .text-profit { color: #4ade80; }
+    .text-loss { color: #f87171; }
+    .stat-card { padding: 1.2rem 1.5rem; }
+    .stat-label { font-size: .75rem; color: #8b92b3; text-transform: uppercase; letter-spacing: .05em; margin-bottom: .25rem; }
+    .stat-value { font-size: 1.6rem; font-weight: 700; }
+  </style>
+</head>
+<body>
+<nav class="navbar navbar-dark px-4 py-2">
+  <span class="navbar-brand fw-bold">📈 Warren Buffett Bot</span>
+  <div>
+    <a href="/" class="btn btn-sm btn-outline-secondary me-1">포지션</a>
+    <a href="/trades" class="btn btn-sm btn-outline-secondary me-1">거래내역</a>
+    <a href="/settings" class="btn btn-sm btn-outline-secondary">설정</a>
+  </div>
+</nav>
+<div class="container-fluid px-4 py-4">
+  {% block content %}{% endblock %}
+</div>
+</body>
+</html>
