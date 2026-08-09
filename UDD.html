@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UDD – WarrenBuffett Bot</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --yellow: #d29922;
+      --red: #f85149;
+      --text: #c9d1d9;
+      --muted: #8b949e;
+      --code-bg: #1f2428;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: -apple-system, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.7; }
+
+    /* Layout */
+    .layout { display: flex; min-height: 100vh; }
+    nav { width: 240px; min-width: 240px; background: var(--surface); border-right: 1px solid var(--border); padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    nav .logo { padding: 0 20px 20px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+    nav .logo h2 { font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: .5px; }
+    nav .logo p { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    nav a { display: block; padding: 6px 20px; font-size: 12.5px; color: var(--muted); text-decoration: none; border-left: 2px solid transparent; transition: all .15s; }
+    nav a:hover, nav a.active { color: var(--accent); border-left-color: var(--accent); background: rgba(88,166,255,.06); }
+    nav .section-label { padding: 14px 20px 4px; font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+    main { flex: 1; padding: 48px 56px; max-width: 960px; }
+
+    /* Typography */
+    h1 { font-size: 26px; font-weight: 700; margin-bottom: 6px; color: #e6edf3; }
+    h2 { font-size: 18px; font-weight: 600; margin: 48px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); color: #e6edf3; }
+    h3 { font-size: 14px; font-weight: 600; margin: 24px 0 10px; color: var(--accent); }
+    h4 { font-size: 13px; font-weight: 600; margin: 16px 0 8px; color: var(--text); }
+    p { margin-bottom: 12px; color: var(--text); }
+    .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+
+    /* Badges */
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+    .badge-green { background: rgba(63,185,80,.15); color: var(--green); border: 1px solid rgba(63,185,80,.3); }
+    .badge-yellow { background: rgba(210,153,34,.15); color: var(--yellow); border: 1px solid rgba(210,153,34,.3); }
+    .badge-red { background: rgba(248,81,73,.15); color: var(--red); border: 1px solid rgba(248,81,73,.3); }
+    .badge-blue { background: rgba(88,166,255,.15); color: var(--accent); border: 1px solid rgba(88,166,255,.3); }
+
+    /* Code */
+    code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; color: #f0883e; }
+    pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; overflow-x: auto; margin: 12px 0 20px; }
+    pre code { background: none; padding: 0; color: #e6edf3; font-size: 12.5px; line-height: 1.6; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; margin: 12px 0 24px; font-size: 13px; }
+    th { background: var(--surface); color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+    td { padding: 8px 12px; border-bottom: 1px solid rgba(48,54,61,.6); vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(88,166,255,.03); }
+
+    /* Cards & callouts */
+    .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; margin: 16px 0 28px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    .card h4 { margin: 0 0 6px; font-size: 12px; color: var(--muted); }
+    .card .value { font-size: 20px; font-weight: 700; color: var(--accent); }
+    .card .note { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+    .callout { border-left: 3px solid; border-radius: 0 6px 6px 0; padding: 12px 16px; margin: 16px 0; font-size: 13px; }
+    .callout-info { border-color: var(--accent); background: rgba(88,166,255,.07); }
+    .callout-warn { border-color: var(--yellow); background: rgba(210,153,34,.07); }
+    .callout-danger { border-color: var(--red); background: rgba(248,81,73,.07); }
+    .callout strong { display: block; margin-bottom: 4px; }
+
+    /* Flow diagram */
+    .flow { display: flex; flex-direction: column; gap: 6px; margin: 16px 0 24px; }
+    .flow-step { display: flex; align-items: flex-start; gap: 12px; }
+    .flow-step .num { background: var(--accent); color: var(--bg); min-width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; margin-top: 2px; }
+    .flow-step .body { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px 14px; flex: 1; font-size: 13px; }
+    .flow-step .body strong { color: var(--accent); }
+    .flow-connector { width: 22px; height: 14px; border-left: 2px dashed var(--border); margin-left: 10px; }
+
+    .divider { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+
+    /* Status chip */
+    .status-prod::before { content: "● "; color: var(--green); }
+    .status-stub::before { content: "● "; color: var(--yellow); }
+    .status-todo::before { content: "● "; color: var(--red); }
+  </style>
+</head>
+<body>
+<div class="layout">
+
+<!-- SIDEBAR -->
+<nav>
+  <div class="logo">
+    <h2>WarrenBuffett Bot</h2>
+    <p>Unit Design Document</p>
+  </div>
+  <div class="section-label">개요</div>
+  <a href="#overview">프로젝트 개요</a>
+  <a href="#structure">디렉터리 구조</a>
+  <a href="#flow">실행 흐름</a>
+  <div class="section-label">모듈</div>
+  <a href="#config">Config</a>
+  <a href="#db">DB</a>
+  <a href="#collector">Collector</a>
+  <a href="#processor">Processor</a>
+  <a href="#strategy">Strategy</a>
+  <a href="#agents">Agents</a>
+  <a href="#executor">Executor</a>
+  <a href="#recorder">Recorder</a>
+  <a href="#backtester">Backtester</a>
+  <a href="#dashboard">Dashboard</a>
+  <div class="section-label">설계</div>
+  <a href="#schema">DB 스키마</a>
+  <a href="#external">외부 API</a>
+  <a href="#business">비즈니스 로직</a>
+  <a href="#deploy">배포 & 운영</a>
+  <a href="#todo">TODO & 미완성</a>
+</nav>
+
+<!-- MAIN CONTENT -->
+<main>
+
+  <h1>Unit Design Document</h1>
+  <p class="subtitle">한국 주식 역발상 자동매매 시스템 &nbsp;·&nbsp; 작성일 2026-08-09</p>
+
+  <!-- ───── OVERVIEW ───── -->
+  <section id="overview">
+    <h2>1. 프로젝트 개요</h2>
+    <p>
+      <strong>WarrenBuffett Bot</strong>은 개인 투자자(개미) 과열 신호를 역이용하는 역발상(Contrarian) 자동매매 시스템입니다.
+      매일 16:10 KST에 pykrx로 당일 데이터를 수집하고, Claude API 기반 4개 에이전트 합의 게이트를 통과한 종목만 매수합니다.
+      Railway PostgreSQL에 모든 상태를 저장하며 FastAPI 웹 대시보드로 포지션·거래내역을 관리합니다.
+    </p>
+
+    <div class="card-grid">
+      <div class="card">
+        <h4>최대 포지션 수</h4>
+        <div class="value">12</div>
+        <div class="note">SLOTS — DB 설정으로 런타임 변경 가능</div>
+      </div>
+      <div class="card">
+        <h4>진입 Heat 임계값</h4>
+        <div class="value">&lt; 7.0</div>
+        <div class="note">HEAT_AVOID — 낮을수록 보수적 진입</div>
+      </div>
+      <div class="card">
+        <h4>청산 Heat 임계값</h4>
+        <div class="value">≥ 8.5</div>
+        <div class="note">HEAT_SELL — 과열 구간 도달 시 청산</div>
+      </div>
+      <div class="card">
+        <h4>최대 보유 기간</h4>
+        <div class="value">20일</div>
+        <div class="note">MAX_HOLD_DAYS</div>
+      </div>
+      <div class="card">
+        <h4>손절 기준</h4>
+        <div class="value">-7%</div>
+        <div class="note">STOP_PCT</div>
+      </div>
+      <div class="card">
+        <h4>AI 모델</h4>
+        <div class="value" style="font-size:14px">Sonnet 4.6</div>
+        <div class="note">에이전트당 최대 256 토큰 응답</div>
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <strong>핵심 혁신</strong>
+      4개 에이전트 합의 게이트: <code>market_state</code>·<code>risk</code>는 거부권(veto)을 보유하고, <code>retail_flow</code>·<code>credit_heat</code>는 2/2 합의 투표를 담당합니다. 어느 한 veto 에이전트가 "관망" 또는 "청산"을 리턴하면 즉시 매수 거부됩니다.
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── STRUCTURE ───── -->
+  <section id="structure">
+    <h2>2. 디렉터리 구조</h2>
+    <pre><code>WarrenBuffett/
+├── config.py               # 전역 설정, DB 기반 런타임 파라미터
+├── scheduler.py            # APScheduler 메인 엔트리 (평일 16:10)
+├── setup_db.py             # DB 초기화 스크립트
+├── requirements.txt
+├── runtime.txt             # Python 3.11
+├── Procfile                # Railway web + worker 선언
+│
+├── db/
+│   ├── connection.py       # PostgreSQL 커넥션 풀 & CRUD
+│   └── schema.sql          # 9개 테이블 DDL
+│
+├── collector/
+│   ├── stock_daily.py      # pykrx OHLCV 수집 (증분)
+│   ├── investor_flow.py    # pykrx 투자자별 순매수
+│   └── credit_balance.py   # 신용잔고 stub (KIS API 미연동)
+│
+├── processor/
+│   ├── signals.py          # heat_score 계산 (0~10)
+│   └── indicators.py       # SMA, 변동성, 52주 위치 등
+│
+├── strategy/
+│   └── contrarian.py       # 진입·청산 후보 필터
+│
+├── agents/
+│   ├── base.py             # Claude API 래퍼 + DB 캐시
+│   ├── gate.py             # 합의 게이트 (veto + vote)
+│   ├── market_state.py     # 시장 전반 상태 분석 (veto)
+│   ├── risk.py             # 포트폴리오 리스크 (veto)
+│   ├── retail_flow.py      # 개인 자금 흐름 분석 (vote)
+│   └── credit_heat.py      # 신용·거래량 과열 (vote)
+│
+├── executor/
+│   ├── paper.py            # 모의 매매 실행
+│   └── live.py             # KIS OpenAPI 실전 매매 (stub)
+│
+├── recorder/
+│   ├── trade_log.py        # 기본 성과 요약
+│   └── evaluator.py        # MDD, 부트스트랩, t-test
+│
+├── backtester/
+│   ├── engine.py           # 이벤트 기반 백테스트
+│   ├── cost_model.py       # 슬리피지·수수료·세금 모델
+│   └── validator.py        # 아웃오브샘플 검증
+│
+└── dashboard/
+    ├── app.py              # FastAPI 앱
+    └── templates/          # Bootstrap 5 Jinja2 템플릿
+        ├── base.html
+        ├── index.html      # 포지션 + 오늘의 거래
+        ├── trades.html     # 거래 내역 50건
+        └── settings.html   # 파라미터 설정 폼</code></pre>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── FLOW ───── -->
+  <section id="flow">
+    <h2>3. 일일 실행 흐름</h2>
+    <p>APScheduler가 평일 16:10 KST에 <code>daily_job()</code>을 트리거합니다.</p>
+
+    <div class="flow">
+      <div class="flow-step">
+        <div class="num">1</div>
+        <div class="body"><strong>collect_daily()</strong> — pykrx → <code>stock_daily</code> 테이블 증분 upsert</div>
+      </div>
+      <div class="flow-connector"></div>
+      <div class="flow-step">
+        <div class="num">2</div>
+        <div class="body"><strong>collect_flow()</strong> — pykrx 투자자별 순매수 → <code>investor_flow</code></div>
+      </div>
+      <div class="flow-connector"></div>
+      <div class="flow-step">
+        <div class="num">3</div>
+        <div class="body"><strong>collect_stub()</strong> — 신용잔고 0 채움 → <code>credit_balance</code> (KIS API 연동 전 임시)</div>
+      </div>
+      <div class="flow-connector"></div>
+      <div class="flow-step">
+        <div class="num">4</div>
+        <div class="body"><strong>compute_for_date()</strong> — 전 종목 heat_score 계산 → <code>contrarian_signals</code></div>
+      </div>
+      <div class="flow-connector"></div>
+      <div class="flow-step">
+        <div class="num">5</div>
+        <div class="body"><strong>get_exit_candidates() → sell()</strong> — stop / expiry / heat_signal 해당 포지션 청산</div>
+      </div>
+      <div class="flow-connector"></div>
+      <div class="flow-step">
+        <div class="num">6</div>
+        <div class="body">
+          <strong>get_entry_candidates() → gate.decide() → buy()</strong><br/>
+          heat &lt; 7.0 &amp; 52주 하위 30% 종목 필터 → 4에이전트 합의 통과 시 모의 매수
+        </div>
+      </div>
+      <div class="flow-connector"></div>
+      <div class="flow-step">
+        <div class="num">7</div>
+        <div class="body"><strong>summary()</strong> — 거래 통계 로그 출력</div>
+      </div>
+    </div>
+
+    <h3>에이전트 게이트 내부 흐름</h3>
+    <pre><code>gate.decide(code, date)
+  │
+  ├─ market_state.analyze()  → decision: 매수 | 관망 | 청산
+  │     ↳ fall_pct ≥ 70% 이면 하드코딩 "청산" (VETO)
+  │
+  ├─ risk.analyze()          → decision: 매수 | 관망
+  │     ↳ free_slots = 0    → 하드코딩 "관망" (VETO)
+  │     ↳ same_sector ≥ 3  → 하드코딩 "관망" (VETO)
+  │
+  ├─ retail_flow.analyze()   → decision: 매수 | 관망  (vote)
+  │
+  └─ credit_heat.analyze()   → decision: 매수 | 관망  (vote)
+
+결과:
+  veto 에이전트 중 하나라도 관망/청산 → approved = False
+  retail_flow + credit_heat 중 "매수" &lt; 2 → approved = False
+  모두 통과 → approved = True → paper.buy() 호출</code></pre>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── CONFIG ───── -->
+  <section id="config">
+    <h2>4. Config 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">config.py</small></h2>
+
+    <h3>하드코딩 상수</h3>
+    <table>
+      <tr><th>상수</th><th>값</th><th>설명</th></tr>
+      <tr><td><code>SLIP_BPS</code></td><td>20</td><td>슬리피지 0.20% (편도)</td></tr>
+      <tr><td><code>FEE_BPS</code></td><td>1.5</td><td>수수료 0.015%</td></tr>
+      <tr><td><code>TAX_BPS</code></td><td>20</td><td>증권거래세 0.20% (매도 시)</td></tr>
+      <tr><td><code>SLOTS</code></td><td>12</td><td>최대 동시 보유 종목 수</td></tr>
+      <tr><td><code>HEAT_AVOID</code></td><td>7.0</td><td>진입 불가 임계값</td></tr>
+      <tr><td><code>HEAT_SELL</code></td><td>8.5</td><td>청산 신호 임계값</td></tr>
+      <tr><td><code>MAX_HOLD_DAYS</code></td><td>20</td><td>최대 보유 기간(일)</td></tr>
+      <tr><td><code>STOP_PCT</code></td><td>0.07</td><td>손절 비율 7%</td></tr>
+    </table>
+
+    <h3>DB 기반 런타임 설정</h3>
+    <p><code>get_setting(key)</code>는 <code>settings</code> 테이블을 조회하고 (60초 캐시), 없으면 위 하드코딩 상수를 폴백으로 사용합니다. 웹 대시보드에서 값 변경 시 <code>invalidate_settings_cache()</code>로 즉시 반영됩니다.</p>
+
+    <h3>환경변수 (.env)</h3>
+    <table>
+      <tr><th>키</th><th>용도</th></tr>
+      <tr><td><code>DB_URL</code></td><td>Railway PostgreSQL 연결 문자열</td></tr>
+      <tr><td><code>CLAUDE_API_KEY</code></td><td>Anthropic API 인증</td></tr>
+      <tr><td><code>KIS_APP_KEY / SECRET</code></td><td>KIS OpenAPI 앱 인증</td></tr>
+      <tr><td><code>KIS_ACCOUNT</code></td><td>매매 계좌번호</td></tr>
+      <tr><td><code>KIS_MODE</code></td><td><code>paper</code> 또는 <code>live</code></td></tr>
+      <tr><td><code>DART_API_KEY</code></td><td>미사용 (예약)</td></tr>
+    </table>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── DB ───── -->
+  <section id="db">
+    <h2>5. DB 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">db/</small></h2>
+
+    <h3>connection.py — 연결 관리</h3>
+    <p>스레드-로컬 psycopg2 커넥션 풀. ORM 없이 Raw SQL로 성능과 제어권을 확보합니다.</p>
+    <table>
+      <tr><th>함수</th><th>반환</th><th>설명</th></tr>
+      <tr><td><code>get_conn()</code></td><td>connection</td><td>스레드당 커넥션 재사용 또는 신규 생성</td></tr>
+      <tr><td><code>execute(sql, params)</code></td><td>None</td><td>실행 후 commit</td></tr>
+      <tr><td><code>executemany(sql, rows)</code></td><td>None</td><td>execute_values 배치 삽입</td></tr>
+      <tr><td><code>fetchall(sql, params)</code></td><td>list[dict]</td><td>RealDictCursor 전체 조회</td></tr>
+      <tr><td><code>fetchone(sql, params)</code></td><td>dict | None</td><td>단건 조회</td></tr>
+      <tr><td><code>init_schema()</code></td><td>None</td><td>schema.sql 실행 (최초 1회)</td></tr>
+    </table>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── SCHEMA ───── -->
+  <section id="schema">
+    <h2>6. DB 스키마 (9개 테이블)</h2>
+    <table>
+      <tr><th>테이블</th><th>PK</th><th>주요 컬럼</th><th>용도</th></tr>
+      <tr><td><code>stock_daily</code></td><td>(code, d)</td><td>o, h, l, c, v</td><td>OHLCV 캔들스틱</td></tr>
+      <tr><td><code>investor_flow</code></td><td>(code, d)</td><td>individual_net, foreign_net, institution_net</td><td>투자자별 순매수</td></tr>
+      <tr><td><code>credit_balance</code></td><td>(code, d)</td><td>credit_amt, credit_ratio</td><td>신용잔고 (현재 stub)</td></tr>
+      <tr><td><code>contrarian_signals</code></td><td>(code, d)</td><td>individual_flow_ratio, credit_surge_ratio, volume_ratio, heat_score, signal</td><td>전처리된 시그널</td></tr>
+      <tr><td><code>agent_decisions</code></td><td>id (auto)</td><td>agent, code, decision, score, rationale, input_hash</td><td>Claude API 캐시</td></tr>
+      <tr><td><code>trades</code></td><td>id (auto)</td><td>mode, side, code, qty, price, amount, exit_reason, realized_pct, agents JSONB</td><td>주문 로그</td></tr>
+      <tr><td><code>positions</code></td><td>code</td><td>entry_date, entry_px, qty, stop_px, max_hold_days, mode</td><td>현재 보유 포지션</td></tr>
+      <tr><td><code>collect_cursor</code></td><td>(source, code)</td><td>last_seen</td><td>증분 수집 체크포인트</td></tr>
+      <tr><td><code>settings</code></td><td>key</td><td>value, updated_at</td><td>런타임 파라미터 저장</td></tr>
+    </table>
+    <div class="callout callout-info">
+      <strong>멱등성(Idempotency)</strong>
+      모든 삽입 쿼리는 <code>ON CONFLICT DO NOTHING</code>을 사용하므로 중복 실행에 안전합니다.
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── COLLECTOR ───── -->
+  <section id="collector">
+    <h2>7. Collector 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">collector/</small></h2>
+
+    <h3>stock_daily.py</h3>
+    <p>FinanceDataReader로 KRX 전 종목 코드를 가져온 뒤, <code>collect_cursor</code>를 기준으로 마지막 수집일 이후 데이터만 pykrx에서 증분 수집합니다. 요청 간 0.35초 딜레이(KRX 쓰로틀링 방지).</p>
+
+    <h3>investor_flow.py</h3>
+    <p><code>stock_daily</code>의 종목 목록을 기준으로 <code>pykrx.get_market_net_purchases_of_equities_by_date()</code>를 호출합니다. 개인/외국인/기관합계 순매수를 파싱하여 <code>investor_flow</code>에 저장. 요청 간 0.4초 딜레이.</p>
+
+    <h3>credit_balance.py <span class="badge badge-yellow">Stub</span></h3>
+    <p><code>collect_stub()</code>는 schema 유지를 위해 0 값만 채워 넣습니다. <code>collect_kis()</code>는 KIS OpenAPI <code>/uapi/domestic-stock/v1/quotations/credit-by-date</code> 연동 예정이나 현재 미구현입니다.</p>
+
+    <div class="callout callout-warn">
+      <strong>신용잔고 미연동 영향</strong>
+      현재 <code>credit_surge_ratio</code>가 항상 0이므로 heat_score에서 신용잔고 기여분(최대 3점)이 반영되지 않습니다.
+      credit_heat 에이전트도 실질적으로 volume_ratio만 보는 상태입니다.
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── PROCESSOR ───── -->
+  <section id="processor">
+    <h2>8. Processor 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">processor/</small></h2>
+
+    <h3>signals.py — Heat Score 계산</h3>
+    <p>대상 날짜의 전 종목에 대해 30일 이동 기준(window) 대비 오늘 값의 비율을 계산하고, 3가지 요소를 결합하여 0~10 스케일의 <code>heat_score</code>를 산출합니다.</p>
+
+    <h4>구성 요소 및 가중치</h4>
+    <table>
+      <tr><th>요소</th><th>계산식</th><th>최대 기여</th></tr>
+      <tr><td>개인 순매수 비율</td><td><code>(individual_flow_ratio - 1.0) × 3.0</code></td><td>4.0점</td></tr>
+      <tr><td>신용 급등 비율</td><td><code>(credit_surge_ratio - 1.0) × 3.0</code></td><td>3.0점</td></tr>
+      <tr><td>거래량 급등 비율</td><td><code>(volume_ratio - 1.5) × 2.0</code></td><td>3.0점</td></tr>
+    </table>
+
+    <h4>Signal 분류</h4>
+    <pre><code>heat_score &lt; 7.0   → "neutral"  (진입 가능)
+7.0 ≤ score &lt; 8.5  → "avoid"   (진입 불가)
+score ≥ 8.5        → "sell"    (청산 신호)</code></pre>
+
+    <h3>indicators.py — 기술적 지표</h3>
+    <p>SMA, rolling_std, volume_ratio, 52주 위치(pos_52w), 일간 로그 수익률 등을 numpy 배열로 계산합니다. 현재 메인 파이프라인에서 직접 호출되지는 않고 전략 분석용으로 준비되어 있습니다. 모든 지표는 <strong>t-1 데이터만 참조</strong>하여 look-ahead bias를 방지합니다.</p>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── STRATEGY ───── -->
+  <section id="strategy">
+    <h2>9. Strategy 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">strategy/contrarian.py</small></h2>
+
+    <h3>진입 후보 (get_entry_candidates)</h3>
+    <p>다음 조건을 모두 충족하는 종목만 반환합니다:</p>
+    <ul style="margin: 8px 0 16px 20px; line-height: 2;">
+      <li><code>heat_score &lt; HEAT_AVOID</code> (기본 7.0)</li>
+      <li><code>signal = 'neutral'</code></li>
+      <li><code>positions</code> 테이블에 없는 종목 (미보유)</li>
+      <li>52주 위치 ≤ 30% (52주 저점 근처)</li>
+    </ul>
+    <p>출력: <code>[{code, close, heat_score, pos52w}, ...]</code> — heat_score 오름차순 정렬</p>
+
+    <h3>청산 후보 (get_exit_candidates)</h3>
+    <p>보유 포지션 중 아래 조건을 검사합니다 (우선순위 순):</p>
+    <table>
+      <tr><th>우선순위</th><th>조건</th><th>청산 사유</th></tr>
+      <tr><td>1</td><td><code>close_price ≤ stop_px</code></td><td><code>"stop"</code></td></tr>
+      <tr><td>2</td><td><code>held_days ≥ max_hold_days</code></td><td><code>"expiry"</code></td></tr>
+      <tr><td>3</td><td><code>heat_score ≥ HEAT_SELL</code></td><td><code>"heat_signal"</code></td></tr>
+    </table>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── AGENTS ───── -->
+  <section id="agents">
+    <h2>10. Agents 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">agents/</small></h2>
+
+    <h3>base.py — Claude API 래퍼</h3>
+    <p><code>call(agent_name, code, prompt)</code>는 MD5(<code>agent + code + prompt</code>)로 <code>agent_decisions</code> 테이블을 먼저 조회합니다. 캐시 히트 시 API 호출 없이 재사용, 미스 시 Claude API 호출 후 결과를 저장합니다.</p>
+
+    <h4>Claude 응답 포맷 (파싱 대상)</h4>
+    <pre><code>결정: 매수 | 관망 | 청산
+확신: 0~10
+이유: 한 문장 근거</code></pre>
+
+    <h4>오류 처리</h4>
+    <p>API 키 미설정 또는 호출 실패 시 기본값 <code>"관망"</code>을 반환합니다.</p>
+
+    <h3>gate.py — 합의 게이트</h3>
+    <table>
+      <tr><th>에이전트</th><th>역할</th><th>veto</th><th>하드코딩 규칙</th></tr>
+      <tr><td><code>market_state</code></td><td>시장 전반 상태</td><td><span class="badge badge-red">Yes</span></td><td>fall_pct ≥ 70% → 강제 "청산"</td></tr>
+      <tr><td><code>risk</code></td><td>포트폴리오 리스크</td><td><span class="badge badge-red">Yes</span></td><td>free_slots = 0 또는 same_sector ≥ 3 → 강제 "관망"</td></tr>
+      <tr><td><code>retail_flow</code></td><td>개인 자금 흐름</td><td><span class="badge badge-green">No</span></td><td>없음 (Claude 판단만)</td></tr>
+      <tr><td><code>credit_heat</code></td><td>신용·거래량 과열</td><td><span class="badge badge-green">No</span></td><td>없음 (Claude 판단만)</td></tr>
+    </table>
+
+    <h3>에이전트별 입력 데이터</h3>
+
+    <h4>market_state</h4>
+    <p>전체 종목 중 하락 비율(<code>fall_pct</code>), KODEX 200 20일 수익률(<code>trend_pct</code>). Claude에게 약세장·심리·트렌드 기반 매수/관망/청산 판단을 요청합니다.</p>
+
+    <h4>risk</h4>
+    <p>남은 슬롯 수(<code>free_slots</code>), 동일 섹터(코드 앞 3자리) 보유 수(<code>same_sector</code>). 슬롯·섹터 집중 리스크 기반 매수/관망 판단.</p>
+
+    <h4>retail_flow</h4>
+    <p><code>individual_flow_ratio</code>, <code>heat_score</code>, 최근 5일 개인 순매수 추세. 프롬프트에 역사적 맥락("개인 순매수 비율 ≥ 2.0이면 20일 후 평균 -1.2% 수익률") 포함.</p>
+
+    <h4>credit_heat</h4>
+    <p><code>credit_surge_ratio</code>, <code>volume_ratio</code>, <code>heat_score</code>. 프롬프트에 역사적 맥락("신용 비율 ≥ 1.5 → 10일 평균 -0.8%, 거래량 비율 3.0+ → 65% 확률로 급락") 포함.</p>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── EXECUTOR ───── -->
+  <section id="executor">
+    <h2>11. Executor 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">executor/</small></h2>
+
+    <h3>paper.py — 모의 매매 <span class="badge badge-green">운영 중</span></h3>
+    <h4>buy(code, name, signal_date, close_px, heat_score, agents_summary)</h4>
+    <ol style="margin: 8px 0 12px 20px; line-height: 2;">
+      <li><code>positions</code> 수 ≤ SLOTS 확인</li>
+      <li><code>stock_daily</code>에서 다음 거래일 시가 조회</li>
+      <li>매수 비용 모델 적용: <code>entry_px = next_open × (1 + SLIP) × (1 + FEE)</code></li>
+      <li>손절가 계산: <code>stop_px = entry_px × (1 - STOP_PCT)</code></li>
+      <li><code>positions</code> 삽입, <code>trades</code> 삽입 (side='buy')</li>
+    </ol>
+
+    <h4>sell(code, name, qty, entry_px, close_px, reason)</h4>
+    <ol style="margin: 8px 0 16px 20px; line-height: 2;">
+      <li>매도 비용 모델 적용: <code>fill_px = close_px × (1 - SLIP) × (1 - FEE - TAX)</code></li>
+      <li>수익률 계산: <code>realized_pct = fill_px / entry_px - 1</code></li>
+      <li>원 매수 trade에 exit_reason, realized_pct 업데이트</li>
+      <li>매도 trade 삽입, <code>positions</code>에서 삭제</li>
+    </ol>
+
+    <h3>live.py — KIS OpenAPI 실전 매매 <span class="badge badge-yellow">Stub</span></h3>
+    <p>토큰 캐시(60초 안전 마진), mock/live URL 전환, buy/sell/get_balance 함수가 구현되어 있으나 <strong>메인 파이프라인에 연결되지 않은 상태</strong>입니다.</p>
+    <table>
+      <tr><th>구분</th><th>Base URL</th><th>Buy TR-ID</th><th>Sell TR-ID</th></tr>
+      <tr><td>Mock</td><td>openapivts.koreainvestment.com:29443</td><td>VTTC0802U</td><td>VTTC0801U</td></tr>
+      <tr><td>Live</td><td>openapi.koreainvestment.com:9443</td><td>TTTC0802U</td><td>TTTC0801U</td></tr>
+    </table>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── RECORDER ───── -->
+  <section id="recorder">
+    <h2>12. Recorder 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">recorder/</small></h2>
+
+    <h3>trade_log.py — 기본 성과 요약</h3>
+    <p><code>summary()</code>: trades 테이블 (side='sell') 기준으로 총 거래 수, 승률, 평균 수익률, 표준편차, t-value, min/max 수익률 출력. 현재 보유 포지션도 함께 출력.</p>
+
+    <h3>evaluator.py — 고급 지표</h3>
+    <p><code>full_report()</code> (최소 5건 이상 필요):</p>
+    <ul style="margin: 8px 0 16px 20px; line-height: 2;">
+      <li><strong>MDD</strong>: <code>min(equity_curve / peak) - 1</code> (numpy accumulate 기반)</li>
+      <li><strong>t-value</strong>: <code>mean / (std / √n)</code></li>
+      <li><strong>전반/후반 비교</strong>: 수익률 트렌드 일관성 확인</li>
+      <li><strong>부트스트랩</strong> (1000회): 재샘플링 후 양의 평균 비율 (≥80% → 전략 엣지 보유)</li>
+    </ul>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── BACKTESTER ───── -->
+  <section id="backtester">
+    <h2>13. Backtester 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">backtester/</small></h2>
+
+    <h3>engine.py — 이벤트 기반 백테스트</h3>
+    <p><code>run(start, end, ...)</code>는 <code>contrarian_signals</code>를 직접 조회하여 진입→청산 시뮬레이션을 수행합니다.</p>
+    <pre><code>시뮬레이션 로직:
+1. heat &lt; heat_avoid &amp; signal='neutral' 종목 → 다음 거래일 시가로 진입
+2. 이후 20일간 매일 확인:
+   a. low ≤ stop_px   → 손절 (비관적 fill: stop_px 사용)
+   b. heat ≥ heat_sell → 과열 청산 (당일 종가)
+   c. days_held ≥ max_hold → 만기 청산 (당일 종가)
+3. 비용 모델(cost_model.py) 적용하여 순수익률 계산</code></pre>
+
+    <h3>cost_model.py</h3>
+    <pre><code>buy_price(px)  = px × (1 + SLIP) × (1 + FEE)
+sell_price(px) = px × (1 - SLIP) × (1 - FEE - TAX)
+net_return     = sell_price(exit) / buy_price(entry) - 1</code></pre>
+
+    <h3>validator.py — 아웃오브샘플 검증</h3>
+    <table>
+      <tr><th>검증 방법</th><th>성공 기준</th></tr>
+      <tr><td>전체 기간 백테스트</td><td>t-value ≥ 2.0</td></tr>
+      <tr><td>전반/후반 분할</td><td>양 기간 모두 양의 평균 수익률</td></tr>
+      <tr><td>부트스트랩 (1000회)</td><td>양의 평균 비율 ≥ 80%</td></tr>
+      <tr><td>무작위 대조군 (200회)</td><td>전략 수익률이 상위 20% 이내</td></tr>
+    </table>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── DASHBOARD ───── -->
+  <section id="dashboard">
+    <h2>14. Dashboard 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">dashboard/</small></h2>
+
+    <h3>FastAPI 라우트</h3>
+    <table>
+      <tr><th>메서드</th><th>경로</th><th>설명</th></tr>
+      <tr><td>GET</td><td><code>/</code></td><td>현재 포지션 P&L + 오늘의 거래</td></tr>
+      <tr><td>GET</td><td><code>/trades</code></td><td>최근 50건 거래 내역</td></tr>
+      <tr><td>GET</td><td><code>/settings</code></td><td>파라미터 설정 폼</td></tr>
+      <tr><td>POST</td><td><code>/settings</code></td><td>파라미터 업데이트 → 캐시 초기화 → redirect</td></tr>
+    </table>
+
+    <h3>템플릿 구조</h3>
+    <p>Bootstrap 5 다크 테마 기반. <code>base.html</code>에 공통 레이아웃(네비게이션: 포지션 | 거래내역 | 설정)을 두고, 나머지 페이지가 상속합니다.</p>
+
+    <h4>index.html (포지션 뷰)</h4>
+    <ul style="margin: 6px 0 12px 20px; line-height: 2;">
+      <li>통계 카드: 보유 종목 수, 전체 P&L, 오늘 거래 수</li>
+      <li>포지션 테이블: 종목코드, 종목명, 진입가, 현재가, 수익률%, P&L, 진입일, 손절가</li>
+      <li>오늘의 거래 테이블 (매수/매도 뱃지 포함)</li>
+    </ul>
+
+    <h4>trades.html</h4>
+    <p>최근 50건 trades 테이블 출력 (정렬: ts DESC)</p>
+
+    <h4>settings.html</h4>
+    <p>HEAT_AVOID, HEAT_SELL, STOP_PCT, MAX_HOLD_DAYS, SLOTS 입력 폼. 저장 후 성공 메시지 표시.</p>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── EXTERNAL APIS ───── -->
+  <section id="external">
+    <h2>15. 외부 API & 서비스</h2>
+    <table>
+      <tr><th>서비스</th><th>용도</th><th>라이브러리/방식</th><th>상태</th></tr>
+      <tr><td>pykrx</td><td>OHLCV + 투자자별 순매수</td><td>pykrx (KRX 무료 데이터)</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>FinanceDataReader</td><td>KRX 전 종목 코드 목록</td><td>StockListing('KRX')</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>Anthropic Claude API</td><td>에이전트 의사결정</td><td>anthropic SDK, claude-sonnet-4-6</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>KIS OpenAPI</td><td>실전/모의 주문 실행</td><td>requests (자체 구현)</td><td><span class="status-stub">Stub (미연동)</span></td></tr>
+      <tr><td>Railway PostgreSQL</td><td>모든 데이터 영속</td><td>psycopg2</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>DART API</td><td>공시 데이터</td><td>미구현 (env 예약)</td><td><span class="status-todo">미구현</span></td></tr>
+    </table>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── BUSINESS LOGIC ───── -->
+  <section id="business">
+    <h2>16. 핵심 비즈니스 로직</h2>
+
+    <h3>Heat Score 공식</h3>
+    <pre><code>heat_score = clamp(
+    (flow_ratio - 1.0) * 3.0      # 개인 과열 기여 [0, 4]
+  + (credit_ratio - 1.0) * 3.0    # 신용 과열 기여 [0, 3]
+  + (vol_ratio - 1.5) * 2.0,      # 거래량 급등 기여 [0, 3]
+  0, 10
+)</code></pre>
+
+    <h3>진입 조건 체크리스트</h3>
+    <ol style="margin: 8px 0 16px 20px; line-height: 2.2;">
+      <li><code>heat_score &lt; 7.0</code></li>
+      <li><code>signal = 'neutral'</code></li>
+      <li>미보유 종목</li>
+      <li>52주 위치 ≤ 30%</li>
+      <li>market_state 에이전트 → 매수 승인</li>
+      <li>risk 에이전트 → 매수 승인</li>
+      <li>retail_flow + credit_heat 모두 "매수" 투표</li>
+    </ol>
+
+    <h3>청산 조건 (우선순위)</h3>
+    <ol style="margin: 8px 0 16px 20px; line-height: 2.2;">
+      <li>손절: <code>close ≤ entry × (1 - 0.07)</code></li>
+      <li>만기: <code>held_days ≥ 20</code></li>
+      <li>과열 청산: <code>heat_score ≥ 8.5</code></li>
+    </ol>
+
+    <h3>비용 모델</h3>
+    <pre><code># 매수 실효가
+entry_px = market_px × 1.0020 × 1.000150   # +0.215%
+
+# 매도 실효가
+exit_px  = market_px × 0.9980 × 0.999650   # -0.235%  (수수료 0.015% + 세금 0.20%)
+
+# 순수익률
+net_return = exit_px / entry_px - 1</code></pre>
+
+    <div class="callout callout-info">
+      <strong>Look-Ahead Bias 방지</strong>
+      모든 지표는 t-1 데이터 기준으로 계산됩니다. 진입은 신호 발생 다음 거래일 시가 기준으로 실행됩니다.
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── DEPLOY ───── -->
+  <section id="deploy">
+    <h2>17. 배포 & 운영</h2>
+
+    <h3>Railway 배포 구성</h3>
+    <pre><code># Procfile
+web:    uvicorn dashboard.app:app --host 0.0.0.0 --port $PORT
+worker: python scheduler.py</code></pre>
+    <p><code>web</code> 프로세스(FastAPI)와 <code>worker</code> 프로세스(APScheduler)가 분리된 dyno에서 독립 실행됩니다.</p>
+
+    <h3>로컬 개발</h3>
+    <pre><code>pip install -r requirements.txt
+python setup_db.py                        # DB 초기화 (최초 1회)
+python scheduler.py --now                 # 즉시 실행 테스트
+uvicorn dashboard.app:app --reload        # 대시보드 개발 서버</code></pre>
+
+    <h3>실전 전환 기준 (README 기준)</h3>
+    <ul style="margin: 8px 0 16px 20px; line-height: 2;">
+      <li>모의 거래 청산 30건 이상</li>
+      <li>실현된 슬리피지 ≤ 0.20%</li>
+      <li>MDD ≤ 백테스트 MDD × 150%</li>
+    </ul>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── TODO ───── -->
+  <section id="todo">
+    <h2>18. 미완성 항목 & 향후 개선</h2>
+
+    <div class="callout callout-warn">
+      <strong>1. 신용잔고 KIS API 연동 <span class="badge badge-yellow">High Priority</span></strong>
+      <code>collector/credit_balance.py</code>의 <code>collect_kis()</code>를 구현하면 heat_score 정확도가 크게 향상됩니다.
+      현재 신용 기여분(최대 3점)이 모두 0으로 반영되는 중입니다.
+    </div>
+
+    <div class="callout callout-warn">
+      <strong>2. 실전 주문 실행 연동 <span class="badge badge-yellow">High Priority</span></strong>
+      <code>executor/live.py</code>의 buy/sell을 scheduler 파이프라인에 연결해야 합니다.
+      주문 확인 및 부분 체결 처리 로직도 필요합니다.
+    </div>
+
+    <div class="callout callout-info">
+      <strong>3. DART 공시 데이터 필터링</strong>
+      주요 공시일 전후 종목을 진입 후보에서 제외하면 돌발 리스크를 줄일 수 있습니다.
+    </div>
+
+    <div class="callout callout-info">
+      <strong>4. 에이전트 고도화</strong>
+      Anthropic prompt caching 활용으로 반복 분석 비용 절감 가능.
+      도구 사용(tool use)으로 에이전트가 DB를 직접 조회하는 방식도 검토할 수 있습니다.
+    </div>
+
+    <div class="callout callout-info">
+      <strong>5. 대시보드 고도화</strong>
+      WebSocket 기반 실시간 P&L 스트리밍, 백테스트 결과 뷰어, 에이전트 의사결정 이유 표시.
+    </div>
+
+    <h3>모듈별 현황 요약</h3>
+    <table>
+      <tr><th>컴포넌트</th><th>파일</th><th>상태</th></tr>
+      <tr><td>데이터 수집</td><td>collector/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>신호 계산</td><td>processor/signals.py</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>AI 게이트</td><td>agents/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>모의 실행</td><td>executor/paper.py</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>실전 실행</td><td>executor/live.py</td><td><span class="status-stub">Stub — 미연동</span></td></tr>
+      <tr><td>신용잔고 수집</td><td>collector/credit_balance.py</td><td><span class="status-stub">Stub — 0 채움</span></td></tr>
+      <tr><td>웹 대시보드</td><td>dashboard/app.py</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>백테스터</td><td>backtester/engine.py</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>검증기</td><td>backtester/validator.py</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>DART API</td><td>미구현</td><td><span class="status-todo">미구현</span></td></tr>
+    </table>
+  </section>
+
+  <hr class="divider" />
+  <p style="color:var(--muted); font-size: 12px; margin-top: 32px; padding-bottom: 64px;">
+    Generated 2026-08-09 &nbsp;·&nbsp; WarrenBuffett Bot UDD v1.0 &nbsp;·&nbsp; github.com/LJY-HY/WarrenBuffett
+  </p>
+
+</main>
+</div>
+</body>
+</html>
