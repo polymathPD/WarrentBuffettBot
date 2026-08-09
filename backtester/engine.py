@@ -44,7 +44,7 @@ def run(start_date: str, end_date: str, max_hold: int = None,
     )
 
     trades = []
-    active: dict[str, dict] = {}  # code → position
+    active: dict[str, object] = {}  # code → 보유 중 포지션의 청산일
 
     for sig in signals:
         code = sig["code"]
@@ -53,7 +53,7 @@ def run(start_date: str, end_date: str, max_hold: int = None,
         entry_px = buy_price(entry_open)
         stop_px = entry_px * (1 - sp)
 
-        if code in active:
+        if code in active and sig["signal_date"] <= active[code]:
             continue  # 이미 보유 중
 
         # 진입 이후 봉을 순서대로 확인
@@ -101,6 +101,7 @@ def run(start_date: str, end_date: str, max_hold: int = None,
                 break
 
         if exit_date and exit_px:
+            active[code] = exit_date
             trades.append({
                 "code": code,
                 "entry_date": str(future[0]["d"]),

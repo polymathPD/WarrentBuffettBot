@@ -1,3 +1,9 @@
+-- 종목 메타 (코드, 종목명)
+CREATE TABLE IF NOT EXISTS instruments (
+    code TEXT PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
 -- 주식 일봉 OHLCV
 CREATE TABLE IF NOT EXISTS stock_daily (
     code TEXT,
