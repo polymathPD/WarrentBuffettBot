@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
 
+<div class="mode-tabs">
+  <a href="/?mode=paper" class="mode-tab {{ 'active' if mode == 'paper' else '' }}">모의</a>
+  <a href="/?mode=live" class="mode-tab mode-tab-live {{ 'active' if mode == 'live' else '' }}">실전</a>
+</div>
+
 <div class="stat-grid">
   <div class="stat-card">
     <div class="stat-label">보유 종목</div>

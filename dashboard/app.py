@@ -58,7 +58,8 @@ def _pnl_chart_data(closed_trades, width=720, height=180, pad_x=8, pad_y=16):
 
 
 @app.get("/")
-def index(request: Request):
+def index(request: Request, mode: str = "paper"):
+    mode = mode if mode in ("paper", "live") else "paper"
     positions = db.fetchall("""
         SELECT p.code, p.name, p.entry_date, p.entry_px, p.qty, p.stop_px,
                sd.c AS current_px,
@@ -67,19 +68,20 @@ def index(request: Request):
         FROM positions p
         LEFT JOIN stock_daily sd ON sd.code = p.code
           AND sd.d = (SELECT MAX(d) FROM stock_daily WHERE code = p.code)
+        WHERE p.mode = %s
         ORDER BY p.entry_date DESC
-    """)
+    """, (mode,))
     today_trades = db.fetchall("""
         SELECT side, code, name, qty, price, realized_pct, exit_reason, ts
-        FROM trades WHERE ts::date = CURRENT_DATE ORDER BY ts DESC
-    """)
+        FROM trades WHERE ts::date = CURRENT_DATE AND mode = %s ORDER BY ts DESC
+    """, (mode,))
     total_unrealized = sum(float(p["unrealized"] or 0) for p in positions)
 
     closed_trades = db.fetchall("""
         SELECT ts, realized_pct FROM trades
-        WHERE side = 'sell' AND realized_pct IS NOT NULL
+        WHERE side = 'sell' AND realized_pct IS NOT NULL AND mode = %s
         ORDER BY ts ASC
-    """)
+    """, (mode,))
     pnl_chart = _pnl_chart_data(closed_trades)
 
     return templates.TemplateResponse(request, "index.html", {
@@ -87,18 +89,21 @@ def index(request: Request):
         "today_trades": today_trades,
         "total_unrealized": total_unrealized,
         "pnl_chart": pnl_chart,
+        "mode": mode,
     })
 
 
 @app.get("/trades")
-def trades_page(request: Request):
+def trades_page(request: Request, mode: str = "paper"):
+    mode = mode if mode in ("paper", "live") else "paper"
     trades = db.fetchall("""
         SELECT side, code, name, qty, price, amount,
                realized_pct, exit_reason, ts
-        FROM trades ORDER BY ts DESC LIMIT 50
-    """)
+        FROM trades WHERE mode = %s ORDER BY ts DESC LIMIT 50
+    """, (mode,))
     return templates.TemplateResponse(request, "trades.html", {
         "trades": trades,
+        "mode": mode,
     })
 
 

@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
 
+<div class="mode-tabs">
+  <a href="/trades?mode=paper" class="mode-tab {{ 'active' if mode == 'paper' else '' }}">모의</a>
+  <a href="/trades?mode=live" class="mode-tab mode-tab-live {{ 'active' if mode == 'live' else '' }}">실전</a>
+</div>
+
 <div class="card">
   <div class="card-header">거래 내역 (최근 50건)</div>
   {% if trades %}

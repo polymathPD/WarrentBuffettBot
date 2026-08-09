@@ -70,15 +70,18 @@ def sell(code: str, name: str, qty: float, entry_px: float,
 
     db.execute(
         """UPDATE trades SET exit_reason=%s, realized_pct=%s
-           WHERE code=%s AND side='buy' AND exit_reason IS NULL
-           ORDER BY ts DESC LIMIT 1""",
-        (reason, realized_pct, code),
+           WHERE ctid = (
+               SELECT ctid FROM trades
+               WHERE code=%s AND side='buy' AND mode=%s AND exit_reason IS NULL
+               ORDER BY ts DESC LIMIT 1
+           )""",
+        (reason, realized_pct, code, MODE),
     )
     db.execute(
         """INSERT INTO trades (mode, side, code, name, qty, price, amount, strategy, exit_reason, realized_pct)
            VALUES (%s,'sell',%s,%s,%s,%s,%s,'contrarian_v1',%s,%s)""",
         (MODE, code, name, qty, fill_px, fill_px * qty, reason, realized_pct),
     )
-    db.execute("DELETE FROM positions WHERE code=%s", (code,))
+    db.execute("DELETE FROM positions WHERE code=%s AND mode=%s", (code, MODE))
     pnl = "+" if realized_pct >= 0 else ""
     print(f"[모의 청산] {code} {name}  {pnl}{realized_pct*100:.2f}%  사유={reason}")

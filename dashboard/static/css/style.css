@@ -114,6 +114,33 @@ a { color: inherit; text-decoration: none; }
   max-width: 1200px;
 }
 
+/* Mode tabs (paper / live) */
+.mode-tabs { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-5); }
+
+.mode-tab {
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.mode-tab:hover { color: var(--text-strong); }
+
+.mode-tab.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(88, 166, 255, .08);
+}
+
+.mode-tab-live.active {
+  color: var(--loss);
+  border-color: var(--loss-border);
+  background: var(--loss-bg);
+}
+
 /* Stat cards */
 .stat-grid {
   display: grid;
