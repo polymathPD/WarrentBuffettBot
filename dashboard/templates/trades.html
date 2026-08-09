@@ -2,40 +2,36 @@
 {% block content %}
 
 <div class="card">
-  <div class="card-body p-0">
-    <div class="px-4 py-3 border-bottom" style="border-color:#2e3250!important">
-      <h6 class="mb-0">거래 내역 (최근 50건)</h6>
-    </div>
-    {% if trades %}
-    <table class="table table-hover mb-0">
-      <thead>
-        <tr>
-          <th>일시</th><th>구분</th><th>종목코드</th><th>종목명</th>
-          <th>수량</th><th>체결가</th><th>금액</th><th>수익률</th><th>청산사유</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for t in trades %}
-        <tr>
-          <td><small class="text-secondary">{{ t.ts.strftime("%m/%d %H:%M") if t.ts else "" }}</small></td>
-          <td><span class="badge {% if t.side == 'buy' %}badge-buy{% else %}badge-sell{% endif %}">{{ "매수" if t.side == "buy" else "매도" }}</span></td>
-          <td><code>{{ t.code }}</code></td>
-          <td>{{ t.name }}</td>
-          <td>{{ t.qty }}</td>
-          <td>{{ "{:,.0f}".format(t.price) }}</td>
-          <td>{{ "{:,.0f}".format(t.amount) if t.amount else "-" }}</td>
-          <td class="{% if t.realized_pct and t.realized_pct >= 0 %}text-profit{% elif t.realized_pct %}text-loss{% endif %}">
-            {% if t.realized_pct %}{% if t.realized_pct >= 0 %}+{% endif %}{{ "%.2f"|format(t.realized_pct * 100) }}%{% else %}-{% endif %}
-          </td>
-          <td><small>{{ t.exit_reason or "-" }}</small></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% else %}
-    <div class="text-center py-5 text-secondary">거래 내역 없음</div>
-    {% endif %}
-  </div>
+  <div class="card-header">거래 내역 (최근 50건)</div>
+  {% if trades %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>일시</th><th>구분</th><th>종목코드</th><th>종목명</th>
+        <th>수량</th><th>체결가</th><th>금액</th><th>수익률</th><th>청산사유</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in trades %}
+      <tr>
+        <td><small class="text-muted">{{ t.ts.strftime("%m/%d %H:%M") if t.ts else "" }}</small></td>
+        <td><span class="badge {% if t.side == 'buy' %}badge-buy{% else %}badge-sell{% endif %}">{{ "매수" if t.side == "buy" else "매도" }}</span></td>
+        <td><code>{{ t.code }}</code></td>
+        <td>{{ t.name }}</td>
+        <td>{{ t.qty }}</td>
+        <td>{{ "{:,.0f}".format(t.price) }}</td>
+        <td>{{ "{:,.0f}".format(t.amount) if t.amount else "-" }}</td>
+        <td class="{% if t.realized_pct and t.realized_pct >= 0 %}text-profit{% elif t.realized_pct %}text-loss{% endif %}">
+          {% if t.realized_pct %}{% if t.realized_pct >= 0 %}+{% endif %}{{ "%.2f"|format(t.realized_pct * 100) }}%{% else %}-{% endif %}
+        </td>
+        <td><small>{{ t.exit_reason or "-" }}</small></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-state">거래 내역 없음</div>
+  {% endif %}
 </div>
 
 {% endblock %}

@@ -2,56 +2,54 @@
 {% block content %}
 
 {% if saved %}
-<div class="alert alert-success mb-4" style="background:#1a4731;border-color:#166534;color:#4ade80">
+<div class="alert alert-success">
   설정이 저장되었습니다. 다음 스케줄 실행 시 적용됩니다.
 </div>
 {% endif %}
 
-<div class="row justify-content-center">
-  <div class="col-md-6">
-    <div class="card">
-      <div class="card-body px-4 py-4">
-        <h6 class="mb-4">전략 파라미터 설정</h6>
-        <form method="post" action="/settings">
+<div class="settings-wrap">
+  <div class="card">
+    <div class="card-header">전략 파라미터 설정</div>
+    <div class="card-body">
+      <form method="post" action="/settings">
 
-          <div class="mb-3">
-            <label class="form-label text-secondary" style="font-size:.8rem">HEAT_AVOID — 신규 매수 회피 임계값</label>
-            <input type="number" name="HEAT_AVOID" class="form-control bg-dark text-light border-secondary"
-                   value="{{ settings.HEAT_AVOID }}" step="0.1" min="1" max="10" required>
-            <div class="form-text text-secondary">heat_score 가 이 값 이상이면 신규 매수하지 않음 (기본 7.0)</div>
-          </div>
+        <div class="form-group">
+          <label class="form-label">HEAT_AVOID — 신규 매수 회피 임계값</label>
+          <input type="number" name="HEAT_AVOID"
+                 value="{{ settings.HEAT_AVOID }}" step="0.1" min="1" max="10" required>
+          <div class="form-help">heat_score 가 이 값 이상이면 신규 매수하지 않음 (기본 7.0)</div>
+        </div>
 
-          <div class="mb-3">
-            <label class="form-label text-secondary" style="font-size:.8rem">HEAT_SELL — 강제 청산 임계값</label>
-            <input type="number" name="HEAT_SELL" class="form-control bg-dark text-light border-secondary"
-                   value="{{ settings.HEAT_SELL }}" step="0.1" min="1" max="10" required>
-            <div class="form-text text-secondary">heat_score 가 이 값 이상이면 보유 중이라도 청산 (기본 8.5)</div>
-          </div>
+        <div class="form-group">
+          <label class="form-label">HEAT_SELL — 강제 청산 임계값</label>
+          <input type="number" name="HEAT_SELL"
+                 value="{{ settings.HEAT_SELL }}" step="0.1" min="1" max="10" required>
+          <div class="form-help">heat_score 가 이 값 이상이면 보유 중이라도 청산 (기본 8.5)</div>
+        </div>
 
-          <div class="mb-3">
-            <label class="form-label text-secondary" style="font-size:.8rem">STOP_PCT — 손절 비율</label>
-            <input type="number" name="STOP_PCT" class="form-control bg-dark text-light border-secondary"
-                   value="{{ settings.STOP_PCT }}" step="0.01" min="0.01" max="0.3" required>
-            <div class="form-text text-secondary">진입가 대비 하락 시 손절 (기본 0.07 = 7%)</div>
-          </div>
+        <div class="form-group">
+          <label class="form-label">STOP_PCT — 손절 비율</label>
+          <input type="number" name="STOP_PCT"
+                 value="{{ settings.STOP_PCT }}" step="0.01" min="0.01" max="0.3" required>
+          <div class="form-help">진입가 대비 하락 시 손절 (기본 0.07 = 7%)</div>
+        </div>
 
-          <div class="mb-3">
-            <label class="form-label text-secondary" style="font-size:.8rem">MAX_HOLD_DAYS — 최대 보유 일수</label>
-            <input type="number" name="MAX_HOLD_DAYS" class="form-control bg-dark text-light border-secondary"
-                   value="{{ settings.MAX_HOLD_DAYS }}" step="1" min="1" max="120" required>
-            <div class="form-text text-secondary">이 기간을 넘기면 수익/손실 무관 청산 (기본 20일)</div>
-          </div>
+        <div class="form-group">
+          <label class="form-label">MAX_HOLD_DAYS — 최대 보유 일수</label>
+          <input type="number" name="MAX_HOLD_DAYS"
+                 value="{{ settings.MAX_HOLD_DAYS }}" step="1" min="1" max="120" required>
+          <div class="form-help">이 기간을 넘기면 수익/손실 무관 청산 (기본 20일)</div>
+        </div>
 
-          <div class="mb-4">
-            <label class="form-label text-secondary" style="font-size:.8rem">SLOTS — 최대 동시 보유 종목 수</label>
-            <input type="number" name="SLOTS" class="form-control bg-dark text-light border-secondary"
-                   value="{{ settings.SLOTS }}" step="1" min="1" max="50" required>
-            <div class="form-text text-secondary">이 수를 초과하면 신규 매수 거부 (기본 12)</div>
-          </div>
+        <div class="form-group">
+          <label class="form-label">SLOTS — 최대 동시 보유 종목 수</label>
+          <input type="number" name="SLOTS"
+                 value="{{ settings.SLOTS }}" step="1" min="1" max="50" required>
+          <div class="form-help">이 수를 초과하면 신규 매수 거부 (기본 12)</div>
+        </div>
 
-          <button type="submit" class="btn btn-primary w-100">저장</button>
-        </form>
-      </div>
+        <button type="submit" class="btn btn-primary">저장</button>
+      </form>
     </div>
   </div>
 </div>

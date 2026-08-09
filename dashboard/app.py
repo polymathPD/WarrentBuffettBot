@@ -3,6 +3,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from fastapi import FastAPI, Request, Form
 from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 
 import db.connection as db
@@ -12,6 +13,48 @@ app = FastAPI()
 templates = Jinja2Templates(
     directory=os.path.join(os.path.dirname(__file__), "templates")
 )
+app.mount(
+    "/static",
+    StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")),
+    name="static",
+)
+
+
+def _pnl_chart_data(closed_trades, width=720, height=180, pad_x=8, pad_y=16):
+    if not closed_trades:
+        return None
+    cum = 0.0
+    series = []
+    for t in closed_trades:
+        cum += float(t["realized_pct"]) * 100
+        series.append({"label": t["ts"].strftime("%m/%d"), "cum_pct": round(cum, 2)})
+
+    values = [s["cum_pct"] for s in series]
+    vmin, vmax = min(values), max(values)
+    if vmin == vmax:
+        vmin, vmax = vmin - 1, vmax + 1
+
+    n = len(series)
+    for i, s in enumerate(series):
+        s["x"] = round(pad_x + (i * (width - 2 * pad_x) / (n - 1) if n > 1 else (width - 2 * pad_x) / 2), 1)
+        s["y"] = round(pad_y + (vmax - s["cum_pct"]) / (vmax - vmin) * (height - 2 * pad_y), 1)
+
+    zero_y = None
+    if vmin <= 0 <= vmax:
+        zero_y = round(pad_y + (vmax - 0) / (vmax - vmin) * (height - 2 * pad_y), 1)
+
+    polyline = " ".join(f"{s['x']},{s['y']}" for s in series)
+    area = f"{pad_x},{height - pad_y} {polyline} {series[-1]['x']},{height - pad_y}"
+
+    return {
+        "points": series,
+        "polyline": polyline,
+        "area": area,
+        "last_positive": values[-1] >= 0,
+        "zero_y": zero_y,
+        "width": width,
+        "height": height,
+    }
 
 
 @app.get("/")
@@ -31,10 +74,19 @@ def index(request: Request):
         FROM trades WHERE ts::date = CURRENT_DATE ORDER BY ts DESC
     """)
     total_unrealized = sum(float(p["unrealized"] or 0) for p in positions)
+
+    closed_trades = db.fetchall("""
+        SELECT ts, realized_pct FROM trades
+        WHERE side = 'sell' AND realized_pct IS NOT NULL
+        ORDER BY ts ASC
+    """)
+    pnl_chart = _pnl_chart_data(closed_trades)
+
     return templates.TemplateResponse(request, "index.html", {
         "positions": positions,
         "today_trades": today_trades,
         "total_unrealized": total_unrealized,
+        "pnl_chart": pnl_chart,
     })
 
 
