@@ -121,9 +121,9 @@ def compute_for_date(target_date: str = None):
             credit_r = np.nan
 
         heat, signal = _heat(flow_r, credit_r, vol_r)
-        rows.append((code, d, flow_r if not np.isnan(flow_r) else None,
-                     credit_r if not np.isnan(credit_r) else None,
-                     vol_r if not np.isnan(vol_r) else None,
+        rows.append((code, d, float(flow_r) if not np.isnan(flow_r) else None,
+                     float(credit_r) if not np.isnan(credit_r) else None,
+                     float(vol_r) if not np.isnan(vol_r) else None,
                      heat, signal))
 
     if rows:
