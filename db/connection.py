@@ -15,6 +15,18 @@ def get_conn():
         _local.conn.autocommit = False
     return _local.conn
 
+def _recover(conn):
+    """실패한 쿼리 이후 트랜잭션을 롤백. 연결 자체가 죽어있으면(예: SSL drop)
+    롤백도 실패하므로 이때는 연결을 강제로 버려서 다음 get_conn()이 재연결하게 한다."""
+    try:
+        conn.rollback()
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _local.conn = None
+
 def execute(sql, params=None):
     conn = get_conn()
     try:
@@ -22,7 +34,7 @@ def execute(sql, params=None):
             cur.execute(sql, params)
         conn.commit()
     except Exception:
-        conn.rollback()
+        _recover(conn)
         raise
 
 def executemany(sql, rows):
@@ -32,7 +44,7 @@ def executemany(sql, rows):
             psycopg2.extras.execute_values(cur, sql, rows)
         conn.commit()
     except Exception:
-        conn.rollback()
+        _recover(conn)
         raise
 
 def fetchall(sql, params=None):
@@ -42,7 +54,7 @@ def fetchall(sql, params=None):
             cur.execute(sql, params)
             return cur.fetchall()
     except Exception:
-        conn.rollback()
+        _recover(conn)
         raise
 
 def fetchone(sql, params=None):
@@ -52,7 +64,7 @@ def fetchone(sql, params=None):
             cur.execute(sql, params)
             return cur.fetchone()
     except Exception:
-        conn.rollback()
+        _recover(conn)
         raise
 
 def init_schema():

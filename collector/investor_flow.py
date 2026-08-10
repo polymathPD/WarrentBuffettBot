@@ -36,18 +36,18 @@ def collect(start_date: str = "20220101", end_date: str = None):
     print(f"수급 수집 대상: {total}종목")
 
     for i, code in enumerate(tickers, 1):
-        last = _last_collected(code)
-        if last:
-            if last >= today:
-                continue
-            start = (last + timedelta(days=1)).strftime("%Y%m%d")
-        else:
-            start = start_date
-
-        if start > end:
-            continue
-
         try:
+            last = _last_collected(code)
+            if last:
+                if last >= today:
+                    continue
+                start = (last + timedelta(days=1)).strftime("%Y%m%d")
+            else:
+                start = start_date
+
+            if start > end:
+                continue
+
             # 투자자별 순매수대금 (일별, 원 단위)
             df = krx.get_market_trading_value_by_date(
                 start, end, code, on="순매수"

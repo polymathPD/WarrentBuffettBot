@@ -40,18 +40,18 @@ def collect(start_date: str = "20220101", end_date: str = None):
     print(f"수집 대상: {total}종목  기간: {start_date} ~ {end}")
 
     for i, code in enumerate(tickers, 1):
-        last = _last_collected(code)
-        if last:
-            if last >= today:
-                continue
-            start = (last + timedelta(days=1)).strftime("%Y%m%d")
-        else:
-            start = start_date
-
-        if start > end:
-            continue
-
         try:
+            last = _last_collected(code)
+            if last:
+                if last >= today:
+                    continue
+                start = (last + timedelta(days=1)).strftime("%Y%m%d")
+            else:
+                start = start_date
+
+            if start > end:
+                continue
+
             df = krx.get_market_ohlcv(start, end, code)
             if df is None or df.empty:
                 continue

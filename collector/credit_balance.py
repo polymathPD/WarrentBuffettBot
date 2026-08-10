@@ -116,14 +116,14 @@ def collect_kis(start_date: str = "20220101", end_date: str = None):
     print(f"신용잔고 수집 대상: {total}종목 (KIS API)")
 
     for i, code in enumerate(tickers, 1):
-        last = _last_collected(code)
-        if last and last >= today:
-            continue
-        start_bound = last.strftime("%Y%m%d") if last else start_date
-        if start_bound > end:
-            continue
-
         try:
+            last = _last_collected(code)
+            if last and last >= today:
+                continue
+            start_bound = last.strftime("%Y%m%d") if last else start_date
+            if start_bound > end:
+                continue
+
             anchor = end
             collected_any = False
             for _ in range(MAX_PAGES_PER_CODE):
