@@ -17,27 +17,43 @@ def get_conn():
 
 def execute(sql, params=None):
     conn = get_conn()
-    with conn.cursor() as cur:
-        cur.execute(sql, params)
-    conn.commit()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 def executemany(sql, rows):
     conn = get_conn()
-    with conn.cursor() as cur:
-        psycopg2.extras.execute_values(cur, sql, rows)
-    conn.commit()
+    try:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, sql, rows)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 def fetchall(sql, params=None):
     conn = get_conn()
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(sql, params)
-        return cur.fetchall()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+    except Exception:
+        conn.rollback()
+        raise
 
 def fetchone(sql, params=None):
     conn = get_conn()
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(sql, params)
-        return cur.fetchone()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
+            return cur.fetchone()
+    except Exception:
+        conn.rollback()
+        raise
 
 def init_schema():
     schema_path = os.path.join(os.path.dirname(__file__), "schema.sql")
