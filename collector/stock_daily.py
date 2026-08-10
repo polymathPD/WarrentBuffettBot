@@ -4,6 +4,8 @@ pykrx로 KOSPI/KOSDAQ 전 종목 일봉 수집 → stock_daily 테이블
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from dotenv import load_dotenv
+load_dotenv()  # pykrx가 모듈 로드 시점에 KRX_ID/KRX_PW로 세션을 만들므로 pykrx import 전에 실행돼야 함
 
 from pykrx import stock as krx
 import FinanceDataReader as fdr

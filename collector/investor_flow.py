@@ -1,9 +1,12 @@
 """
 pykrx로 투자자별 순매수 수집 → investor_flow
-(계좌 불필요 — KRX 공개 데이터)
+(KRX 공개 데이터지만, pykrx 1.2.x부터 이 API는 KRX_ID/KRX_PW 로그인 세션이 필요함
+ - data.krx.co.kr에서 무료 회원가입 후 .env에 KRX_ID/KRX_PW 설정 필요)
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from dotenv import load_dotenv
+load_dotenv()  # pykrx가 모듈 로드 시점에 KRX_ID/KRX_PW로 세션을 만들므로 pykrx import 전에 실행돼야 함
 
 from pykrx import stock as krx
 from datetime import date, timedelta
@@ -45,9 +48,9 @@ def collect(start_date: str = "20220101", end_date: str = None):
             continue
 
         try:
-            # 투자자별 순매수 수량 (체결 기준)
-            df = krx.get_market_net_purchases_of_equities_by_date(
-                start, end, code
+            # 투자자별 순매수대금 (일별, 원 단위)
+            df = krx.get_market_trading_value_by_date(
+                start, end, code, on="순매수"
             )
             if df is None or df.empty:
                 continue
@@ -55,8 +58,7 @@ def collect(start_date: str = "20220101", end_date: str = None):
             rows = []
             for d, r in df.iterrows():
                 individual = int(r.get("개인", 0))
-                foreign = int(r.get("외국인", 0))
-                # 기관 = 기관합계 or 기타법인 제외한 합
+                foreign = int(r.get("외국인합계", 0))
                 institution = int(r.get("기관합계", 0))
                 rows.append((code, d.date(), individual, foreign, institution))
 

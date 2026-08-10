@@ -1,16 +1,26 @@
 """
 신용융자 잔고 수집 → credit_balance
-pykrx에 신용잔고 API가 없으므로 KIS OpenAPI 사용 (계좌 개설 후 활성화)
-그 전까지는 stock_daily 거래대금 기반 임시 추정치로 채움
+KIS OpenAPI [국내주식-110] 신용잔고 일별추이 사용
+(/uapi/domestic-stock/v1/quotations/daily-credit-balance, tr_id=FHPST04760000)
+KIS API 키 미설정 시 collect_stub()으로 대체
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from dotenv import load_dotenv
+load_dotenv()
 
 from datetime import date, timedelta
+import time
+import requests
 import db.connection as db
 import config
+from executor.live import _get_token, _BASE_URL
 
 SOURCE = "credit_balance"
+API_URL = "/uapi/domestic-stock/v1/quotations/daily-credit-balance"
+TR_ID = "FHPST04760000"
+SLEEP_SEC = 0.3
+MAX_PAGES_PER_CODE = 40  # 한 페이지당 최대 30건 -> 약 3년치 커버
 
 
 def collect_stub(start_date: str = "20220101", end_date: str = None):
@@ -46,15 +56,132 @@ def collect_stub(start_date: str = "20220101", end_date: str = None):
     print(f"신용잔고 stub {len(rows)}건 삽입 (0값, KIS API 연동 전)")
 
 
-def collect_kis():
-    """KIS OpenAPI로 실제 신용잔고 수집 (계좌 개설 후 구현)"""
-    if not config.KIS_APP_KEY:
-        print("KIS API 키 미설정 — collect_stub()으로 대체")
-        collect_stub()
+def _last_collected(code: str):
+    row = db.fetchone(
+        "SELECT last_seen FROM collect_cursor WHERE source=%s AND code=%s",
+        (SOURCE, code),
+    )
+    return row["last_seen"].date() if row else None
+
+
+def _headers() -> dict:
+    return {
+        "Content-Type": "application/json",
+        "authorization": f"Bearer {_get_token()}",
+        "appKey": config.KIS_APP_KEY,
+        "appSecret": config.KIS_APP_SECRET,
+        "tr_id": TR_ID,
+        "custtype": "P",
+    }
+
+
+def _fetch_page(code: str, anchor_date: str) -> list[dict]:
+    """anchor_date(YYYYMMDD, 결제일자) 기준 최대 30건을 과거방향으로 조회"""
+    resp = requests.get(
+        f"{_BASE_URL}{API_URL}",
+        headers=_headers(),
+        params={
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_COND_SCR_DIV_CODE": "20476",
+            "FID_INPUT_ISCD": code,
+            "FID_INPUT_DATE_1": anchor_date,
+        },
+        timeout=10,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("rt_cd") not in (None, "0"):
+        raise RuntimeError(f"신용잔고 조회 실패: {data.get('msg1')}")
+    return data.get("output", [])
+
+
+def collect_kis(start_date: str = "20220101", end_date: str = None):
+    """
+    KIS OpenAPI로 종목별 신용잔고 일별추이 수집 (증분).
+    한 번 호출에 최대 30건(결제일자 기준 과거방향)만 반환되므로,
+    start_date에 도달할 때까지 anchor_date를 앞으로 당겨가며 반복 조회한다.
+    """
+    if not config.KIS_APP_KEY or not config.KIS_APP_SECRET:
+        print("KIS API 키 미설정 -> collect_stub()으로 대체")
+        collect_stub(start_date, end_date)
         return
-    # TODO: KIS API /uapi/domestic-stock/v1/quotations/credit-by-date
-    raise NotImplementedError("KIS API 연동 후 구현")
+
+    today = date.today()
+    end = end_date or today.strftime("%Y%m%d")
+    tickers = db.fetchall("SELECT DISTINCT code FROM stock_daily")
+    tickers = [r["code"] for r in tickers]
+    total = len(tickers)
+    errors = []
+
+    print(f"신용잔고 수집 대상: {total}종목 (KIS API)")
+
+    for i, code in enumerate(tickers, 1):
+        last = _last_collected(code)
+        if last and last >= today:
+            continue
+        start_bound = last.strftime("%Y%m%d") if last else start_date
+        if start_bound > end:
+            continue
+
+        try:
+            anchor = end
+            collected_any = False
+            for _ in range(MAX_PAGES_PER_CODE):
+                rows = _fetch_page(code, anchor)
+                if not rows:
+                    break
+
+                to_insert = []
+                oldest_d = None
+                for r in rows:
+                    d_str = r.get("stlm_date")
+                    if not d_str or len(d_str) != 8:
+                        continue
+                    d = date(int(d_str[:4]), int(d_str[4:6]), int(d_str[6:8]))
+                    if oldest_d is None or d < oldest_d:
+                        oldest_d = d
+                    if d.strftime("%Y%m%d") < start_bound:
+                        continue
+                    amt = int(r.get("whol_loan_rmnd_amt") or 0)
+                    ratio = float(r.get("whol_loan_rmnd_rate") or 0)
+                    to_insert.append((code, d, amt, ratio))
+
+                if to_insert:
+                    db.executemany(
+                        """INSERT INTO credit_balance (code, d, credit_amt, credit_ratio)
+                           VALUES %s ON CONFLICT (code, d) DO NOTHING""",
+                        to_insert,
+                    )
+                    collected_any = True
+
+                if oldest_d is None or oldest_d.strftime("%Y%m%d") <= start_bound:
+                    break
+                anchor = oldest_d.strftime("%Y%m%d")
+                time.sleep(SLEEP_SEC)
+
+            if collected_any:
+                db.execute(
+                    """INSERT INTO collect_cursor (source, code, last_seen)
+                       VALUES (%s, %s, NOW())
+                       ON CONFLICT (source, code) DO UPDATE SET last_seen = NOW()""",
+                    (SOURCE, code),
+                )
+
+        except Exception as e:
+            errors.append((code, str(e)))
+
+        if i % 100 == 0 or i == total:
+            print(f"  [{i}/{total}] 완료  오류: {len(errors)}")
+
+        time.sleep(SLEEP_SEC)
+
+    if errors:
+        print(f"\n오류 목록 ({len(errors)}건, 상위 20개):")
+        for code, msg in errors[:20]:
+            print(f"  {code}: {msg}")
+
+    print("신용잔고 수집 완료 (KIS API)")
 
 
 if __name__ == "__main__":
-    collect_stub()
+    collect_kis()

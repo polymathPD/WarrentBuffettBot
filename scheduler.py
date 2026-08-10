@@ -27,9 +27,9 @@ def daily_job():
     from collector.investor_flow import collect as collect_flow
     collect_flow()
 
-    # 3. 신용잔고 (stub)
-    from collector.credit_balance import collect_stub
-    collect_stub()
+    # 3. 신용잔고 (KIS API)
+    from collector.credit_balance import collect_kis
+    collect_kis()
 
     # 4. 신호 계산
     from processor.signals import compute_for_date
