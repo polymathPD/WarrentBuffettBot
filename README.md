@@ -117,7 +117,33 @@ KIS_ACCOUNT=계좌번호
 KIS_ACCOUNT_SUFFIX=01
 KIS_MOCK=true        # 모의투자
 KIS_MODE=paper
+
+# 투자자별 수급(investor_flow) 수집에 필요 (data.krx.co.kr 무료 회원가입)
+KRX_ID=...
+KRX_PW=...
 ```
+
+> `KRX_ID`/`KRX_PW`가 없으면 개인/외국인/기관 순매수 데이터가 전혀 수집되지 않습니다 (KRX 서버가 로그인 세션 없이는 빈 응답만 반환).
+
+---
+
+## 백테스트 & 검증 스크립트
+
+과거 데이터로 전략을 검증하거나, heat_score 신호가 실제로 수익률과 관계가 있는지 확인할 때 사용합니다.
+
+```bash
+# 1. contrarian_signals 사전 계산 (백테스트 대상 기간)
+python backfill_signals.py 2022-01-01 2024-12-31
+
+# 2. 로컬 백테스트 (진입/청산 시뮬레이션 + 기간분리·부트스트랩·무작위대조군 검증)
+python run_backtest_local.py 2022-01-01 2024-12-31
+
+# 3. 분위수(decile) 분석 — 문턱값 없이 heat_score/개인수급/거래대금과
+#    향후 수익률의 관계 확인, KOSPI 벤치마크 대비 초과수익 비교
+python decile_analysis.py 2022-01-01 2024-12-31
+```
+
+`backtester/engine.py`(원본 서버사이드 백테스터)도 동일 기능을 제공하지만, DB 디스크 여유가 부족한 환경에서는 `run_backtest_local.py`를 대신 사용하세요 (동일 비용모델 `backtester/cost_model.py`를 그대로 재사용해 결과가 일치합니다).
 
 ---
 

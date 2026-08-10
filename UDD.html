@@ -110,6 +110,7 @@
   <a href="#executor">Executor</a>
   <a href="#recorder">Recorder</a>
   <a href="#backtester">Backtester</a>
+  <a href="#analysis-tools">검증 보조 스크립트</a>
   <a href="#dashboard">Dashboard</a>
   <div class="section-label">설계</div>
   <a href="#schema">DB 스키마</a>
@@ -192,8 +193,8 @@
 │
 ├── collector/
 │   ├── stock_daily.py      # pykrx OHLCV 수집 (증분)
-│   ├── investor_flow.py    # pykrx 투자자별 순매수
-│   └── credit_balance.py   # 신용잔고 stub (KIS API 미연동)
+│   ├── investor_flow.py    # pykrx 투자자별 순매수 (KRX 로그인 필요)
+│   └── credit_balance.py   # 신용잔고 (KIS API 연동 완료)
 │
 ├── processor/
 │   ├── signals.py          # heat_score 계산 (0~10)
@@ -252,7 +253,7 @@
       <div class="flow-connector"></div>
       <div class="flow-step">
         <div class="num">3</div>
-        <div class="body"><strong>collect_stub()</strong> — 신용잔고 0 채움 → <code>credit_balance</code> (KIS API 연동 전 임시)</div>
+        <div class="body"><strong>collect_kis()</strong> — KIS OpenAPI 신용잔고 일별추이 수집 → <code>credit_balance</code></div>
       </div>
       <div class="flow-connector"></div>
       <div class="flow-step">
@@ -330,6 +331,7 @@
       <tr><td><code>KIS_ACCOUNT</code></td><td>매매 계좌번호</td></tr>
       <tr><td><code>KIS_MODE</code></td><td><code>paper</code> 또는 <code>live</code></td></tr>
       <tr><td><code>DART_API_KEY</code></td><td>미사용 (예약)</td></tr>
+      <tr><td><code>KRX_ID / KRX_PW</code></td><td>data.krx.co.kr 로그인 (2026-08-10 추가) — 투자자별 거래실적 API 필수. 없으면 <code>investor_flow</code> 수집이 빈 결과만 받음</td></tr>
     </table>
   </section>
 
@@ -361,7 +363,8 @@
       <tr><th>테이블</th><th>PK</th><th>주요 컬럼</th><th>용도</th></tr>
       <tr><td><code>stock_daily</code></td><td>(code, d)</td><td>o, h, l, c, v</td><td>OHLCV 캔들스틱</td></tr>
       <tr><td><code>investor_flow</code></td><td>(code, d)</td><td>individual_net, foreign_net, institution_net</td><td>투자자별 순매수</td></tr>
-      <tr><td><code>credit_balance</code></td><td>(code, d)</td><td>credit_amt, credit_ratio</td><td>신용잔고 (현재 stub)</td></tr>
+      <tr><td><code>credit_balance</code></td><td>(code, d)</td><td>credit_amt, credit_ratio</td><td>신용잔고 (KIS API 연동)</td></tr>
+      <tr><td><code>instruments</code></td><td>code</td><td>name</td><td>종목코드-종목명 매핑 (2026-08-10 추가)</td></tr>
       <tr><td><code>contrarian_signals</code></td><td>(code, d)</td><td>individual_flow_ratio, credit_surge_ratio, volume_ratio, heat_score, signal</td><td>전처리된 시그널</td></tr>
       <tr><td><code>agent_decisions</code></td><td>id (auto)</td><td>agent, code, decision, score, rationale, input_hash</td><td>Claude API 캐시</td></tr>
       <tr><td><code>trades</code></td><td>id (auto)</td><td>mode, side, code, qty, price, amount, exit_reason, realized_pct, agents JSONB</td><td>주문 로그</td></tr>
@@ -384,16 +387,36 @@
     <h3>stock_daily.py</h3>
     <p>FinanceDataReader로 KRX 전 종목 코드를 가져온 뒤, <code>collect_cursor</code>를 기준으로 마지막 수집일 이후 데이터만 pykrx에서 증분 수집합니다. 요청 간 0.35초 딜레이(KRX 쓰로틀링 방지).</p>
 
-    <h3>investor_flow.py</h3>
-    <p><code>stock_daily</code>의 종목 목록을 기준으로 <code>pykrx.get_market_net_purchases_of_equities_by_date()</code>를 호출합니다. 개인/외국인/기관합계 순매수를 파싱하여 <code>investor_flow</code>에 저장. 요청 간 0.4초 딜레이.</p>
+    <h3>investor_flow.py <span class="badge badge-green">2026-08-10 버그 수정</span></h3>
+    <p><code>stock_daily</code>의 종목 목록을 기준으로 <code>pykrx.get_market_trading_value_by_date(start, end, code, on="순매수")</code>를 호출합니다. 개인/외국인합계/기관합계 순매수대금을 파싱하여 <code>investor_flow</code>에 저장. 요청 간 0.4초 딜레이.</p>
 
-    <h3>credit_balance.py <span class="badge badge-yellow">Stub</span></h3>
-    <p><code>collect_stub()</code>는 schema 유지를 위해 0 값만 채워 넣습니다. <code>collect_kis()</code>는 KIS OpenAPI <code>/uapi/domestic-stock/v1/quotations/credit-by-date</code> 연동 예정이나 현재 미구현입니다.</p>
+    <div class="callout callout-danger">
+      <strong>발견된 버그: 존재하지 않는 함수 호출</strong>
+      기존 코드는 <code>get_market_net_purchases_of_equities_by_date()</code>라는, 설치된 pykrx 버전(1.2.8)에는 <strong>존재하지 않는 함수</strong>를 호출하고 있었습니다. 매 호출마다 예외가 발생 → <code>except</code>로 조용히 삼켜짐 → 데이터가 전혀 쌓이지 않는 상태였습니다. 실제 존재하는 <code>get_market_trading_value_by_date()</code>로 교체하고, 반환 컬럼명(<code>개인</code>/<code>외국인합계</code>/<code>기관합계</code>)에 맞춰 파싱 로직도 수정했습니다.
+    </div>
 
     <div class="callout callout-warn">
-      <strong>신용잔고 미연동 영향</strong>
-      현재 <code>credit_surge_ratio</code>가 항상 0이므로 heat_score에서 신용잔고 기여분(최대 3점)이 반영되지 않습니다.
-      credit_heat 에이전트도 실질적으로 volume_ratio만 보는 상태입니다.
+      <strong>추가 필요조건: KRX 로그인 세션</strong>
+      pykrx 1.2.x부터 투자자별 거래실적 API는 <code>data.krx.co.kr</code> 로그인 세션(쿠키)이 있어야 정상 응답합니다. 로그인 정보가 없으면 KRX 서버가 <code>"LOGOUT"</code> 텍스트만 반환하고 pykrx는 이를 빈 DataFrame으로 처리합니다. <code>.env</code>에 <code>KRX_ID</code>/<code>KRX_PW</code>(data.krx.co.kr 무료 회원가입) 설정이 필요합니다.
+      <br/><br/>
+      또한 <code>collector/stock_daily.py</code>, <code>investor_flow.py</code> 둘 다 <code>pykrx</code>를 import하는 시점에 세션이 생성되는데, 기존 코드는 <code>db.connection</code>(= <code>config.load_dotenv()</code>)보다 pykrx import가 먼저 실행되어 <code>.env</code>의 KRX 로그인 정보가 반영되지 않는 순서 버그가 있었습니다. 두 파일 모두 <code>pykrx</code> import 전에 <code>load_dotenv()</code>를 명시적으로 호출하도록 수정했습니다.
+    </div>
+
+    <h3>credit_balance.py <span class="badge badge-green">2026-08-10 KIS API 연동 완료</span></h3>
+    <p>KIS OpenAPI [국내주식-110] 신용잔고 일별추이 API로 실제 구현되었습니다.</p>
+    <table>
+      <tr><th>항목</th><th>값</th></tr>
+      <tr><td>Endpoint</td><td><code>/uapi/domestic-stock/v1/quotations/daily-credit-balance</code></td></tr>
+      <tr><td>tr_id</td><td><code>FHPST04760000</code></td></tr>
+      <tr><td>페이지당 최대</td><td>30건 (결제일자 기준 과거방향, <code>anchor_date</code>를 당겨가며 반복 조회)</td></tr>
+      <tr><td>응답 필드</td><td><code>stlm_date</code>(결제일자) → d, <code>whol_loan_rmnd_amt</code>(전체 융자 잔고 금액) → credit_amt, <code>whol_loan_rmnd_rate</code>(전체 융자 잔고 비율) → credit_ratio</td></tr>
+      <tr><td>토큰 관리</td><td><code>executor/live.py</code>의 <code>_get_token()</code>/<code>_BASE_URL</code> 재사용</td></tr>
+    </table>
+    <p><code>collect_kis(start_date, end_date)</code>는 <code>collect_cursor</code> 기반 증분 수집이며, KIS API 키 미설정 시 기존 <code>collect_stub()</code>(0 채움)으로 자동 폴백합니다. 실제 계정으로 검증 완료 (200 OK, 실데이터 수신 확인). <code>scheduler.py</code>도 <code>collect_stub()</code> 대신 <code>collect_kis()</code>를 호출하도록 변경되었습니다.</p>
+
+    <div class="callout callout-info">
+      <strong>과거 상태(해결됨)</strong>
+      이전에는 <code>credit_surge_ratio</code>가 항상 0이었고 개인수급 데이터도 종목당 평균 34행(21년치 중)뿐이라, heat_score 10점 중 최대 3점(volume_ratio)만 실질적으로 작동했습니다. 위 두 수정으로 개인수급·신용잔고 두 축이 모두 정상 데이터를 쌓기 시작한 상태입니다 (과거 신호 재계산·백테스트 재검증은 데이터 축적 후 진행 예정).
     </div>
   </section>
 
@@ -558,6 +581,11 @@ score ≥ 8.5        → "sell"    (청산 신호)</code></pre>
    c. days_held ≥ max_hold → 만기 청산 (당일 종가)
 3. 비용 모델(cost_model.py) 적용하여 순수익률 계산</code></pre>
 
+    <div class="callout callout-danger">
+      <strong>발견 및 수정된 버그: 중복 포지션 무한 누적 (2026-08-10)</strong>
+      <code>active</code> 딕셔너리가 "이미 보유 중인 종목 스킵" 용도로 선언만 되어 있고 실제로 갱신(<code>active[code]=...</code>)되지 않아, 동일 종목에 heat 조건을 만족하는 날마다 <strong>매일 새 포지션이 중복으로 열리는</strong> 버그였습니다. 수정 전 2022~2024 백테스트 거래 수가 <strong>848,416건</strong>(비현실적)이었는데, 수정 후 <strong>64,403건</strong>으로 정상화됐습니다. 실전 매매(<code>executor/paper.py</code>)는 <code>positions</code> 테이블 PK 제약 덕분에 이 버그의 영향을 받지 않았습니다 — 백테스터 전용 버그였습니다.
+    </div>
+
     <h3>cost_model.py</h3>
     <pre><code>buy_price(px)  = px × (1 + SLIP) × (1 + FEE)
 sell_price(px) = px × (1 - SLIP) × (1 - FEE - TAX)
@@ -571,6 +599,22 @@ net_return     = sell_price(exit) / buy_price(entry) - 1</code></pre>
       <tr><td>부트스트랩 (1000회)</td><td>양의 평균 비율 ≥ 80%</td></tr>
       <tr><td>무작위 대조군 (200회)</td><td>전략 수익률이 상위 20% 이내</td></tr>
     </table>
+
+    <h3 id="analysis-tools">검증용 보조 스크립트 (2026-08-10 추가, 프로젝트 루트)</h3>
+    <p>Railway DB 디스크 여유 부족(당시 트라이얼 플랜)으로 <code>engine.py</code>의 서버사이드 <code>CROSS JOIN LATERAL</code> 쿼리가 "No space left on device"로 실패하는 문제를 우회하기 위해, 동일 로직/동일 비용모델(<code>cost_model.py</code> 재사용)을 클라이언트 측 pandas 연산으로 재구현한 스크립트들입니다.</p>
+    <table>
+      <tr><th>스크립트</th><th>역할</th></tr>
+      <tr><td><code>migrate_from_ref.py</code></td><td>외부 참조 DB(stock_daily/stock_flow/instruments)를 프로젝트 Railway DB로 마이그레이션 (최초 데이터 확보용, 1회성)</td></tr>
+      <tr><td><code>backfill_signals.py</code></td><td><code>contrarian_signals</code>를 종목별 SQL 반복 호출 대신 pandas 벡터화로 대량 백필 (동일 heat_score 공식, 대폭 고속화)</td></tr>
+      <tr><td><code>run_backtest_local.py</code></td><td><code>backtester/engine.py</code>와 동일 알고리즘을 로컬 pandas로 재현 (서버 쿼리 없이 백테스트 실행 + 기간분리/부트스트랩/무작위대조군 검증까지 한 번에 출력)</td></tr>
+      <tr><td><code>decile_analysis.py</code></td><td>heat_score/개인수급비율/거래대금비율을 문턱값 없이 10분위로 나눠 향후 5·10·20거래일 수익률을 관찰 (과최적화 위험이 낮은 방식). KOSPI 월간 지수로 시장 베타 대비 초과수익도 비교</td></tr>
+    </table>
+    <div class="callout callout-info">
+      <strong>사용법</strong>
+      <pre style="margin-top:8px"><code>python backfill_signals.py 2022-01-01 2024-12-31
+python run_backtest_local.py 2022-01-01 2024-12-31
+python decile_analysis.py 2022-01-01 2024-12-31</code></pre>
+    </div>
   </section>
 
   <hr class="divider" />
@@ -612,10 +656,12 @@ net_return     = sell_price(exit) / buy_price(entry) - 1</code></pre>
     <h2>15. 외부 API & 서비스</h2>
     <table>
       <tr><th>서비스</th><th>용도</th><th>라이브러리/방식</th><th>상태</th></tr>
-      <tr><td>pykrx</td><td>OHLCV + 투자자별 순매수</td><td>pykrx (KRX 무료 데이터)</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>pykrx</td><td>OHLCV + 투자자별 순매수</td><td>pykrx 1.2.8 (KRX 데이터)</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>KRX 로그인 (data.krx.co.kr)</td><td>투자자별 거래실적 API 세션 인증</td><td>KRX_ID/KRX_PW (.env)</td><td><span class="status-prod">운영 중 (2026-08-10 추가)</span></td></tr>
       <tr><td>FinanceDataReader</td><td>KRX 전 종목 코드 목록</td><td>StockListing('KRX')</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>Anthropic Claude API</td><td>에이전트 의사결정</td><td>anthropic SDK, claude-sonnet-4-6</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>KIS OpenAPI</td><td>실전/모의 주문 실행</td><td>requests (자체 구현)</td><td><span class="status-stub">Stub (미연동)</span></td></tr>
+      <tr><td>KIS OpenAPI — 신용잔고 조회</td><td>daily-credit-balance (국내주식-110)</td><td>requests (자체 구현)</td><td><span class="status-prod">운영 중 (2026-08-10 연동)</span></td></tr>
+      <tr><td>KIS OpenAPI — 주문 실행</td><td>실전/모의 매수·매도</td><td>requests (자체 구현)</td><td><span class="status-stub">Stub (스케줄러 미연결)</span></td></tr>
       <tr><td>Railway PostgreSQL</td><td>모든 데이터 영속</td><td>psycopg2</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>DART API</td><td>공시 데이터</td><td>미구현 (env 예약)</td><td><span class="status-todo">미구현</span></td></tr>
     </table>
@@ -701,10 +747,9 @@ uvicorn dashboard.app:app --reload        # 대시보드 개발 서버</code></p
   <section id="todo">
     <h2>18. 미완성 항목 & 향후 개선</h2>
 
-    <div class="callout callout-warn">
-      <strong>1. 신용잔고 KIS API 연동 <span class="badge badge-yellow">High Priority</span></strong>
-      <code>collector/credit_balance.py</code>의 <code>collect_kis()</code>를 구현하면 heat_score 정확도가 크게 향상됩니다.
-      현재 신용 기여분(최대 3점)이 모두 0으로 반영되는 중입니다.
+    <div class="callout callout-info">
+      <strong>1. 신용잔고 KIS API 연동 <span class="badge badge-green">완료 (2026-08-10)</span></strong>
+      <code>collector/credit_balance.py</code>의 <code>collect_kis()</code> 구현 완료, 실계정으로 검증 완료. investor_flow 버그도 같이 수정되어 heat_score의 개인수급·신용잔고 두 축이 정상 데이터를 쌓기 시작했습니다. 다만 아직 과거 데이터 축적/재검증은 진행 전입니다 (<a href="#analysis-tools">검증용 보조 스크립트</a> 참고).
     </div>
 
     <div class="callout callout-warn">
@@ -737,17 +782,19 @@ uvicorn dashboard.app:app --reload        # 대시보드 개발 서버</code></p
       <tr><td>AI 게이트</td><td>agents/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>모의 실행</td><td>executor/paper.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>실전 실행</td><td>executor/live.py</td><td><span class="status-stub">Stub — 미연동</span></td></tr>
-      <tr><td>신용잔고 수집</td><td>collector/credit_balance.py</td><td><span class="status-stub">Stub — 0 채움</span></td></tr>
+      <tr><td>신용잔고 수집</td><td>collector/credit_balance.py</td><td><span class="status-prod">운영 중 (2026-08-10 KIS API 연동)</span></td></tr>
+      <tr><td>개인수급 수집</td><td>collector/investor_flow.py</td><td><span class="status-prod">운영 중 (2026-08-10 버그 수정)</span></td></tr>
       <tr><td>웹 대시보드</td><td>dashboard/app.py</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>백테스터</td><td>backtester/engine.py</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>백테스터</td><td>backtester/engine.py</td><td><span class="status-prod">운영 중 (2026-08-10 중복포지션 버그 수정)</span></td></tr>
       <tr><td>검증기</td><td>backtester/validator.py</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>로컬 백테스트/분위수 분석</td><td>run_backtest_local.py, decile_analysis.py</td><td><span class="status-prod">운영 중 (2026-08-10 추가)</span></td></tr>
       <tr><td>DART API</td><td>미구현</td><td><span class="status-todo">미구현</span></td></tr>
     </table>
   </section>
 
   <hr class="divider" />
   <p style="color:var(--muted); font-size: 12px; margin-top: 32px; padding-bottom: 64px;">
-    Generated 2026-08-09 &nbsp;·&nbsp; WarrenBuffett Bot UDD v1.0 &nbsp;·&nbsp; github.com/LJY-HY/WarrenBuffett
+    Generated 2026-08-09, Updated 2026-08-10 &nbsp;·&nbsp; WarrenBuffett Bot UDD v1.1 &nbsp;·&nbsp; github.com/LJY-HY/WarrenBuffett
   </p>
 
 </main>
