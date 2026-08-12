@@ -85,6 +85,23 @@ flowchart TD
 
 ---
 
+## 단위 테스트
+
+DB/Claude API/KIS API를 전부 mock으로 격리한 순수 단위 테스트입니다 (실제 네트워크·DB 연결 없이 1~2초 내 완료).
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/ -v
+```
+
+- `test_cost_model.py`, `test_signals.py` — 비용모델/heat_score 계산 (순수 함수)
+- `test_agents_base.py`, `test_gate.py` — Claude API 캐싱/파싱, 4-에이전트 veto·합의 로직
+- `test_contrarian.py`, `test_paper.py` — 진입/청산 후보 필터링, 모의매매 체결
+- `test_connection.py` — DB 커넥션 롤백/재연결 회귀 테스트 (2026-08-10 장애 재발 방지)
+- `test_engine.py` — 백테스터 중복 포지션 버그 회귀 테스트 (2026-08-10 수정 건 재발 방지)
+
+---
+
 ## 실행 방법 (로컬)
 
 ```bash
