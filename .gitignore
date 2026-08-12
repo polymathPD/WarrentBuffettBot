@@ -1,4 +1,6 @@
 .env
+.env.swp
+*.swp
 .claude/
 data
 __pycache__/

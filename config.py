@@ -12,6 +12,7 @@ KIS_ACCOUNT = os.environ.get("KIS_ACCOUNT", "")
 KIS_ACCOUNT_SUFFIX = os.environ.get("KIS_ACCOUNT_SUFFIX", "01")
 KIS_MODE = os.environ.get("KIS_MODE", "paper")
 DART_API_KEY = os.environ.get("DART_API_KEY", "")
+KRX_OPEN_API_KEY = os.environ.get("KRX_OPEN_API_KEY", "")
 
 SLIP_BPS = 20       # 슬리피지 편도 0.20%
 FEE_BPS = 1.5       # 수수료 0.015%
