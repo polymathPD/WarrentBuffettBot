@@ -10,6 +10,3 @@ __pycache__/
 .DS_Store
 *.PNG
 *.png
-retry_investor_flow_backfill.bat
-retry_backfill_log.txt
-auto_retry_investor_flow.py
