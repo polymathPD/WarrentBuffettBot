@@ -7,7 +7,9 @@ processor/signals.py의 heat_score 계산 로직과 동일하지만,
 
 - flow_ratio: 개인 순매수 / 과거 30일 |개인 순매수| 평균
 - vol_ratio : 거래대금(종가*거래량) / 과거 30일 거래대금 평균
-- credit_ratio: credit_balance 데이터 없음 -> 항상 0 기여 (운영 코드와 동일한 동작)
+- credit_ratio: credit_balance 백필 전에는 NULL -> 0 기여 (운영 코드와 동일한 동작)
+- foreign/institution_flow_ratio: 동일 방식으로 계산해 기록만 한다 (heat_score 미반영,
+  processor/signals.py와 동일 — 이유는 그쪽 _heat() 주석 참고)
 """
 import sys, os, time
 sys.path.insert(0, os.path.dirname(__file__))
@@ -31,12 +33,17 @@ def backfill(start_date: str, end_date: str, buffer_days: int = 60):
     print(f"  {len(daily):,}행")
 
     print("investor_flow 로딩 중...")
-    flow = pd.DataFrame(db.fetchall("SELECT code, d, individual_net FROM investor_flow ORDER BY code, d"))
+    flow = pd.DataFrame(db.fetchall(
+        "SELECT code, d, individual_net, foreign_net, institution_net "
+        "FROM investor_flow ORDER BY code, d"))
     flow["d"] = pd.to_datetime(flow["d"])
-    flow["individual_net"] = flow["individual_net"].astype(float)
+    for c in ("individual_net", "foreign_net", "institution_net"):
+        flow[c] = flow[c].astype(float)
     print(f"  {len(flow):,}행")
 
-    merged = daily.merge(flow[["code", "d", "individual_net"]], on=["code", "d"], how="left")
+    merged = daily.merge(
+        flow[["code", "d", "individual_net", "foreign_net", "institution_net"]],
+        on=["code", "d"], how="left")
 
     out_rows = []
     t0 = time.time()
@@ -53,6 +60,12 @@ def backfill(start_date: str, end_date: str, buffer_days: int = 60):
 
         ind_abs_roll = g["individual_net"].abs().shift(1).rolling(WINDOW).mean()
         flow_r = g["individual_net"] / ind_abs_roll
+
+        # 관측용 (heat_score 미반영)
+        frgn_abs_roll = g["foreign_net"].abs().shift(1).rolling(WINDOW).mean()
+        frgn_r = (g["foreign_net"] / frgn_abs_roll).to_numpy()
+        orgn_abs_roll = g["institution_net"].abs().shift(1).rolling(WINDOW).mean()
+        orgn_r = (g["institution_net"] / orgn_abs_roll).to_numpy()
 
         fr = flow_r.to_numpy()
         vr = vol_r.to_numpy()
@@ -75,6 +88,9 @@ def backfill(start_date: str, end_date: str, buffer_days: int = 60):
         idxs = np.where(in_range)[0]
         idxs = idxs[idxs >= WINDOW]  # 초기 WINDOW구간은 계산 불가
 
+        def _f(v):
+            return None if v is None or np.isnan(v) else float(v)
+
         for idx in idxs:
             out_rows.append((
                 code,
@@ -82,6 +98,9 @@ def backfill(start_date: str, end_date: str, buffer_days: int = 60):
                 float(fr[idx]) if valid_fr[idx] else None,
                 None,
                 float(vr[idx]) if valid_vr[idx] else None,
+                _f(frgn_r[idx]),
+                _f(orgn_r[idx]),
+                None,
                 float(heat[idx]),
                 str(signal[idx]),
             ))
@@ -98,12 +117,15 @@ def backfill(start_date: str, end_date: str, buffer_days: int = 60):
         db.executemany(
             """INSERT INTO contrarian_signals
                (code, d, individual_flow_ratio, credit_surge_ratio,
-                volume_ratio, heat_score, signal)
+                volume_ratio, foreign_flow_ratio, institution_flow_ratio,
+                credit_ratio_level, heat_score, signal)
                VALUES %s ON CONFLICT (code, d) DO UPDATE
                SET heat_score = EXCLUDED.heat_score,
                    signal = EXCLUDED.signal,
                    individual_flow_ratio = EXCLUDED.individual_flow_ratio,
-                   volume_ratio = EXCLUDED.volume_ratio""",
+                   volume_ratio = EXCLUDED.volume_ratio,
+                   foreign_flow_ratio = EXCLUDED.foreign_flow_ratio,
+                   institution_flow_ratio = EXCLUDED.institution_flow_ratio""",
             chunk,
         )
         print(f"  {min(i+BATCH, len(out_rows)):,}/{len(out_rows):,}", end="\r")

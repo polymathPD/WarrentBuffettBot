@@ -1,6 +1,8 @@
 """
 역발상 전략 규칙
 - 진입 조건: heat_score < HEAT_AVOID 이고, 52주 위치가 하위 30% 이하 (저평가 영역)
+             (단, heat_score의 3개 입력 지표가 모두 있는 종목만 — 결측을 저과열로
+              오인하지 않기 위함. get_entry_candidates() 주석 참고)
 - 청산 조건: heat_score >= HEAT_SELL 또는 보유 기간 초과 또는 손절
 """
 import sys, os
@@ -18,12 +20,18 @@ def get_entry_candidates(target_date: str = None) -> list[dict]:
     """
     당일 진입 후보 종목 반환.
     조건: heat_score < HEAT_AVOID AND 52주 위치 <= 30% AND 포지션 없음
+          AND heat_score를 구성하는 3개 지표가 모두 존재
     """
     d = target_date or date.today().strftime("%Y-%m-%d")
 
     # 이미 보유 중인 종목 제외
     held = {r["code"] for r in db.fetchall("SELECT code FROM positions")}
 
+    # 3개 지표 NOT NULL 조건이 필요한 이유:
+    # _heat()는 결측 지표를 0점으로 취급하고 합계만 반환하므로, 수급/신용 데이터가
+    # 없는 종목일수록 heat_score가 낮아진다. 아래 ORDER BY heat_score ASC와 만나면
+    # '데이터가 없는 종목'이 '가장 안 과열된 종목'으로 둔갑해 후보 최상위를 차지한다.
+    # 지표 개수가 다른 점수끼리는 애초에 비교가 성립하지 않으므로 셋 다 있는 종목만 본다.
     rows = db.fetchall(
         """SELECT cs.code, cs.heat_score, cs.signal,
                   sd.c AS close_price
@@ -32,6 +40,9 @@ def get_entry_candidates(target_date: str = None) -> list[dict]:
            WHERE cs.d = %s::date
              AND cs.heat_score < %s
              AND cs.signal = 'neutral'
+             AND cs.individual_flow_ratio IS NOT NULL
+             AND cs.credit_surge_ratio IS NOT NULL
+             AND cs.volume_ratio IS NOT NULL
            ORDER BY cs.heat_score ASC
            LIMIT 50""",
         (d, config.get_setting("HEAT_AVOID")),

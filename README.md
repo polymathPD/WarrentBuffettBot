@@ -13,13 +13,13 @@ flowchart TD
 
     subgraph COLLECT["1. 데이터 수집"]
         C1["pykrx\n일봉 OHLCV"]
-        C2["pykrx\n투자자 수급\n(개인/외국인/기관)"]
+        C2["KIS OpenAPI\n투자자별 매매동향\n(개인/외국인/기관)"]
         C3["KIS OpenAPI\n신용융자 잔고"]
     end
 
     subgraph SIGNAL["2. 신호 계산"]
         S1["heat_score 산출\n(개인 순매수 + 신용급증 + 거래대금)"]
-        S2["역발상 필터\nheat < 7.0\n52주 하위 30%"]
+        S2["역발상 필터\nheat < 7.0\n52주 하위 30%\n3개 지표 모두 존재"]
     end
 
     subgraph AGENT["3. Claude AI 에이전트 게이트 ← Claude 동작 지점"]
@@ -31,7 +31,7 @@ flowchart TD
     end
 
     subgraph EXEC["4. 실행 및 기록"]
-        E1["모의 매수 체결\n다음날 시가 기준"]
+        E1["모의 매수 체결\n직전 거래일 신호를\n당일 시가로 체결"]
         E2["Railway PostgreSQL\n거래 기록 저장"]
         E3["🌐 웹 대시보드\n포지션 / 수익률 / 설정"]
     end
@@ -76,6 +76,7 @@ flowchart TD
 | 역할 | 기술 |
 |------|------|
 | 주가 데이터 | pykrx, FinanceDataReader |
+| 수급·신용잔고 | 한국투자증권 KIS OpenAPI |
 | 주문 실행 | 한국투자증권 KIS OpenAPI |
 | AI 판단 | Anthropic Claude API (claude-sonnet-4-6) |
 | DB | Railway PostgreSQL |
@@ -96,9 +97,13 @@ pytest tests/ -v
 
 - `test_cost_model.py`, `test_signals.py` — 비용모델/heat_score 계산 (순수 함수)
 - `test_agents_base.py`, `test_gate.py` — Claude API 캐싱/파싱, 4-에이전트 veto·합의 로직
-- `test_contrarian.py`, `test_paper.py` — 진입/청산 후보 필터링, 모의매매 체결
-- `test_connection.py` — DB 커넥션 롤백/재연결 회귀 테스트 (2026-08-10 장애 재발 방지)
-- `test_engine.py` — 백테스터 중복 포지션 버그 회귀 테스트 (2026-08-10 수정 건 재발 방지)
+- `test_contrarian.py` — 진입/청산 후보 필터링, 청산 사유 우선순위
+- `test_paper.py` — 모의 매수/매도 비용모델 및 DB 기록
+- `test_scheduler.py` — 진입 신호일 선택 (직전 거래일 신호 → 당일 시가 체결)
+- `test_universe.py` — 시가총액 기준 수집 대상 선정, 기수집·상장폐지 종목 유지
+- `test_investor_flow.py`, `test_credit_balance.py` — KIS 페이지네이션 종료 조건, 커서 기록 조건, 응답 파싱, 종목별 실패 격리
+- `test_connection.py` — DB 커넥션 롤백/재연결
+- `test_engine.py` — 백테스터 중복 포지션 방지
 
 ---
 
@@ -111,8 +116,13 @@ pip install -r requirements.txt
 # DB 초기화
 python setup_db.py
 
-# 데이터 수집
-python collector/stock_daily.py
+# 데이터 수집 (순차 실행 — KIS 모의투자 계정은 초당 2건 한도)
+python collector/stock_daily.py      # 일봉 (pykrx)
+python collector/investor_flow.py    # 투자자별 수급 (KIS)
+python collector/credit_balance.py   # 신용잔고 (KIS)
+
+# 신호 계산
+python processor/signals.py
 
 # 대시보드 실행
 uvicorn dashboard.app:app --reload --port 8000
@@ -132,15 +142,20 @@ KIS_APP_KEY=...
 KIS_APP_SECRET=...
 KIS_ACCOUNT=계좌번호
 KIS_ACCOUNT_SUFFIX=01
-KIS_MOCK=true        # 모의투자
+KIS_MOCK=true        # 모의투자 서버 사용 여부
 KIS_MODE=paper
-
-# 투자자별 수급(investor_flow) 수집에 필요 (data.krx.co.kr 무료 회원가입)
-KRX_ID=...
-KRX_PW=...
 ```
 
-> `KRX_ID`/`KRX_PW`가 없으면 개인/외국인/기관 순매수 데이터가 전혀 수집되지 않습니다 (KRX 서버가 로그인 세션 없이는 빈 응답만 반환).
+> 수급·신용잔고 수집 대상은 **시가총액 3,000억 이상**(`collector/universe.py`의 `MIN_MARCAP`)으로
+> 제한됩니다. 편도 0.2% 슬리피지 가정으로는 체결할 수 없는 종목을 배제하기 위함이며,
+> 이미 수집한 종목은 시총과 무관하게 계속 갱신해 시계열에 구멍이 생기지 않도록 합니다.
+
+> 일봉은 pykrx(인증 불필요), 투자자별 수급과 신용잔고는 KIS OpenAPI로 수집합니다.
+> `KIS_APP_KEY`/`KIS_APP_SECRET`이 없으면 수급·신용잔고가 수집되지 않아
+> heat_score의 3개 지표 중 거래대금 한 축만 남고, 진입 후보가 나오지 않습니다.
+
+> `KIS_MOCK=true`(모의투자 계정)는 **초당 2건** 요청 한도가 있습니다. 전 종목
+> 백필처럼 대량 수집을 할 때는 수집기를 하나씩 순차로 돌리세요.
 
 ---
 

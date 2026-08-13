@@ -37,15 +37,23 @@ CREATE TABLE IF NOT EXISTS credit_balance (
 
 -- 역발상 과열 신호
 CREATE TABLE IF NOT EXISTS contrarian_signals (
-    code                  TEXT,
-    d                     DATE,
-    individual_flow_ratio NUMERIC,
-    credit_surge_ratio    NUMERIC,
-    volume_ratio          NUMERIC,
-    heat_score            NUMERIC,
-    signal                TEXT,
+    code                   TEXT,
+    d                      DATE,
+    individual_flow_ratio  NUMERIC,
+    credit_surge_ratio     NUMERIC,
+    volume_ratio           NUMERIC,
+    foreign_flow_ratio     NUMERIC,   -- 관측용 (heat_score 미반영)
+    institution_flow_ratio NUMERIC,   -- 관측용 (heat_score 미반영)
+    credit_ratio_level     NUMERIC,   -- 관측용 (heat_score 미반영)
+    heat_score             NUMERIC,
+    signal                 TEXT,
     PRIMARY KEY (code, d)
 );
+
+-- 기존 DB에 관측용 컬럼 추가 (멱등)
+ALTER TABLE contrarian_signals ADD COLUMN IF NOT EXISTS foreign_flow_ratio     NUMERIC;
+ALTER TABLE contrarian_signals ADD COLUMN IF NOT EXISTS institution_flow_ratio NUMERIC;
+ALTER TABLE contrarian_signals ADD COLUMN IF NOT EXISTS credit_ratio_level     NUMERIC;
 
 -- AI 에이전트 판단 로그
 CREATE TABLE IF NOT EXISTS agent_decisions (

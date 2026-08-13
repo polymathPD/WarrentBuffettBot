@@ -1,6 +1,10 @@
 """
 역발상 과열 신호 계산 → contrarian_signals
 heat_score 0~10: 높을수록 과열(개인 쏠림, 신용 급증, 거래대금 급증)
+
+외국인/기관 순매수 배율과 신용잔고 비율(수준)도 함께 기록하지만 heat_score에는
+반영하지 않는다 — 가중치를 정할 근거(수익률과의 관계)를 아직 측정하지 않았기 때문.
+자세한 배경은 _heat() 주석 참고.
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -38,8 +42,36 @@ def _surge_ratio(arr: np.ndarray) -> np.ndarray:
     return out
 
 
+def _f(x):
+    """DB 삽입용 변환: NaN -> None, numpy 스칼라 -> 파이썬 float.
+
+    np.float64를 그대로 psycopg2에 넘기면 numpy 2.0의 repr("np.float64(...)")이
+    SQL에 박혀 INSERT가 실패하므로 반드시 네이티브 float로 캐스팅한다.
+    """
+    if x is None:
+        return None
+    return None if np.isnan(x) else float(x)
+
+
+def _abs_ratio(arr: np.ndarray) -> float:
+    """오늘 값 / 과거 WINDOW일 절대값 평균. 분모가 0이면 NaN."""
+    avg_abs = np.mean(np.abs(arr[:-1]))
+    return arr[-1] / avg_abs if avg_abs > 0 else np.nan
+
+
 def _heat(flow_r, credit_r, vol_r) -> tuple[float, str]:
-    """세 신호를 합산해 heat_score와 signal을 반환"""
+    """
+    세 신호를 합산해 heat_score와 signal을 반환.
+
+    외국인/기관 순매수는 여기 들어가지 않는다. 국내 수급은 개인/외국인/기관 합이
+    대략 0이라 개인 순매수와 -(외국인+기관)의 상관계수가 0.997로, 별도 축으로
+    더하면 같은 정보를 두 번 세게 된다. 다만 외국인 단독(0.76)과 기관 단독(0.59)은
+    개인과의 상관이 낮아 독립 정보가 있으므로, compute_for_date()가 두 값을 각각
+    기록해 둔다 — decile_analysis.py로 수익률과의 관계를 측정한 뒤 가중치를 정한다.
+
+    신용잔고 비율(credit_ratio_level)도 마찬가지다. credit_surge_ratio가 '변화'라면
+    이쪽은 '수준'이라 개념적으로 독립이지만, 아직 표본이 부족해 기록만 한다.
+    """
     score = 0.0
     count = 0
 
@@ -94,25 +126,29 @@ def compute_for_date(target_date: str = None):
         amounts = np.array([float(r["c"]) * float(r["v"]) for r in reversed(daily)])
         vol_r = amounts[-1] / np.mean(amounts[:-1]) if np.mean(amounts[:-1]) > 0 else np.nan
 
-        # 개인 순매수
+        # 투자자별 순매수 (개인은 heat_score용, 외국인·기관은 관측용)
         flows = db.fetchall(
-            "SELECT individual_net FROM investor_flow WHERE code=%s AND d <= %s::date "
-            "ORDER BY d DESC LIMIT %s",
+            "SELECT individual_net, foreign_net, institution_net FROM investor_flow "
+            "WHERE code=%s AND d <= %s::date ORDER BY d DESC LIMIT %s",
             (code, d, WINDOW + 1),
         )
         if len(flows) >= WINDOW + 1:
-            ind = np.array([float(r["individual_net"]) for r in reversed(flows)])
-            avg_abs = np.mean(np.abs(ind[:-1]))
-            flow_r = ind[-1] / avg_abs if avg_abs > 0 else np.nan
+            ordered = list(reversed(flows))
+            flow_r = _abs_ratio(np.array([float(r["individual_net"]) for r in ordered]))
+            foreign_r = _abs_ratio(np.array([float(r["foreign_net"]) for r in ordered]))
+            inst_r = _abs_ratio(np.array([float(r["institution_net"]) for r in ordered]))
         else:
-            flow_r = np.nan
+            flow_r = foreign_r = inst_r = np.nan
 
-        # 신용잔고
+        # 신용잔고 (급증 배율은 heat_score용, 잔고 비율 수준은 관측용)
         credits = db.fetchall(
-            "SELECT credit_amt FROM credit_balance WHERE code=%s AND d <= %s::date "
-            "ORDER BY d DESC LIMIT %s",
+            "SELECT credit_amt, credit_ratio FROM credit_balance "
+            "WHERE code=%s AND d <= %s::date ORDER BY d DESC LIMIT %s",
             (code, d, WINDOW + 1),
         )
+        credit_lvl = np.nan
+        if credits and credits[0]["credit_ratio"] is not None:
+            credit_lvl = float(credits[0]["credit_ratio"])  # 결제일 기준이라 며칠 지연됨
         if len(credits) >= WINDOW + 1:
             cred = np.array([float(r["credit_amt"]) for r in reversed(credits)])
             avg_c = np.mean(cred[:-1])
@@ -121,24 +157,31 @@ def compute_for_date(target_date: str = None):
             credit_r = np.nan
 
         heat, signal = _heat(flow_r, credit_r, vol_r)
-        rows.append((code, d, float(flow_r) if not np.isnan(flow_r) else None,
-                     float(credit_r) if not np.isnan(credit_r) else None,
-                     float(vol_r) if not np.isnan(vol_r) else None,
+        rows.append((code, d, _f(flow_r), _f(credit_r), _f(vol_r),
+                     _f(foreign_r), _f(inst_r), _f(credit_lvl),
                      heat, signal))
 
     if rows:
         db.executemany(
             """INSERT INTO contrarian_signals
                (code, d, individual_flow_ratio, credit_surge_ratio,
-                volume_ratio, heat_score, signal)
+                volume_ratio, foreign_flow_ratio, institution_flow_ratio,
+                credit_ratio_level, heat_score, signal)
                VALUES %s ON CONFLICT (code, d) DO UPDATE
                SET heat_score = EXCLUDED.heat_score,
-                   signal = EXCLUDED.signal""",
+                   signal = EXCLUDED.signal,
+                   individual_flow_ratio = EXCLUDED.individual_flow_ratio,
+                   credit_surge_ratio = EXCLUDED.credit_surge_ratio,
+                   volume_ratio = EXCLUDED.volume_ratio,
+                   foreign_flow_ratio = EXCLUDED.foreign_flow_ratio,
+                   institution_flow_ratio = EXCLUDED.institution_flow_ratio,
+                   credit_ratio_level = EXCLUDED.credit_ratio_level""",
             rows,
         )
 
-    avoid = sum(1 for r in rows if r[6] == "avoid")
-    sell = sum(1 for r in rows if r[6] == "sell")
+    # signal은 튜플 마지막 원소다. 고정 인덱스로 두면 컬럼 추가 시 조용히 어긋난다.
+    avoid = sum(1 for r in rows if r[-1] == "avoid")
+    sell = sum(1 for r in rows if r[-1] == "sell")
     print(f"{d}: {len(rows)}종목 신호 계산 완료  avoid={avoid}  sell={sell}")
 
 

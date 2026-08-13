@@ -14,10 +14,14 @@ def test_buy_rejected_when_slots_full(mock_db, mock_settings):
     mock_db.execute.assert_not_called()
 
 
-def test_buy_rejected_when_no_next_day_data(mock_db, mock_settings):
+def test_buy_rejected_when_code_has_no_bar_after_signal_date(mock_db, mock_settings):
+    """상장폐지 등으로 신호일 이후 봉이 아예 없는 종목은 체결할 수 없다.
+
+    주의: 이건 예외 케이스지, 일상 흐름이 아니다. 스케줄러가 '오늘' 신호를 넘겨서
+    매번 이 경로로 빠지던 버그는 tests/test_scheduler.py가 막는다."""
     mock_db.fetchone.side_effect = [
         {"n": 0},   # 슬롯 확인
-        None,       # 다음 거래일 시가 없음
+        None,       # 신호일 이후 봉 없음
     ]
 
     result = paper.buy("005930", "삼성전자", "2024-01-15", 70000, 5.0, {})

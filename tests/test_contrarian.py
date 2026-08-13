@@ -41,6 +41,28 @@ def test_entry_candidates_boundary_pos52w_030_is_included(mock_db, mock_settings
     assert len(result) == 1  # <= 0.30 이므로 포함
 
 
+def test_missing_inputs_score_zero_and_would_rank_first(mock_settings):
+    """데이터가 전혀 없는 종목은 heat=0.0/neutral이 되어 ORDER BY heat_score ASC의
+    최상위를 차지한다 — '결측'이 '가장 안 과열됨'으로 둔갑한다. 그래서
+    get_entry_candidates()가 3개 지표 결측 행을 걸러내야 한다."""
+    import numpy as np
+    from processor.signals import _heat
+
+    assert _heat(np.nan, np.nan, np.nan) == (0.0, "neutral")
+
+
+def test_entry_query_excludes_rows_with_missing_inputs(mock_db, mock_settings):
+    """위 결측-위장을 막는 가드가 쿼리에 실제로 걸려 있는지 고정한다."""
+    mock_db.fetchall.side_effect = [[], []]
+
+    contrarian.get_entry_candidates("2026-08-12")
+
+    sql = mock_db.fetchall.call_args_list[1][0][0]
+    assert "cs.individual_flow_ratio IS NOT NULL" in sql
+    assert "cs.credit_surge_ratio IS NOT NULL" in sql
+    assert "cs.volume_ratio IS NOT NULL" in sql
+
+
 def test_exit_stop_takes_priority_over_expiry(mock_db, mock_settings):
     """손절가 이하이면서 동시에 만기 초과여도 사유는 'stop'이어야 함 (if/elif 우선순위)."""
     mock_db.fetchall.return_value = [{
