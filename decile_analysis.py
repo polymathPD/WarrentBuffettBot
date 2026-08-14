@@ -35,9 +35,13 @@ def load_kospi_benchmark():
     return df
 
 
-def load_data():
-    print("stock_daily 로딩 중...")
-    daily = pd.DataFrame(db.fetchall("SELECT code, d, o, c, v FROM stock_daily ORDER BY code, d"))
+def load_data(load_floor="2021-09-01"):
+    """분석에 필요한 범위만 적재한다 (전 기간을 통째로 올리면 메모리가 터진다).
+    WINDOW 워밍업과 향후수익률 계산 꼬리를 감안해 시작일보다 넉넉히 앞에서 자른다."""
+    print(f"stock_daily 로딩 중... ({load_floor} 이후)")
+    daily = pd.DataFrame(db.fetchall(
+        "SELECT code, d, o, c, v FROM stock_daily WHERE d >= %s ORDER BY code, d",
+        (load_floor,)))
     daily["d"] = pd.to_datetime(daily["d"])
     for col in ("o", "c", "v"):
         daily[col] = daily[col].astype(float)
@@ -45,7 +49,9 @@ def load_data():
     print(f"  {len(daily):,}행")
 
     print("investor_flow 로딩 중...")
-    flow = pd.DataFrame(db.fetchall("SELECT code, d, individual_net FROM investor_flow ORDER BY code, d"))
+    flow = pd.DataFrame(db.fetchall(
+        "SELECT code, d, individual_net FROM investor_flow WHERE d >= %s ORDER BY code, d",
+        (load_floor,)))
     flow["d"] = pd.to_datetime(flow["d"])
     flow["individual_net"] = flow["individual_net"].astype(float)
     print(f"  {len(flow):,}행")

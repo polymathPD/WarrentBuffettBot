@@ -24,9 +24,19 @@ import config
 from backtester.cost_model import buy_price, sell_price, net_return
 
 
-def load_data():
-    print("stock_daily 로딩 중...")
-    daily = pd.DataFrame(db.fetchall("SELECT code, d, o, h, l, c FROM stock_daily ORDER BY code, d"))
+def load_data(start_date: str, end_date: str, tail_days: int = 90):
+    """백테스트 구간에 필요한 범위만 적재한다.
+
+    전 기간을 통째로 올리면 fetchall이 만드는 파이썬 dict/Decimal 객체만으로
+    메모리가 터진다. 진입은 end_date까지만 발생하지만 청산은 최대 보유기간만큼
+    뒤에 일어나므로, 일봉은 end_date + tail_days까지 받는다.
+    """
+    price_end = (pd.Timestamp(end_date) + pd.Timedelta(days=tail_days)).date()
+
+    print(f"stock_daily 로딩 중... ({start_date} ~ {price_end})")
+    daily = pd.DataFrame(db.fetchall(
+        "SELECT code, d, o, h, l, c FROM stock_daily "
+        "WHERE d >= %s AND d <= %s ORDER BY code, d", (start_date, price_end)))
     daily["d"] = pd.to_datetime(daily["d"])
     for col in ("o", "h", "l", "c"):
         daily[col] = daily[col].astype(float)
@@ -34,8 +44,8 @@ def load_data():
 
     print("contrarian_signals 로딩 중...")
     signals = pd.DataFrame(db.fetchall(
-        "SELECT code, d, heat_score, signal FROM contrarian_signals ORDER BY code, d"
-    ))
+        "SELECT code, d, heat_score, signal FROM contrarian_signals "
+        "WHERE d >= %s AND d <= %s ORDER BY code, d", (start_date, price_end)))
     signals["d"] = pd.to_datetime(signals["d"])
     signals["heat_score"] = signals["heat_score"].astype(float)
     print(f"  {len(signals):,}행")
@@ -183,7 +193,7 @@ def mdd(rets: np.ndarray) -> float:
 
 
 def main(start_date: str, end_date: str):
-    daily, signals_df = load_data()
+    daily, signals_df = load_data(start_date, end_date)
     print("\n가격 인덱스 구성 중...")
     price_idx = build_price_index(daily)
 
