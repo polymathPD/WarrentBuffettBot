@@ -7,7 +7,10 @@ processor/signals.py의 heat_score 계산 로직과 동일하지만,
 
 - flow_ratio: 개인 순매수 / 과거 30일 |개인 순매수| 평균
 - vol_ratio : 거래대금(종가*거래량) / 과거 30일 거래대금 평균
-- credit_ratio: credit_balance 백필 전에는 NULL -> 0 기여 (운영 코드와 동일한 동작)
+- credit_surge_ratio: 신용잔고 / 과거 30일 신용잔고 평균
+  (결제일 기준이라 거래일과 어긋날 수 있어 종목별 ffill 후 사용 — processor/signals.py가
+   "d 이하 최신 행"을 쓰는 것과 같은 의미)
+- credit_ratio_level: 신용잔고 비율(수준). 기록만 하고 heat_score에는 미반영
 - foreign/institution_flow_ratio: 동일 방식으로 계산해 기록만 한다 (heat_score 미반영,
   processor/signals.py와 동일 — 이유는 그쪽 _heat() 주석 참고)
 """
@@ -23,34 +26,75 @@ WINDOW = 30
 BATCH = 5000
 
 
-def backfill(start_date: str, end_date: str, buffer_days: int = 60):
-    end_buffer = pd.Timestamp(end_date) + pd.Timedelta(days=buffer_days)
-
-    print("stock_daily 로딩 중...")
-    daily = pd.DataFrame(db.fetchall("SELECT code, d, c, v FROM stock_daily ORDER BY code, d"))
+def _load_batch(codes: list[str], load_floor):
+    """해당 종목들의 일봉·수급·신용을 하나의 DataFrame으로 합쳐 반환."""
+    daily = pd.DataFrame(db.fetchall(
+        "SELECT code, d, c, v FROM stock_daily "
+        "WHERE code = ANY(%s) AND d >= %s ORDER BY code, d", (codes, load_floor)))
+    if daily.empty:
+        return daily
     daily["d"] = pd.to_datetime(daily["d"])
     daily["amt"] = daily["c"].astype(float) * daily["v"].astype(float)
-    print(f"  {len(daily):,}행")
 
-    print("investor_flow 로딩 중...")
     flow = pd.DataFrame(db.fetchall(
-        "SELECT code, d, individual_net, foreign_net, institution_net "
-        "FROM investor_flow ORDER BY code, d"))
-    flow["d"] = pd.to_datetime(flow["d"])
-    for c in ("individual_net", "foreign_net", "institution_net"):
-        flow[c] = flow[c].astype(float)
-    print(f"  {len(flow):,}행")
+        "SELECT code, d, individual_net, foreign_net, institution_net FROM investor_flow "
+        "WHERE code = ANY(%s) AND d >= %s ORDER BY code, d", (codes, load_floor)))
+    if flow.empty:
+        flow = pd.DataFrame(columns=["code", "d", "individual_net",
+                                     "foreign_net", "institution_net"])
+    else:
+        flow["d"] = pd.to_datetime(flow["d"])
+        for c in ("individual_net", "foreign_net", "institution_net"):
+            flow[c] = flow[c].astype(float)
 
-    merged = daily.merge(
-        flow[["code", "d", "individual_net", "foreign_net", "institution_net"]],
-        on=["code", "d"], how="left")
+    credit = pd.DataFrame(db.fetchall(
+        "SELECT code, d, credit_amt, credit_ratio FROM credit_balance "
+        "WHERE code = ANY(%s) AND d >= %s ORDER BY code, d", (codes, load_floor)))
+    if credit.empty:
+        credit = pd.DataFrame(columns=["code", "d", "credit_amt", "credit_ratio"])
+    else:
+        credit["d"] = pd.to_datetime(credit["d"])
+        credit["credit_amt"] = credit["credit_amt"].astype(float)
+        credit["credit_ratio"] = credit["credit_ratio"].astype(float)
 
-    out_rows = []
+    merged = daily.merge(flow, on=["code", "d"], how="left")
+    return merged.merge(credit, on=["code", "d"], how="left")
+
+
+def backfill(start_date: str, end_date: str, buffer_days: int = 60,
+             code_batch: int = 300):
+    """
+    종목을 code_batch개씩 끊어 적재→계산→삽입한다.
+
+    전 종목·전 기간을 한 번에 올리면(일봉 350만 + 수급 236만 + 신용 106만 행)
+    fetchall이 만드는 파이썬 dict/Decimal 객체만으로 메모리가 터진다. 배치로
+    끊으면 사용량이 배치 크기에 비례해 일정하게 유지된다.
+    """
+    end_buffer = pd.Timestamp(end_date) + pd.Timedelta(days=buffer_days)
+    # WINDOW(30거래일) 워밍업 확보용 여유. 휴장일을 감안해 넉넉히 잡는다.
+    load_floor = (pd.Timestamp(start_date) - pd.Timedelta(days=120)).date()
+
+    all_codes = [r["code"] for r in
+                 db.fetchall("SELECT DISTINCT code FROM stock_daily ORDER BY code")]
+    print(f"대상 {len(all_codes):,}종목, {code_batch}종목씩 처리 (기준일 {load_floor} 이후)")
+
     t0 = time.time()
-    codes = merged["code"].unique()
-    print(f"\n{len(codes):,}개 종목 벡터화 계산 중...")
+    total_out = 0
+    for b0 in range(0, len(all_codes), code_batch):
+        batch = all_codes[b0:b0 + code_batch]
+        merged = _load_batch(batch, load_floor)
+        if merged.empty:
+            continue
+        total_out += _process(merged, start_date, end_buffer)
+        print(f"  {min(b0 + code_batch, len(all_codes)):,}/{len(all_codes):,}종목  "
+              f"누적 {total_out:,}행  ({time.time() - t0:.0f}s)")
 
-    for i, (code, g) in enumerate(merged.groupby("code", sort=False)):
+    print(f"\n완료: {total_out:,}행, {time.time() - t0:.0f}s")
+
+
+def _process(merged, start_date, end_buffer) -> int:
+    out_rows = []
+    for code, g in merged.groupby("code", sort=False):
         if len(g) < WINDOW + 1:
             continue
         g = g.sort_values("d").reset_index(drop=True)
@@ -67,16 +111,26 @@ def backfill(start_date: str, end_date: str, buffer_days: int = 60):
         orgn_abs_roll = g["institution_net"].abs().shift(1).rolling(WINDOW).mean()
         orgn_r = (g["institution_net"] / orgn_abs_roll).to_numpy()
 
+        # 신용잔고는 결제일 기준이라 거래일과 어긋날 수 있어 ffill로 최신값을 끌어온다
+        cred = g["credit_amt"].ffill()
+        cred_roll = cred.shift(1).rolling(WINDOW).mean()
+        cred_lvl = g["credit_ratio"].ffill().to_numpy()
+
         fr = flow_r.to_numpy()
         vr = vol_r.to_numpy()
+        cr = (cred / cred_roll).to_numpy()
         valid_fr = ~np.isnan(fr) & (ind_abs_roll.to_numpy() > 0)
         valid_vr = ~np.isnan(vr) & (amt_roll.to_numpy() > 0)
+        valid_cr = ~np.isnan(cr) & (cred_roll.to_numpy() > 0)
 
         contrib_fr = np.clip((fr - 1.0) * 3.0, 0, 4.0)
         contrib_vr = np.clip((vr - 1.5) * 2.0, 0, 3.0)
+        contrib_cr = np.clip((cr - 1.0) * 3.0, 0, 3.0)
 
-        score = np.where(valid_fr, contrib_fr, 0) + np.where(valid_vr, contrib_vr, 0)
-        has_any = valid_fr | valid_vr
+        score = (np.where(valid_fr, contrib_fr, 0)
+                 + np.where(valid_vr, contrib_vr, 0)
+                 + np.where(valid_cr, contrib_cr, 0))
+        has_any = valid_fr | valid_vr | valid_cr
         heat = np.where(has_any, score, 0.0)
 
         signal = np.full(len(g), "neutral", dtype=object)
@@ -96,22 +150,15 @@ def backfill(start_date: str, end_date: str, buffer_days: int = 60):
                 code,
                 g.loc[idx, "d"].date(),
                 float(fr[idx]) if valid_fr[idx] else None,
-                None,
+                float(cr[idx]) if valid_cr[idx] else None,
                 float(vr[idx]) if valid_vr[idx] else None,
                 _f(frgn_r[idx]),
                 _f(orgn_r[idx]),
-                None,
+                _f(cred_lvl[idx]),
                 float(heat[idx]),
                 str(signal[idx]),
             ))
 
-        if (i + 1) % 500 == 0:
-            print(f"  {i+1:,}/{len(codes):,}종목 처리, 누적 {len(out_rows):,}행 ({time.time()-t0:.0f}s)")
-
-    print(f"\n계산 완료: {len(out_rows):,}행, {time.time()-t0:.0f}s")
-
-    print("DB 삽입 중...")
-    t1 = time.time()
     for i in range(0, len(out_rows), BATCH):
         chunk = out_rows[i:i + BATCH]
         db.executemany(
@@ -123,14 +170,15 @@ def backfill(start_date: str, end_date: str, buffer_days: int = 60):
                SET heat_score = EXCLUDED.heat_score,
                    signal = EXCLUDED.signal,
                    individual_flow_ratio = EXCLUDED.individual_flow_ratio,
+                   credit_surge_ratio = EXCLUDED.credit_surge_ratio,
                    volume_ratio = EXCLUDED.volume_ratio,
                    foreign_flow_ratio = EXCLUDED.foreign_flow_ratio,
-                   institution_flow_ratio = EXCLUDED.institution_flow_ratio""",
+                   institution_flow_ratio = EXCLUDED.institution_flow_ratio,
+                   credit_ratio_level = EXCLUDED.credit_ratio_level""",
             chunk,
         )
-        print(f"  {min(i+BATCH, len(out_rows)):,}/{len(out_rows):,}", end="\r")
 
-    print(f"\n삽입 완료: {len(out_rows):,}행 ({time.time()-t1:.0f}s)")
+    return len(out_rows)
 
 
 if __name__ == "__main__":
