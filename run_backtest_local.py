@@ -25,7 +25,7 @@ from backtester.cost_model import buy_price, sell_price, net_return
 from backtester.store import save_run
 from recorder.evaluator import mdd, bootstrap_positive_rate
 
-STRATEGY = "contrarian_v1"
+STRATEGY = "contrarian_v1_unconstrained"   # 슬롯 제약 없는 신호 품질 측정용
 
 
 def load_data(start_date: str, end_date: str, tail_days: int = 90):
@@ -241,8 +241,8 @@ def main(start_date: str, end_date: str):
 
     if not all_trades or len(all_trades) < 10:
         print("\n거래 수가 10건 미만 -> 검증(기간분리/부트스트랩/대조군) 생략")
-        save_run(STRATEGY, "전체 기간", start_date, end_date,
-                 params, summary, to_store_rows(all_trades))
+        save_run(STRATEGY, start_date, end_date, params, summary,
+                 to_store_rows(all_trades))
         return all_trades, stats
 
     # 기간 분리
@@ -284,8 +284,8 @@ def main(start_date: str, end_date: str):
         "t1_mean_pct": (float(np.mean([t["net_ret"] for t in t1]) * 100) if t1 else None),
         "t2_mean_pct": (float(np.mean([t["net_ret"] for t in t2]) * 100) if t2 else None),
     })
-    save_run(STRATEGY, "전체 기간", start_date, end_date,
-             params, summary, to_store_rows(all_trades))
+    save_run(STRATEGY, start_date, end_date, params, summary,
+             to_store_rows(all_trades))
 
     return all_trades, {**stats, "bootstrap_positive_pct": bp, "random_pct_rank": pct_rank,
                           "half1": summarize.__self__ if False else None,

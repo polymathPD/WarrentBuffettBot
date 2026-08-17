@@ -113,16 +113,19 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 -- 백테스트 실행 단위 (run_backtest_local.py, research/portfolio_backtest.py 공용)
+-- 전략당 최신 결과 한 건만 유지한다. 규칙 변형은 각각 별도 strategy로 부여한다.
 CREATE TABLE IF NOT EXISTS backtest_runs (
     id       SERIAL PRIMARY KEY,
     ts       TIMESTAMPTZ DEFAULT NOW(),
-    strategy TEXT,
-    label    TEXT,      -- 같은 실행 안에서 규칙 변형을 구분 (예: '현행 5슬롯')
+    strategy TEXT UNIQUE,
     start_d  DATE,
     end_d    DATE,
     params   JSONB,     -- 슬롯/보유기간/랭킹 지표 등 실행 파라미터
     summary  JSONB      -- 거래수, 평균수익률, t값, MDD 등 요약 통계
 );
+
+ALTER TABLE backtest_runs DROP COLUMN IF EXISTS label;
+CREATE UNIQUE INDEX IF NOT EXISTS backtest_runs_strategy_key ON backtest_runs (strategy);
 
 -- 백테스트 개별 매매
 CREATE TABLE IF NOT EXISTS backtest_trades (

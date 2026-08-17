@@ -20,8 +20,6 @@ import db.connection as db
 from backtester.cost_model import buy_price, sell_price
 from backtester.store import save_run
 
-STRATEGY = "contrarian_v1"
-
 START = sys.argv[1] if len(sys.argv) > 1 else "2022-01-01"
 END   = sys.argv[2] if len(sys.argv) > 2 else "2024-12-31"
 WARMUP = (pd.Timestamp(START) - pd.Timedelta(days=400)).strftime("%Y-%m-%d")          # pos52w(252일) 워밍업
@@ -81,10 +79,13 @@ def add_pos52w(px):
 
 def simulate(px, sig, rank_col, ascending, slots, max_hold,
              stop_pct=0.07, use_pos52w=True, exit_rank_pct=None,
-             exit_cols=(), label=""):
+             exit_cols=(), label="", strategy=""):
     """
     매일: (1) 보유 종목 청산 판정  (2) 빈 슬롯을 랭킹 상위 후보로 채움
     진입은 신호일 다음 거래일 시가, 청산은 당일 종가(손절은 비관적 체결).
+
+    label은 콘솔 표시용, strategy는 backtest_runs 저장 키다. 규칙 변형마다
+    다른 strategy를 줘야 서로 덮어쓰지 않는다.
     """
     px = px.set_index(["code", "d"]).sort_index()
     dates = np.sort(sig["d"].unique())
@@ -174,7 +175,7 @@ def simulate(px, sig, rank_col, ascending, slots, max_hold,
     print(f"  평균 보유 {avg_held:.1f}일  청산사유 {reasons}")
 
     save_run(
-        STRATEGY, label, START, END,
+        strategy, START, END,
         {"rank_col": rank_col, "ascending": ascending, "slots": slots,
          "max_hold_days": max_hold, "stop_pct": stop_pct,
          "pos52w_filter": use_pos52w, "exit_rank_pct": exit_rank_pct,
@@ -205,26 +206,29 @@ def main():
     print("=" * 74)
     print("A. 현행 규칙 (heat 랭킹, 52주 하위 30%, 슬롯 12, 20일)")
     print("=" * 74)
-    simulate(px, sig.copy(), "heat_score", True, 12, 20, label="현행 12슬롯")
-    simulate(px, sig.copy(), "heat_score", True, 5, 20, label="현행 5슬롯")
+    simulate(px, sig.copy(), "heat_score", True, 12, 20,
+             label="현행 12슬롯", strategy="contrarian_v1_slot12")
+    simulate(px, sig.copy(), "heat_score", True, 5, 20,
+             label="현행 5슬롯", strategy="contrarian_v1_slot5")
 
     print("\n" + "=" * 74)
     print("B. 신용급증 랭킹으로 교체 (52주 필터 유지)")
     print("=" * 74)
-    simulate(px, sig.copy(), "credit_surge_ratio", True, 5, 20, label="신용랭킹 5슬롯")
+    simulate(px, sig.copy(), "credit_surge_ratio", True, 5, 20,
+             label="신용랭킹 5슬롯", strategy="credit_rank_slot5")
 
     print("\n" + "=" * 74)
     print("C. 52주 필터 제거")
     print("=" * 74)
-    simulate(px, sig.copy(), "credit_surge_ratio", True, 5, 20,
-             use_pos52w=False, label="신용랭킹 5슬롯 (52주 필터 없음)")
+    simulate(px, sig.copy(), "credit_surge_ratio", True, 5, 20, use_pos52w=False,
+             label="신용랭킹 5슬롯 (52주 필터 없음)", strategy="credit_rank_no52w")
 
     print("\n" + "=" * 74)
     print("D. C + 청산신호 추가 (신용급증/기관순매수 상위 10% 진입 시 청산)")
     print("=" * 74)
     simulate(px, sig.copy(), "credit_surge_ratio", True, 5, 20, use_pos52w=False,
              exit_rank_pct=0.90, exit_cols=("credit_surge_ratio", "institution_flow_ratio"),
-             label="C + 신호청산")
+             label="C + 신호청산", strategy="credit_rank_no52w_exit")
 
 
 if __name__ == "__main__":
