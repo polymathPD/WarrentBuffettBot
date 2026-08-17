@@ -86,16 +86,32 @@ CREATE TABLE IF NOT EXISTS trades (
 );
 
 -- 보유 포지션
+-- 전략마다 슬롯과 청산 규칙이 다르므로 같은 종목을 두 전략이 각각 보유할 수 있다.
 CREATE TABLE IF NOT EXISTS positions (
-    code          TEXT PRIMARY KEY,
+    code          TEXT,
+    strategy      TEXT NOT NULL DEFAULT 'contrarian_v1',
     name          TEXT,
     entry_date    DATE,
     entry_px      NUMERIC,
     qty           NUMERIC,
     stop_px       NUMERIC,
     max_hold_days INTEGER,
-    mode          TEXT
+    mode          TEXT,
+    CONSTRAINT positions_code_strategy_pkey PRIMARY KEY (code, strategy)
 );
+
+-- 기존 DB의 positions를 (code) → (code, strategy) 키로 전환 (멱등)
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS strategy TEXT NOT NULL DEFAULT 'contrarian_v1';
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'positions_code_strategy_pkey'
+    ) THEN
+        ALTER TABLE positions DROP CONSTRAINT IF EXISTS positions_pkey;
+        ALTER TABLE positions ADD CONSTRAINT positions_code_strategy_pkey
+            PRIMARY KEY (code, strategy);
+    END IF;
+END $$;
 
 -- 수집기 커서 (마지막 수집 시점)
 CREATE TABLE IF NOT EXISTS collect_cursor (

@@ -66,12 +66,13 @@ def daily_job():
     compute_for_date(today)
 
     # 5. 청산 후보 처리
-    from strategy.contrarian import get_exit_candidates
+    from strategy.contrarian import get_exit_candidates, STRATEGY
     exits = get_exit_candidates(today)
     if exits:
         from executor.paper import sell
         for e in exits:
-            sell(e["code"], e["name"], e["qty"], e["entry_px"], e["close"], e["reason"])
+            sell(e["code"], e["name"], e["qty"], e["entry_px"], e["close"],
+                 e["reason"], STRATEGY)
 
     # 6. 진입 후보 → 에이전트 판단 → 모의 매수
     #    직전 거래일 신호를 오늘 시가로 체결한다 (_entry_signal_date 참고)
@@ -96,7 +97,8 @@ def daily_job():
                 "SELECT name FROM instruments WHERE code=%s", (code,)
             )
             name = name_row["name"] if name_row else code
-            buy(code, name, signal_date, c["close"], c["heat_score"], gate["agents"])
+            buy(code, name, signal_date, c["close"], c["heat_score"],
+                gate["agents"], STRATEGY)
         else:
             print(f"  [반려] {code}: {gate['reason']}")
 

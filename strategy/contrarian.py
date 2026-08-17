@@ -24,8 +24,11 @@ def get_entry_candidates(target_date: str = None) -> list[dict]:
     """
     d = target_date or date.today().strftime("%Y-%m-%d")
 
-    # 이미 보유 중인 종목 제외
-    held = {r["code"] for r in db.fetchall("SELECT code FROM positions")}
+    # 이미 보유 중인 종목 제외 (이 전략의 포지션만)
+    held = {
+        r["code"]
+        for r in db.fetchall("SELECT code FROM positions WHERE strategy=%s", (STRATEGY,))
+    }
 
     # 3개 지표 NOT NULL 조건이 필요한 이유:
     # _heat()는 결측 지표를 0점으로 취급하고 합계만 반환하므로, 수급/신용 데이터가
@@ -87,8 +90,9 @@ def get_exit_candidates(target_date: str = None) -> list[dict]:
                   COALESCE(cs.signal, 'neutral') AS signal
            FROM positions p
            JOIN stock_daily sd ON sd.code = p.code AND sd.d = %s::date
-           LEFT JOIN contrarian_signals cs ON cs.code = p.code AND cs.d = %s::date""",
-        (d, d),
+           LEFT JOIN contrarian_signals cs ON cs.code = p.code AND cs.d = %s::date
+           WHERE p.strategy = %s""",
+        (d, d, STRATEGY),
     )
 
     exits = []

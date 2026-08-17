@@ -47,9 +47,11 @@
 `positions`에 전략 컬럼이 없어 두 전략이 슬롯과 청산 규칙을 공유하게 된다
 (`trades`에는 `strategy`가 이미 있다).
 
-- [ ] `positions`에 `strategy` 컬럼 추가
-- [ ] `strategy/contrarian.py`의 보유 종목 조회·청산 후보 조회에 전략 조건 반영
-- [ ] `executor/paper.py`·`executor/live.py`의 슬롯 확인 COUNT를 전략별로 계산
+- [x] `positions`에 `strategy` 컬럼 추가. 기본키도 `(code, strategy)`로 바꿔
+      두 전략이 같은 종목을 각각 보유할 수 있게 한다
+- [x] `strategy/contrarian.py`의 보유 종목 조회·청산 후보 조회에 전략 조건 반영
+- [x] `executor/paper.py`·`executor/live.py`의 슬롯 확인 COUNT를 전략별로 계산.
+      매수/매도 함수는 `strategy`를 인자로 받는다 (하드코딩 제거)
 
 ---
 

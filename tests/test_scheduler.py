@@ -53,5 +53,6 @@ def test_previous_day_signal_actually_produces_a_fill(mock_db, mock_settings):
     signal_date = scheduler._entry_signal_date("2026-08-12")
     assert signal_date == "2026-08-11"
 
-    assert paper.buy("005930", "삼성전자", signal_date, 69000, 5.0, {}) is True
+    assert paper.buy("005930", "삼성전자", signal_date, 69000, 5.0, {},
+                     "contrarian_v1") is True
     assert mock_db.execute.call_count == 2  # positions + trades

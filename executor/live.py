@@ -136,10 +136,14 @@ def _find_holding(code: str) -> dict | None:
     return None
 
 
-def buy_and_record(code: str, name: str, qty: int, agents_summary: dict | None = None) -> bool:
+def buy_and_record(code: str, name: str, qty: int, strategy: str,
+                   agents_summary: dict | None = None) -> bool:
     """실전 시장가 매수 주문 후 체결 확인하여 positions/trades에 mode='live'로 기록.
-    스케줄러에는 연결되어 있지 않음 — 수동 호출 전용."""
-    held = db.fetchone("SELECT COUNT(*) AS n FROM positions WHERE mode='live'")
+    슬롯은 전략별로 센다. 스케줄러에는 연결되어 있지 않음 — 수동 호출 전용."""
+    held = db.fetchone(
+        "SELECT COUNT(*) AS n FROM positions WHERE mode=%s AND strategy=%s",
+        (MODE, strategy),
+    )
     if int(held["n"]) >= config.get_setting("SLOTS"):
         print(f"[실전 매수 거부] {code} — 슬롯 부족")
         return False
@@ -159,23 +163,25 @@ def buy_and_record(code: str, name: str, qty: int, agents_summary: dict | None =
     stop_px = entry_px * (1 - config.get_setting("STOP_PCT"))
 
     db.execute(
-        """INSERT INTO positions (code, name, entry_date, entry_px, qty, stop_px, max_hold_days, mode)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-           ON CONFLICT (code) DO NOTHING""",
-        (code, name, date.today(), entry_px, qty,
+        """INSERT INTO positions (code, strategy, name, entry_date, entry_px, qty,
+                                  stop_px, max_hold_days, mode)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+           ON CONFLICT (code, strategy) DO NOTHING""",
+        (code, strategy, name, date.today(), entry_px, qty,
          stop_px, config.get_setting("MAX_HOLD_DAYS"), MODE),
     )
     db.execute(
         """INSERT INTO trades (mode, side, code, name, qty, price, amount, strategy, agents)
            VALUES (%s,'buy',%s,%s,%s,%s,%s,%s,%s::jsonb)""",
         (MODE, code, name, qty, entry_px, entry_px * qty,
-         "contrarian_v1", str(agents_summary or {}).replace("'", '"')),
+         strategy, str(agents_summary or {}).replace("'", '"')),
     )
     print(f"[실전 매수] {code} {name}  진입가={entry_px:,.0f}  손절={stop_px:,.0f}")
     return True
 
 
-def sell_and_record(code: str, name: str, qty: float, entry_px: float, reason: str) -> None:
+def sell_and_record(code: str, name: str, qty: float, entry_px: float,
+                    reason: str, strategy: str) -> None:
     """실전 시장가 매도 주문 후 positions/trades에 mode='live'로 기록.
     체결가는 주문 직전 잔고의 현재가(prpr)로 근사 기록 — 실제 체결가와 오차가
     있을 수 있으므로 정확한 정산은 KIS 앱/HTS 체결내역으로 별도 확인 권장."""
@@ -193,16 +199,20 @@ def sell_and_record(code: str, name: str, qty: float, entry_px: float, reason: s
         """UPDATE trades SET exit_reason=%s, realized_pct=%s
            WHERE ctid = (
                SELECT ctid FROM trades
-               WHERE code=%s AND side='buy' AND mode=%s AND exit_reason IS NULL
+               WHERE code=%s AND side='buy' AND mode=%s AND strategy=%s
+                 AND exit_reason IS NULL
                ORDER BY ts DESC LIMIT 1
            )""",
-        (reason, realized_pct, code, MODE),
+        (reason, realized_pct, code, MODE, strategy),
     )
     db.execute(
         """INSERT INTO trades (mode, side, code, name, qty, price, amount, strategy, exit_reason, realized_pct)
-           VALUES (%s,'sell',%s,%s,%s,%s,%s,'contrarian_v1',%s,%s)""",
-        (MODE, code, name, qty, approx_px, approx_px * qty, reason, realized_pct),
+           VALUES (%s,'sell',%s,%s,%s,%s,%s,%s,%s,%s)""",
+        (MODE, code, name, qty, approx_px, approx_px * qty, strategy, reason, realized_pct),
     )
-    db.execute("DELETE FROM positions WHERE code=%s AND mode=%s", (code, MODE))
+    db.execute(
+        "DELETE FROM positions WHERE code=%s AND mode=%s AND strategy=%s",
+        (code, MODE, strategy),
+    )
     pnl = "+" if realized_pct >= 0 else ""
     print(f"[실전 매도(근사)] {code} {name}  {pnl}{realized_pct*100:.2f}%  사유={reason}")

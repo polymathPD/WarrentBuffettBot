@@ -22,13 +22,16 @@ def _next_open(code: str, after_date: str) -> float | None:
 
 
 def buy(code: str, name: str, signal_date: str, close_px: float,
-        heat_score: float, agents_summary: dict) -> bool:
+        heat_score: float, agents_summary: dict, strategy: str) -> bool:
     """
     signal_date 기준 다음 거래일 시가로 매수.
-    슬롯 여유 확인 후 positions에 등록.
+    슬롯 여유 확인 후 positions에 등록. 슬롯은 전략별로 센다.
     """
     # 슬롯 확인
-    held = db.fetchone("SELECT COUNT(*) AS n FROM positions")
+    held = db.fetchone(
+        "SELECT COUNT(*) AS n FROM positions WHERE mode=%s AND strategy=%s",
+        (MODE, strategy),
+    )
     if int(held["n"]) >= config.get_setting("SLOTS"):
         print(f"[모의 매수 거부] {code} — 슬롯 부족")
         return False
@@ -46,24 +49,25 @@ def buy(code: str, name: str, signal_date: str, close_px: float,
     amount = entry_px * qty
 
     db.execute(
-        """INSERT INTO positions (code, name, entry_date, entry_px, qty, stop_px, max_hold_days, mode)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-           ON CONFLICT (code) DO NOTHING""",
-        (code, name, date.today(), entry_px, qty,
+        """INSERT INTO positions (code, strategy, name, entry_date, entry_px, qty,
+                                  stop_px, max_hold_days, mode)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+           ON CONFLICT (code, strategy) DO NOTHING""",
+        (code, strategy, name, date.today(), entry_px, qty,
          stop_px, config.get_setting("MAX_HOLD_DAYS"), MODE),
     )
     db.execute(
         """INSERT INTO trades (mode, side, code, name, qty, price, amount, strategy, agents)
            VALUES (%s,'buy',%s,%s,%s,%s,%s,%s,%s::jsonb)""",
         (MODE, code, name, qty, entry_px, amount,
-         "contrarian_v1", str(agents_summary).replace("'", '"')),
+         strategy, str(agents_summary).replace("'", '"')),
     )
     print(f"[모의 매수] {code} {name}  진입가={entry_px:,.0f}  손절={stop_px:,.0f}")
     return True
 
 
 def sell(code: str, name: str, qty: float, entry_px: float,
-         close_px: float, reason: str) -> None:
+         close_px: float, reason: str, strategy: str) -> None:
     """보유 포지션 청산"""
     fill_px = close_px * (1 - config.SLIP_BPS / 10000) * (1 - config.FEE_BPS / 10000 - config.TAX_BPS / 10000)
     realized_pct = fill_px / entry_px - 1
@@ -72,16 +76,20 @@ def sell(code: str, name: str, qty: float, entry_px: float,
         """UPDATE trades SET exit_reason=%s, realized_pct=%s
            WHERE ctid = (
                SELECT ctid FROM trades
-               WHERE code=%s AND side='buy' AND mode=%s AND exit_reason IS NULL
+               WHERE code=%s AND side='buy' AND mode=%s AND strategy=%s
+                 AND exit_reason IS NULL
                ORDER BY ts DESC LIMIT 1
            )""",
-        (reason, realized_pct, code, MODE),
+        (reason, realized_pct, code, MODE, strategy),
     )
     db.execute(
         """INSERT INTO trades (mode, side, code, name, qty, price, amount, strategy, exit_reason, realized_pct)
-           VALUES (%s,'sell',%s,%s,%s,%s,%s,'contrarian_v1',%s,%s)""",
-        (MODE, code, name, qty, fill_px, fill_px * qty, reason, realized_pct),
+           VALUES (%s,'sell',%s,%s,%s,%s,%s,%s,%s,%s)""",
+        (MODE, code, name, qty, fill_px, fill_px * qty, strategy, reason, realized_pct),
     )
-    db.execute("DELETE FROM positions WHERE code=%s AND mode=%s", (code, MODE))
+    db.execute(
+        "DELETE FROM positions WHERE code=%s AND mode=%s AND strategy=%s",
+        (code, MODE, strategy),
+    )
     pnl = "+" if realized_pct >= 0 else ""
     print(f"[모의 청산] {code} {name}  {pnl}{realized_pct*100:.2f}%  사유={reason}")
