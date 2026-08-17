@@ -82,9 +82,9 @@
 기수집 종목 유지). 수집기 골격은 `collector/investor_flow.py`의 per-code try/except 격리 +
 `collect_cursor` 커서 기록 패턴을 따른다.
 
-- [ ] **C1. DART corp_code 매핑** — `instruments`에 `dart_corp_code` 컬럼 추가.
-      DART `corpCode.xml`을 내려받아 종목코드 ↔ 고유번호 매핑 적재.
-      `DART_API_KEY`는 `config.py`에 이미 예약돼 있다
+- [x] **C1. DART corp_code 매핑** — `instruments.dart_corp_code` 컬럼 +
+      `collector/dart_corp_code.py`. `corpCode.xml`(zip)을 받아 상장사만 골라 붙인다.
+      **실행하려면 `.env`에 `DART_API_KEY`가 필요하다** (opendart.fss.or.kr, 무료)
 - [ ] **C2. `collector/disclosure.py`** — DART 공시검색 API.
       `disclosures` (code, rcept_no PK, d, report_nm, url)
 - [ ] **C3. `collector/financials.py`** — DART 단일회사 주요계정.

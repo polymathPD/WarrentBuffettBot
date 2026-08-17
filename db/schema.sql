@@ -1,8 +1,12 @@
 -- 종목 메타 (코드, 종목명)
+-- dart_corp_code: DART 조회에 쓰는 8자리 고유번호 (종목코드와 별개 체계)
 CREATE TABLE IF NOT EXISTS instruments (
-    code TEXT PRIMARY KEY,
-    name TEXT NOT NULL
+    code           TEXT PRIMARY KEY,
+    name           TEXT NOT NULL,
+    dart_corp_code TEXT
 );
+
+ALTER TABLE instruments ADD COLUMN IF NOT EXISTS dart_corp_code TEXT;
 
 -- 주식 일봉 OHLCV
 CREATE TABLE IF NOT EXISTS stock_daily (
