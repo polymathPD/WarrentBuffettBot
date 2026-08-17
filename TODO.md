@@ -89,8 +89,11 @@
       `disclosures` (rcept_no PK, code, d, report_nm, url).
       종목별이 아니라 기간·시장(유가증권/코스닥)으로 받아 우리 종목만 남긴다.
       `collect_cursor`에 마지막 수집일을 남겨 이어받고, 실패가 있으면 커서를 올리지 않는다
-- [ ] **C3. `collector/financials.py`** — DART 단일회사 주요계정.
-      `financials` (code, period PK, revenue, op_income, net_income, equity, debt, eps, bps)
+- [x] **C3. `collector/financials.py`** — DART **다중회사** 주요계정(한 번에 100종목).
+      `financials` (code+period PK, fs_div, revenue, op_income, net_income,
+      assets, liabilities, equity).
+      **EPS/BPS는 주요계정 API에 없다** — 필요하면 전체 재무제표(XBRL)를 따로 받아야 한다.
+      손익 3개는 사업연도 누적치다 (`db/schema.sql` 주석 참고)
 - [ ] **C4. `collector/estimates.py`** — 소스 미정. 아래 열린 질문 참고.
       소스를 정하지 못하면 이 축을 빼고 C2·C3만으로 진행한다
 - [ ] 과거분 백필 스크립트 (DART는 과거 공시 조회가 되므로 백테스트가 가능하다)

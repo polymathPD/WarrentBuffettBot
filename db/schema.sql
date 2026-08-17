@@ -128,6 +128,26 @@ CREATE TABLE IF NOT EXISTS disclosures (
 
 CREATE INDEX IF NOT EXISTS disclosures_code_d_idx ON disclosures (code, d);
 
+-- DART 주요계정 재무 (분기/사업보고서 단위)
+-- EPS/BPS는 주요계정 API에 없다 (전체 재무제표·XBRL을 따로 받아야 함)
+--
+-- 주의: 손익 3개(revenue/op_income/net_income)는 사업연도 누적치다.
+--   2026Q1 = 2026.01~03,  2026Q2 = 2026.01~06,  2025Q4 = 2025.01~12
+-- 분기 단독 실적이 필요하면 직전 분기를 빼서 쓴다. 재무상태표 3개
+-- (assets/liabilities/equity)는 기말 잔액이라 그대로 비교하면 된다.
+CREATE TABLE IF NOT EXISTS financials (
+    code        TEXT,
+    period      TEXT,      -- 2025Q4 = 2025 사업보고서
+    fs_div      TEXT,      -- CFS(연결) 우선, 없으면 OFS(개별)
+    revenue     NUMERIC,
+    op_income   NUMERIC,
+    net_income  NUMERIC,
+    assets      NUMERIC,
+    liabilities NUMERIC,
+    equity      NUMERIC,
+    PRIMARY KEY (code, period)
+);
+
 -- 수집기 커서 (마지막 수집 시점)
 CREATE TABLE IF NOT EXISTS collect_cursor (
     source    TEXT,
