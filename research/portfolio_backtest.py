@@ -18,6 +18,9 @@ import pandas as pd
 import FinanceDataReader as fdr
 import db.connection as db
 from backtester.cost_model import buy_price, sell_price
+from backtester.store import save_run
+
+STRATEGY = "contrarian_v1"
 
 START = sys.argv[1] if len(sys.argv) > 1 else "2022-01-01"
 END   = sys.argv[2] if len(sys.argv) > 2 else "2024-12-31"
@@ -127,7 +130,9 @@ def simulate(px, sig, rank_col, ascending, slots, max_hold,
                 fill, reason = sell_price(row["c"]), "signal"
             if reason:
                 trades.append({"code": code, "ret": fill / pos["entry_px"] - 1,
-                               "reason": reason, "held": held, "exit_d": d})
+                               "reason": reason, "held": held, "exit_d": d,
+                               "entry_d": all_dates[pos["entry_i"]],
+                               "entry_px": pos["entry_px"], "exit_px": fill})
                 del positions[code]
 
         # (2) 빈 슬롯 채우기
@@ -160,11 +165,33 @@ def simulate(px, sig, rank_col, ascending, slots, max_hold,
     n_years = (pd.Timestamp(END) - pd.Timestamp(START)).days / 365.25
     # 슬롯 하나당 연간 회전수 * 회당 수익 (동일가중 근사)
     ann = rets.mean() * (len(rets) / slots) / n_years
+    t_val = rets.mean() / (rets.std() / np.sqrt(len(rets)))
+    avg_held = float(np.mean([t["held"] for t in trades]))
     print(f"[{label}]")
     print(f"  거래 {len(rets):,}건  평균 {rets.mean()*100:+.2f}%  승률 {(rets>0).mean()*100:.1f}%  "
-          f"t값 {rets.mean()/(rets.std()/np.sqrt(len(rets))):+.2f}")
+          f"t값 {t_val:+.2f}")
     print(f"  슬롯당 연 회전 {len(rets)/slots/n_years:.1f}회  →  연환산 {ann*100:+.1f}%")
-    print(f"  평균 보유 {np.mean([t['held'] for t in trades]):.1f}일  청산사유 {reasons}")
+    print(f"  평균 보유 {avg_held:.1f}일  청산사유 {reasons}")
+
+    save_run(
+        STRATEGY, label, START, END,
+        {"rank_col": rank_col, "ascending": ascending, "slots": slots,
+         "max_hold_days": max_hold, "stop_pct": stop_pct,
+         "pos52w_filter": use_pos52w, "exit_rank_pct": exit_rank_pct,
+         "exit_cols": list(exit_cols)},
+        {"n": len(rets), "mean_pct": float(rets.mean() * 100),
+         "std_pct": float(rets.std() * 100),
+         "win_rate": float((rets > 0).mean() * 100), "t_val": float(t_val),
+         "annualized_pct": float(ann * 100),
+         "turnover_per_slot": float(len(rets) / slots / n_years),
+         "avg_held_days": avg_held, "reasons": reasons},
+        [{"code": t["code"],
+          "entry_d": pd.Timestamp(t["entry_d"]).date(),
+          "exit_d": pd.Timestamp(t["exit_d"]).date(),
+          "entry_px": float(t["entry_px"]), "exit_px": float(t["exit_px"]),
+          "ret_pct": float(t["ret"]), "exit_reason": t["reason"]}
+         for t in trades],
+    )
     return rets
 
 

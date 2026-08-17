@@ -21,13 +21,14 @@
 현재 `run_backtest_local.py`와 `research/portfolio_backtest.py`는 결과를 stdout으로만 낸다.
 대시보드에서 보려면 DB에 남아야 한다.
 
-- [ ] `db/schema.sql`에 테이블 추가 (기존 `CREATE TABLE IF NOT EXISTS` 멱등 패턴 유지)
-  - `backtest_runs` (id, ts, strategy, start_d, end_d, params JSONB, summary JSONB)
+- [x] `db/schema.sql`에 테이블 추가 (기존 `CREATE TABLE IF NOT EXISTS` 멱등 패턴 유지)
+  - `backtest_runs` (id, ts, strategy, label, start_d, end_d, params JSONB, summary JSONB)
   - `backtest_trades` (run_id, code, entry_d, exit_d, entry_px, exit_px, ret_pct, exit_reason)
-- [ ] `run_backtest_local.py` — 실행 결과를 위 두 테이블에 기록
-- [ ] `research/portfolio_backtest.py` — 같은 테이블에 기록 (strategy로 구분)
-- [ ] 요약 통계는 `recorder/evaluator.py`의 `mdd()`, `bootstrap_positive_rate()` 재사용
-- [ ] 비용 계산은 `backtester/cost_model.py` 그대로 사용
+- [x] `backtester/store.py:save_run()` — 두 스크립트 공용 저장 함수
+- [x] `run_backtest_local.py` — 실행 결과를 위 두 테이블에 기록
+- [x] `research/portfolio_backtest.py` — 같은 테이블에 기록 (label로 규칙 변형 구분)
+- [x] 요약 통계는 `recorder/evaluator.py`의 `mdd()`, `bootstrap_positive_rate()` 재사용
+- [x] 비용 계산은 `backtester/cost_model.py` 그대로 사용
 
 ### A2. 자본금 기반 포지션 사이징
 

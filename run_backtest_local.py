@@ -22,6 +22,10 @@ import pandas as pd
 import db.connection as db
 import config
 from backtester.cost_model import buy_price, sell_price, net_return
+from backtester.store import save_run
+from recorder.evaluator import mdd, bootstrap_positive_rate
+
+STRATEGY = "contrarian_v1"
 
 
 def load_data(start_date: str, end_date: str, tail_days: int = 90):
@@ -184,12 +188,22 @@ def summarize(trades: list[dict], label: str = ""):
     }
 
 
-def mdd(rets: np.ndarray) -> float:
-    """거래 순서대로 복리 가정한 equity curve 기준 MDD"""
-    equity = np.cumprod(1 + rets)
-    peak = np.maximum.accumulate(equity)
-    dd = equity / peak - 1
-    return float(dd.min()) * 100
+def mdd_pct(rets: np.ndarray) -> float:
+    """거래 순서대로 복리 가정한 equity curve 기준 MDD(%)"""
+    return mdd(np.cumprod(1 + rets)) * 100
+
+
+def to_store_rows(trades: list[dict]) -> list[dict]:
+    """run_local()의 매매를 backtest_trades 컬럼명으로 변환"""
+    return [{
+        "code": t["code"],
+        "entry_d": t["entry_date"],
+        "exit_d": t["exit_date"],
+        "entry_px": t["entry_px"],
+        "exit_px": t["exit_px"],
+        "ret_pct": t["net_ret"],
+        "exit_reason": t["exit_reason"],
+    } for t in trades]
 
 
 def main(start_date: str, end_date: str):
@@ -210,11 +224,25 @@ def main(start_date: str, end_date: str):
     print(f"시뮬레이션 완료: {time.time()-t0:.1f}s\n")
 
     stats = summarize(all_trades, "전체 기간")
+
+    params = {
+        "max_hold_days": config.MAX_HOLD_DAYS,
+        "stop_pct": config.STOP_PCT,
+        "heat_avoid": config.HEAT_AVOID,
+        "heat_sell": config.HEAT_SELL,
+        "slots": None,  # 슬롯 제약 없음 (신호 품질 측정용)
+        "pos52w_filter": False,
+    }
+    summary = {}
     if stats:
-        print(f"  MDD(복리 가정): {mdd(stats['rets']):.2f}%")
+        summary = {k: stats[k] for k in ("n", "mean_pct", "std_pct", "win_rate", "t_val", "reasons")}
+        summary["mdd_pct"] = mdd_pct(stats["rets"])
+        print(f"  MDD(복리 가정): {summary['mdd_pct']:.2f}%")
 
     if not all_trades or len(all_trades) < 10:
         print("\n거래 수가 10건 미만 -> 검증(기간분리/부트스트랩/대조군) 생략")
+        save_run(STRATEGY, "전체 기간", start_date, end_date,
+                 params, summary, to_store_rows(all_trades))
         return all_trades, stats
 
     # 기간 분리
@@ -233,9 +261,7 @@ def main(start_date: str, end_date: str):
     print(f"\n{'-'*60}")
     print("부트스트랩 검증 (1000회 재추출)")
     rets = stats["rets"]
-    n_iter = 1000
-    pos_count = sum(1 for _ in range(n_iter) if np.random.choice(rets, size=len(rets), replace=True).mean() > 0)
-    bp = pos_count / n_iter * 100
+    bp = bootstrap_positive_rate(rets) * 100
     print(f"  양수 평균 비율: {bp:.1f}%  ({'PASS >=80%' if bp >= 80 else 'FAIL <80%'})")
 
     # 무작위 대조군
@@ -249,6 +275,17 @@ def main(start_date: str, end_date: str):
     print(f"  전략 평균 {strategy_mean*100:+.2f}%  vs 무작위 분포 상위 {100-pct_rank:.1f}%  ({'PASS 상위20%' if pct_rank >= 80 else 'FAIL'})")
 
     print(f"\n{'='*60}")
+
+    summary.update({
+        "bootstrap_positive_pct": bp,
+        "random_pct_rank": pct_rank,
+        "split_date": mid_date,
+        "t1_n": len(t1), "t2_n": len(t2),
+        "t1_mean_pct": (float(np.mean([t["net_ret"] for t in t1]) * 100) if t1 else None),
+        "t2_mean_pct": (float(np.mean([t["net_ret"] for t in t2]) * 100) if t2 else None),
+    })
+    save_run(STRATEGY, "전체 기간", start_date, end_date,
+             params, summary, to_store_rows(all_trades))
 
     return all_trades, {**stats, "bootstrap_positive_pct": bp, "random_pct_rank": pct_rank,
                           "half1": summarize.__self__ if False else None,

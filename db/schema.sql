@@ -111,3 +111,29 @@ CREATE TABLE IF NOT EXISTS settings (
     value      TEXT NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- 백테스트 실행 단위 (run_backtest_local.py, research/portfolio_backtest.py 공용)
+CREATE TABLE IF NOT EXISTS backtest_runs (
+    id       SERIAL PRIMARY KEY,
+    ts       TIMESTAMPTZ DEFAULT NOW(),
+    strategy TEXT,
+    label    TEXT,      -- 같은 실행 안에서 규칙 변형을 구분 (예: '현행 5슬롯')
+    start_d  DATE,
+    end_d    DATE,
+    params   JSONB,     -- 슬롯/보유기간/랭킹 지표 등 실행 파라미터
+    summary  JSONB      -- 거래수, 평균수익률, t값, MDD 등 요약 통계
+);
+
+-- 백테스트 개별 매매
+CREATE TABLE IF NOT EXISTS backtest_trades (
+    run_id      INTEGER REFERENCES backtest_runs(id) ON DELETE CASCADE,
+    code        TEXT,
+    entry_d     DATE,
+    exit_d      DATE,
+    entry_px    NUMERIC,
+    exit_px     NUMERIC,
+    ret_pct     NUMERIC,   -- 비용 반영 순수익률 (0.012 = +1.2%)
+    exit_reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS backtest_trades_run_idx ON backtest_trades (run_id);
