@@ -16,8 +16,8 @@ import db.connection as db
 import config
 
 
-def snapshot(target_date: str = None) -> int:
-    """기준일의 (mode, strategy)별 자산을 기록하고 기록한 행 수를 반환한다."""
+def cash_by_key(target_date: str = None) -> dict:
+    """(mode, strategy) -> 현금. 기준일까지의 매수금액을 빼고 매도금액을 더한다."""
     d = target_date or date.today().strftime("%Y-%m-%d")
     capital = float(config.get_setting("CAPITAL"))
 
@@ -28,6 +28,15 @@ def snapshot(target_date: str = None) -> int:
            GROUP BY mode, strategy""",
         (d,),
     )
+    return {(r["mode"], r["strategy"]): capital + float(r["flow"] or 0) for r in flows}
+
+
+def snapshot(target_date: str = None) -> int:
+    """기준일의 (mode, strategy)별 자산을 기록하고 기록한 행 수를 반환한다."""
+    d = target_date or date.today().strftime("%Y-%m-%d")
+    capital = float(config.get_setting("CAPITAL"))
+
+    cash = cash_by_key(d)
     values = db.fetchall(
         """SELECT p.mode, p.strategy, SUM(p.qty * sd.c) AS v
            FROM positions p
@@ -40,7 +49,6 @@ def snapshot(target_date: str = None) -> int:
         (d,),
     )
 
-    cash = {(r["mode"], r["strategy"]): capital + float(r["flow"] or 0) for r in flows}
     held = {(r["mode"], r["strategy"]): float(r["v"] or 0) for r in values}
 
     rows = []

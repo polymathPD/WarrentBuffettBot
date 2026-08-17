@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse
 
 import db.connection as db
 import config
+from recorder.equity import cash_by_key
 
 app = FastAPI()
 templates = Jinja2Templates(
@@ -89,6 +90,61 @@ def _equity_chart_data(rows, width=720, height=260, pad_x=10, pad_top=18,
     }
 
 
+ALLOC_SLICES = 7   # 범주형 색상 슬롯 수. 초과분은 '기타'로 묶는다.
+
+
+def _allocation_data(positions, cash, width=720, height=28, gap=2):
+    """보유 종목별 평가금액 + 현금의 구성비(스택 바).
+
+    종목이 색상 슬롯보다 많으면 작은 것부터 '기타'로 묶는다 — 색을 늘리지 않는다.
+    """
+    slices = []
+    for p in positions:
+        px = p["current_px"] or p["entry_px"]
+        slices.append({
+            "label": p["name"] or p["code"],
+            "value": float(p["qty"]) * float(px),
+            "kind": "series",
+        })
+    slices.sort(key=lambda s: -s["value"])
+
+    if len(slices) > ALLOC_SLICES:
+        tail = slices[ALLOC_SLICES:]
+        slices = slices[:ALLOC_SLICES]
+        slices.append({
+            "label": f"기타 {len(tail)}종목",
+            "value": sum(t["value"] for t in tail),
+            "kind": "other",
+        })
+
+    # 현금이 음수면(자금 초과 집행) 구성비가 성립하지 않으므로 0으로 본다.
+    slices.append({"label": "현금", "value": max(cash, 0.0), "kind": "cash"})
+
+    total = sum(s["value"] for s in slices)
+    if total <= 0:
+        return None
+
+    n = len(slices)
+    avail = width - gap * (n - 1)
+    x = 0.0
+    series_i = 0
+    for s in slices:
+        w = s["value"] / total * avail
+        s["x"] = round(x, 1)
+        s["w"] = round(max(w, 1.0), 1)
+        s["pct"] = round(s["value"] / total * 100, 1)
+        s["amount"] = round(s["value"])
+        if s["kind"] == "series":
+            series_i += 1
+            s["cls"] = f"is-s{series_i}"
+        else:
+            s["cls"] = f"is-{s['kind']}"
+        x += w + gap
+
+    return {"slices": slices, "width": width, "height": height,
+            "total": round(total)}
+
+
 @app.get("/")
 def index(request: Request, mode: str = "paper"):
     mode = mode if mode in ("paper", "live") else "paper"
@@ -119,11 +175,15 @@ def index(request: Request, mode: str = "paper"):
     """, (mode,))
     equity_chart = _equity_chart_data(equity_rows)
 
+    cash = sum(v for (m, _), v in cash_by_key().items() if m == mode)
+    allocation = _allocation_data(positions, cash)
+
     return templates.TemplateResponse(request, "index.html", {
         "positions": positions,
         "today_trades": today_trades,
         "total_unrealized": total_unrealized,
         "equity_chart": equity_chart,
+        "allocation": allocation,
         "mode": mode,
     })
 

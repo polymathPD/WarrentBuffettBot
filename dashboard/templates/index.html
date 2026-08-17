@@ -67,6 +67,48 @@
 </div>
 
 <div class="card">
+  <div class="card-header">
+    자산배분
+    {% if allocation %}
+    <span class="card-header-meta">총 {{ "{:,}".format(allocation.total) }}원</span>
+    {% endif %}
+  </div>
+  {% if allocation %}
+  <div class="chart-wrap">
+    <svg viewBox="0 0 {{ allocation.width }} {{ allocation.height }}" preserveAspectRatio="none"
+         class="alloc-bar" role="img">
+      <clipPath id="alloc-clip">
+        <rect x="0" y="0" width="{{ allocation.width }}" height="{{ allocation.height }}" rx="4" />
+      </clipPath>
+      <g clip-path="url(#alloc-clip)">
+        {% for s in allocation.slices %}
+        <rect x="{{ s.x }}" y="0" width="{{ s.w }}" height="{{ allocation.height }}" class="alloc-seg {{ s.cls }}">
+          <title>{{ s.label }}  {{ "{:,}".format(s.amount) }}원  {{ s.pct }}%</title>
+        </rect>
+        {% endfor %}
+      </g>
+    </svg>
+    <table class="table alloc-legend">
+      <thead>
+        <tr><th>구성</th><th>평가금액</th><th>비중</th></tr>
+      </thead>
+      <tbody>
+        {% for s in allocation.slices %}
+        <tr>
+          <td><span class="alloc-swatch {{ s.cls }}"></span>{{ s.label }}</td>
+          <td>{{ "{:,}".format(s.amount) }}원</td>
+          <td>{{ s.pct }}%</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">배분할 자산 없음</div>
+  {% endif %}
+</div>
+
+<div class="card">
   <div class="card-header">보유 포지션</div>
   {% if positions %}
   <table class="table">
