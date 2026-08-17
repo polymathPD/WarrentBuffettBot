@@ -35,12 +35,12 @@
 
 `executor/paper.py:buy()`의 `qty = 1` 고정 때문에 자산배분 개념이 성립하지 않는다.
 
-- [ ] `config._DEFAULTS`에 `CAPITAL` 추가 (settings 테이블로 런타임 변경 — 기존 방식 그대로)
-- [ ] `executor/paper.py:buy()` — `qty = floor(CAPITAL / SLOTS / entry_px)`
-- [ ] `executor/live.py:buy_and_record()` — 동일 계산으로 정렬
-- [ ] `db/schema.sql`에 `equity_daily` (d, mode, strategy, cash, positions_value, total_equity)
-- [ ] `scheduler.py:daily_job` 마지막 단계에서 `equity_daily` 한 행 기록
-      — 일별 수익률·자산곡선의 원천
+- [x] `config._DEFAULTS`에 `CAPITAL` 추가 (기본 1,000만원, settings 테이블로 런타임 변경)
+- [x] `executor/sizing.py:position_qty()` — 모의/실전 공용 수량 계산
+- [x] `executor/paper.py:buy()` — `qty = floor(CAPITAL / SLOTS / entry_px)`
+- [x] `executor/live.py:buy_and_record()` — 동일 계산으로 정렬 (수량 인자 제거)
+- [x] `db/schema.sql`에 `equity_daily` (d, mode, strategy, cash, positions_value, total_equity)
+- [x] `recorder/equity.py:snapshot()` — `scheduler.py:daily_job` 마지막 단계에서 호출
 
 ### A3. 전략 구분
 

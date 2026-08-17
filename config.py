@@ -24,6 +24,7 @@ HEAT_AVOID = 7.0
 HEAT_SELL = 8.5
 MAX_HOLD_DAYS = 20
 STOP_PCT = 0.07
+CAPITAL = 10_000_000   # 전략 하나가 굴리는 자금. 1슬롯 = CAPITAL / SLOTS
 
 _DEFAULTS = {
     "SLOTS": SLOTS,
@@ -31,6 +32,7 @@ _DEFAULTS = {
     "HEAT_SELL": HEAT_SELL,
     "MAX_HOLD_DAYS": MAX_HOLD_DAYS,
     "STOP_PCT": STOP_PCT,
+    "CAPITAL": CAPITAL,
 }
 
 _settings_cache: dict = {}

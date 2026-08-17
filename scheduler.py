@@ -102,7 +102,10 @@ def daily_job():
         else:
             print(f"  [반려] {code}: {gate['reason']}")
 
-    # 7. 성과 출력
+    # 7. 자산 스냅샷 + 성과 출력
+    from recorder.equity import snapshot
+    snapshot(today)
+
     from recorder.trade_log import summary
     summary()
 

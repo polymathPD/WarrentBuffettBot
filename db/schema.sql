@@ -128,6 +128,17 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 일별 자산 스냅샷 (일별 수익률·자산곡선의 원천)
+CREATE TABLE IF NOT EXISTS equity_daily (
+    d               DATE,
+    mode            TEXT,
+    strategy        TEXT,
+    cash            NUMERIC,   -- CAPITAL - 매수금액 + 매도금액
+    positions_value NUMERIC,   -- 보유수량 × 기준일 종가
+    total_equity    NUMERIC,
+    PRIMARY KEY (d, mode, strategy)
+);
+
 -- 백테스트 실행 단위 (run_backtest_local.py, research/portfolio_backtest.py 공용)
 -- 전략당 최신 결과 한 건만 유지한다. 규칙 변형은 각각 별도 strategy로 부여한다.
 CREATE TABLE IF NOT EXISTS backtest_runs (

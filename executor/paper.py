@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from datetime import date, timedelta
 import db.connection as db
 import config
+from executor.sizing import position_qty
 
 MODE = "paper"
 
@@ -44,8 +45,10 @@ def buy(code: str, name: str, signal_date: str, close_px: float,
     entry_px = fill_px * (1 + config.SLIP_BPS / 10000) * (1 + config.FEE_BPS / 10000)
     stop_px = entry_px * (1 - config.get_setting("STOP_PCT"))
 
-    # 1슬롯 = 전체 자금 / SLOTS (여기선 수량 1주로 고정, 금액은 기록용)
-    qty = 1
+    qty = position_qty(entry_px)
+    if qty < 1:
+        print(f"[모의 매수 거부] {code} — 1슬롯 금액으로 1주도 살 수 없음")
+        return False
     amount = entry_px * qty
 
     db.execute(

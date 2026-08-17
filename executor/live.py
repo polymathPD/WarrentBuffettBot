@@ -10,6 +10,7 @@ from datetime import date
 import requests
 import db.connection as db
 import config
+from executor.sizing import position_qty
 
 MODE = "live"
 
@@ -136,16 +137,29 @@ def _find_holding(code: str) -> dict | None:
     return None
 
 
-def buy_and_record(code: str, name: str, qty: int, strategy: str,
+def buy_and_record(code: str, name: str, strategy: str,
                    agents_summary: dict | None = None) -> bool:
     """실전 시장가 매수 주문 후 체결 확인하여 positions/trades에 mode='live'로 기록.
-    슬롯은 전략별로 센다. 스케줄러에는 연결되어 있지 않음 — 수동 호출 전용."""
+    슬롯은 전략별로 세고, 수량은 모의와 같은 규칙(1슬롯 = CAPITAL / SLOTS)으로 정한다.
+    시장가 주문이라 체결가를 미리 알 수 없으므로 수량은 직전 종가로 계산한다.
+    스케줄러에는 연결되어 있지 않음 — 수동 호출 전용."""
     held = db.fetchone(
         "SELECT COUNT(*) AS n FROM positions WHERE mode=%s AND strategy=%s",
         (MODE, strategy),
     )
     if int(held["n"]) >= config.get_setting("SLOTS"):
         print(f"[실전 매수 거부] {code} — 슬롯 부족")
+        return False
+
+    last = db.fetchone(
+        "SELECT c FROM stock_daily WHERE code=%s ORDER BY d DESC LIMIT 1", (code,)
+    )
+    if not last:
+        print(f"[실전 매수 거부] {code} — 일봉 없음, 수량 계산 불가")
+        return False
+    qty = position_qty(float(last["c"]))
+    if qty < 1:
+        print(f"[실전 매수 거부] {code} — 1슬롯 금액으로 1주도 살 수 없음")
         return False
 
     result = buy(code, qty)

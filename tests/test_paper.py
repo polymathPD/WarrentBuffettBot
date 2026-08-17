@@ -49,6 +49,35 @@ def test_buy_computes_entry_and_stop_price_correctly(mock_db, mock_settings):
     assert positions_call_args[6] == pytest.approx(expected_stop)   # stop_px
 
 
+def test_buy_sizes_position_from_capital_and_slots(mock_db, mock_settings):
+    """수량 = 1슬롯 금액(CAPITAL / SLOTS)으로 살 수 있는 주식 수(내림)."""
+    mock_db.fetchone.side_effect = [
+        {"n": 0},          # 슬롯 확인
+        {"o": 70000},      # 다음 거래일 시가
+    ]
+
+    paper.buy("005930", "삼성전자", "2024-01-15", 69000, 5.0, {}, "contrarian_v1")
+
+    entry_px = 70000 * (1 + config.SLIP_BPS / 10000) * (1 + config.FEE_BPS / 10000)
+    expected_qty = int((config._DEFAULTS["CAPITAL"] / config._DEFAULTS["SLOTS"]) // entry_px)
+    assert expected_qty > 1  # 1주 고정이 아님을 함께 고정
+
+    positions_call_args = mock_db.execute.call_args_list[0][0][1]
+    assert positions_call_args[5] == expected_qty  # qty
+
+
+def test_buy_rejected_when_slot_cannot_afford_one_share(mock_db, mock_settings):
+    mock_db.fetchone.side_effect = [
+        {"n": 0},
+        {"o": config._DEFAULTS["CAPITAL"]},   # 1슬롯 금액보다 비싼 주가
+    ]
+
+    result = paper.buy("005930", "삼성전자", "2024-01-15", 69000, 5.0, {}, "contrarian_v1")
+
+    assert result is False
+    mock_db.execute.assert_not_called()
+
+
 def test_buy_counts_slots_per_strategy(mock_db, mock_settings):
     """슬롯은 전략별로 센다 — 다른 전략의 보유가 이 전략의 슬롯을 먹으면 안 된다."""
     mock_db.fetchone.side_effect = [
