@@ -102,13 +102,34 @@
 - [x] `scheduler.py:daily_job`의 수집 단계에 연결.
       재무는 `collector/financials.py:latest_period()`가 제출 기한을 보고 기간을 고른다
 
+### C5. 발행주식수 (밸류에이션 팩터의 전제) — 보류
+
+PBR/PER 같은 밸류에이션은 시가총액 시계열이 있어야 하는데 지금은 없다. 실측으로
+소스는 확정해 뒀다.
+
+- 소스: DART **주식의총수현황** `https://opendart.fss.or.kr/api/stockTotqySttus.json`
+  (같은 인증키·같은 `dart_corp_code` 사용). 필드는 `istc_totqy`(발행주식총수),
+  `tesstk_co`(자기주식), `distb_stock_co`(유통주식)
+- 검증: 삼성전자 `istc_totqy` = 5,846,278,608 로 FDR `StockListing('KRX')`의
+  `Stocks` 컬럼과 정확히 일치
+- **비용 주의**: 다중회사 조회가 없어 종목당 1콜이다.
+  3,925종목 × 18분기 = 70,650콜(DART 일 2만 한도로 4일).
+  발행주식수는 잘 안 바뀌므로 **사업보고서 기준 연 1회 수집 + 변동 종목만 분기 보강**을
+  권한다 (3,925종목 × 5년 ≈ 19,625콜, 하루)
+- pykrx 과거 시가총액 경로는 이 환경에서 라이브러리 내부 인코딩 오류로 실패한다
+
+- [ ] `collector/shares.py` + `shares(code, period, issued, treasury, floating)` 테이블
+- [ ] 시가총액 = 종가 × 발행주식수, PBR = 시가총액 / 자본총계로 팩터 추가
+
 ---
 
 ## Phase D — 전략과 에이전트
 
-- [ ] **D1. `strategy/fundamental.py`** — `STRATEGY = "fundamental_v1"`.
-      진입 후보 생성 규칙(공시 이벤트 + 재무 필터)과 청산 규칙.
-      최소 보유 5거래일 규칙 포함 (손절만 예외)
+- [x] **D1. `strategy/fundamental.py`** — `STRATEGY = "fundamental_v1"`.
+      실적 보고서 공시일에 전년 동기 대비 영업이익이 개선되고 흑자이며
+      ROE ≥ 3% · 부채비율 ≤ 200%인 종목을 개선율 순으로 고른다.
+      청산은 손절 → 만기이고, 최소 보유 5거래일(거래일 기준)은 손절에만 예외를 둔다.
+      밸류에이션은 쓰지 않는다 — 시가총액 시계열이 없다(C5 참고)
 - [ ] **D2. `agents/disclosure.py`, `agents/financials.py`** — `agents/base.py:call()` 재사용.
       입력 해시 캐싱과 `결정: 매수|관망|청산 / 확신: 0~10 / 이유:` 출력 형식 유지
 - [ ] **D3. `agents/gate.py`에 `decide_fundamental()` 추가** — 거부권/합의 구조는
