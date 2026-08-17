@@ -24,7 +24,7 @@ def fetch_xml() -> bytes:
     """corpCode.xml(zip)을 받아 XML 바이트를 반환."""
     if not config.DART_API_KEY:
         raise RuntimeError(
-            "DART_API_KEY 미설정 — opendart.fss.or.kr에서 인증키를 발급받아 .env에 넣으세요"
+            "DART_API_KEY 미설정: opendart.fss.or.kr에서 인증키를 발급받아 .env에 넣으세요"
         )
 
     resp = requests.get(API_URL, params={"crtfc_key": config.DART_API_KEY}, timeout=60)
@@ -69,7 +69,7 @@ def collect() -> int:
         "SELECT COUNT(*) AS n FROM instruments WHERE dart_corp_code IS NOT NULL"
     )["n"]
     print(f"매핑 완료: {filled:,}/{len(known):,}종목 "
-          f"(미매핑 {len(known) - filled:,}종목 — 상장폐지·비상장 등)")
+          f"(미매핑 {len(known) - filled:,}종목: 상장폐지·비상장 등)")
     return len(rows)
 
 
