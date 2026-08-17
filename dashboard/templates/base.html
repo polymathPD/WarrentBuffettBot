@@ -16,6 +16,7 @@
     </div>
     <a href="/" class="{{ 'active' if request.url.path == '/' else '' }}">포지션</a>
     <a href="/trades" class="{{ 'active' if request.url.path == '/trades' else '' }}">거래내역</a>
+    <a href="/backtest" class="{{ 'active' if request.url.path == '/backtest' else '' }}">백테스트</a>
     <a href="/settings" class="{{ 'active' if request.url.path == '/settings' else '' }}">설정</a>
   </nav>
   <main class="content">

@@ -37,30 +37,7 @@
     {% endif %}
   </div>
   {% if equity_chart %}
-  <div class="chart-wrap">
-    <svg viewBox="0 0 {{ equity_chart.width }} {{ equity_chart.height }}" class="pnl-chart {{ 'is-positive' if equity_chart.last_positive else 'is-negative' }}">
-      {% if equity_chart.points | length > 1 %}
-      <polygon points="{{ equity_chart.area }}" class="chart-area" />
-      <polyline points="{{ equity_chart.polyline }}" class="chart-line" />
-      {% endif %}
-      {% for pt in equity_chart.points %}
-      <circle cx="{{ pt.x }}" cy="{{ pt.y }}" r="3.5" class="chart-point">
-        <title>{{ pt.label }}  {{ "{:,}".format(pt.equity) }}원  누적 {{ '+' if pt.cum_pct >= 0 else '' }}{{ pt.cum_pct }}%{% if pt.day_pct is not none %}  일간 {{ '+' if pt.day_pct >= 0 else '' }}{{ pt.day_pct }}%{% endif %}</title>
-      </circle>
-      {% endfor %}
-      {% set last = equity_chart.points[-1] %}
-      <line x1="0" y1="{{ equity_chart.bar_zero }}" x2="{{ equity_chart.width }}" y2="{{ equity_chart.bar_zero }}" class="chart-zero-line" />
-      {% for pt in equity_chart.points if pt.bar %}
-      <rect x="{{ pt.bar.x }}" y="{{ pt.bar.y }}" width="{{ equity_chart.bar_w }}" height="{{ pt.bar.h }}"
-            class="chart-bar {{ 'is-up' if pt.bar.up else 'is-down' }}">
-        <title>{{ pt.label }}  일간 {{ '+' if pt.day_pct >= 0 else '' }}{{ pt.day_pct }}%</title>
-      </rect>
-      {% endfor %}
-
-      <text x="{{ equity_chart.points[0].x }}" y="{{ equity_chart.label_y }}" class="chart-axis-label">{{ equity_chart.points[0].label }}</text>
-      <text x="{{ last.x }}" y="{{ equity_chart.label_y }}" text-anchor="end" class="chart-axis-label">{{ last.label }}</text>
-    </svg>
-  </div>
+  {% with chart = equity_chart %}{% include "_line_chart.html" %}{% endwith %}
   {% else %}
   <div class="empty-state">자산 기록 없음 — 스케줄러가 하루 한 번 기록합니다</div>
   {% endif %}

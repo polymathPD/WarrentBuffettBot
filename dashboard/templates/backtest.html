@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if not runs %}
+<div class="card">
+  <div class="card-header">백테스트</div>
+  <div class="empty-state">
+    저장된 백테스트가 없습니다 — <code>python run_backtest_local.py 2022-01-01 2024-12-31</code>
+  </div>
+</div>
+{% else %}
+
+<div class="mode-tabs">
+  {% for r in runs %}
+  <a href="/backtest?run={{ r.id }}" class="mode-tab {{ 'active' if selected and r.id == selected.id else '' }}">{{ r.strategy }}</a>
+  {% endfor %}
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-label">거래 수</div>
+    <div class="stat-value">{{ "{:,}".format(selected.summary.n) if selected.summary.n else "-" }}건</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">거래당 평균</div>
+    <div class="stat-value {% if selected.summary.mean_pct >= 0 %}text-profit{% else %}text-loss{% endif %}">
+      {{ "%+.2f"|format(selected.summary.mean_pct) }}%
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">승률</div>
+    <div class="stat-value">{{ "%.1f"|format(selected.summary.win_rate) }}%</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">t값 <span class="text-muted">|t|≥2 유의</span></div>
+    <div class="stat-value">{{ "%+.2f"|format(selected.summary.t_val) }}</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    누적 수익률 (단리 합)
+    <span class="card-header-meta">
+      {{ selected.start_d }} ~ {{ selected.end_d }} ·
+      {% if curve %}누적 {{ "%+.1f"|format(curve.cum_pct) }}%p · 최대 낙폭 {{ mdd }}%p{% endif %}
+    </span>
+  </div>
+  {% if curve %}
+  {% with chart = curve %}{% include "_line_chart.html" %}{% endwith %}
+  <div class="chart-note">
+    거래가 시간상 겹쳐 일별 자산을 복원할 수 없으므로, 한 거래에 같은 금액을 넣었다고 볼 때의
+    수익률 합을 청산일 순서로 누적했습니다. 막대는 그날 청산분의 합입니다.
+  </div>
+  {% else %}
+  <div class="empty-state">매매 없음</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-header">청산 사유 분포</div>
+  {% if reasons %}
+  <div class="chart-wrap">
+    <svg viewBox="0 0 {{ reasons.width }} {{ reasons.height }}" preserveAspectRatio="none"
+         class="alloc-bar" role="img">
+      <clipPath id="reason-clip">
+        <rect x="0" y="0" width="{{ reasons.width }}" height="{{ reasons.height }}" rx="4" />
+      </clipPath>
+      <g clip-path="url(#reason-clip)">
+        {% for s in reasons.slices %}
+        <rect x="{{ s.x }}" y="0" width="{{ s.w }}" height="{{ reasons.height }}" class="alloc-seg {{ s.cls }}">
+          <title>{{ s.label }}  {{ "{:,}".format(s.amount) }}건  {{ s.pct }}%</title>
+        </rect>
+        {% endfor %}
+      </g>
+    </svg>
+    <table class="table alloc-legend">
+      <thead><tr><th>사유</th><th>건수</th><th>비중</th></tr></thead>
+      <tbody>
+        {% for s in reasons.slices %}
+        <tr>
+          <td><span class="alloc-swatch {{ s.cls }}"></span>{{ s.label }}</td>
+          <td>{{ "{:,}".format(s.amount) }}건</td>
+          <td>{{ s.pct }}%</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">매매 없음</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-header">
+    분기별 거래당 평균
+    <span class="card-header-meta">분기마다 부호가 바뀌면 국면 효과일 수 있습니다</span>
+  </div>
+  {% if quarters %}
+  <div class="table-scroll">
+  <table class="table">
+    <thead><tr><th>분기</th><th>거래 수</th><th>평균</th><th class="qbar-col">분포</th></tr></thead>
+    <tbody>
+      {% for q in quarters %}
+      <tr>
+        <td>{{ q.q }}</td>
+        <td>{{ "{:,}".format(q.n) }}건</td>
+        <td class="{{ 'text-profit' if q.avg_pct >= 0 else 'text-loss' }}">{{ "%+.2f"|format(q.avg_pct) }}%</td>
+        <td class="qbar-col">
+          <span class="qbar {{ 'is-up' if q.avg_pct >= 0 else 'is-down' }}" style="width: {{ q.bar_pct }}%"></span>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty-state">매매 없음</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-header">
+    실행 조건
+    <span class="card-header-meta">{{ selected.ts.strftime("%Y-%m-%d %H:%M") if selected.ts }} 실행</span>
+  </div>
+  <div class="table-scroll">
+  <table class="table">
+    <tbody>
+      {% for k, v in selected.params.items() %}
+      <tr><td class="text-muted">{{ k }}</td><td>{{ v if v is not none else "-" }}</td></tr>
+      {% endfor %}
+      {% for k, v in selected.summary.items() if k not in ("n", "mean_pct", "win_rate", "t_val", "reasons") %}
+      <tr>
+        <td class="text-muted">{{ labels.get(k, k) }}</td>
+        <td>{{ "%.2f"|format(v) if v is number else (v if v is not none else "-") }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+{% endif %}
+{% endblock %}

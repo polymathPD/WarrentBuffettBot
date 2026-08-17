@@ -68,8 +68,9 @@
 - [x] **B3. 매매 정보** — `/trades`에 기간·구분·청산사유 필터.
       `trades.agents` JSONB(에이전트별 결정·확신·이유)를 `<details>` 펼침으로 노출.
       설정 화면에 `CAPITAL` 입력 추가
-- [ ] **B4. 백테스트 뷰** — `/backtest` 라우트 신설. run 목록 → 선택 시 자산곡선,
-      청산 사유 분포, 분기별 수익률, t값·MDD·승률
+- [x] **B4. 백테스트 뷰** — `/backtest`에서 전략 탭으로 run을 고르면 누적 수익률 곡선,
+      청산 사유 분포, 분기별 평균, 거래수·평균·승률·t값과 실행 조건을 보여준다.
+      곡선 로직은 `dashboard/templates/_line_chart.html` + `_line_chart_data()`로 index와 공용
 - [ ] **B5. 모드 스위치** — `dashboard/app.py`의 `mode` 검증 두 곳(`index`, `trades_page`)에
       backtest 추가
 

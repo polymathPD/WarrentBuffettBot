@@ -1,0 +1,27 @@
+{# 선 + 구간 막대 차트. 호출부에서 chart 변수를 넘긴다 (dashboard/app.py:_line_chart_data). #}
+<div class="chart-wrap">
+  <svg viewBox="0 0 {{ chart.width }} {{ chart.height }}" class="pnl-chart {{ 'is-positive' if chart.last_positive else 'is-negative' }}">
+    {% if chart.points | length > 1 %}
+    <polygon points="{{ chart.area }}" class="chart-area" />
+    <polyline points="{{ chart.polyline }}" class="chart-line" />
+    {% endif %}
+    {% for pt in chart.points %}
+    <circle cx="{{ pt.x }}" cy="{{ pt.y }}" r="3.5" class="chart-point">
+      <title>{{ pt.tip }}</title>
+    </circle>
+    {% endfor %}
+
+    {% if chart.has_bars %}
+    <line x1="0" y1="{{ chart.bar_zero }}" x2="{{ chart.width }}" y2="{{ chart.bar_zero }}" class="chart-zero-line" />
+    {% for pt in chart.points if pt.bar %}
+    <rect x="{{ pt.bar.x }}" y="{{ pt.bar.y }}" width="{{ chart.bar_w }}" height="{{ pt.bar.h }}"
+          class="chart-bar {{ 'is-up' if pt.bar.up else 'is-down' }}">
+      <title>{{ pt.tip }}</title>
+    </rect>
+    {% endfor %}
+    {% endif %}
+
+    <text x="{{ chart.points[0].x }}" y="{{ chart.label_y }}" class="chart-axis-label">{{ chart.points[0].label }}</text>
+    <text x="{{ chart.points[-1].x }}" y="{{ chart.label_y }}" text-anchor="end" class="chart-axis-label">{{ chart.points[-1].label }}</text>
+  </svg>
+</div>
