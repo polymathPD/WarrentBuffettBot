@@ -24,28 +24,45 @@
 </div>
 
 <div class="card">
-  <div class="card-header">누적 실현손익률</div>
-  {% if pnl_chart %}
+  <div class="card-header">
+    자산 곡선
+    {% if equity_chart %}
+    <span class="card-header-meta">
+      총자산 {{ "{:,}".format(equity_chart.total_equity) }}원
+      (현금 {{ "{:,}".format(equity_chart.cash) }} / 평가 {{ "{:,}".format(equity_chart.positions_value) }})
+      <strong class="{{ 'text-profit' if equity_chart.cum_pct >= 0 else 'text-loss' }}">
+        누적 {{ '+' if equity_chart.cum_pct >= 0 else '' }}{{ equity_chart.cum_pct }}%
+      </strong>
+    </span>
+    {% endif %}
+  </div>
+  {% if equity_chart %}
   <div class="chart-wrap">
-    <svg viewBox="0 0 {{ pnl_chart.width }} {{ pnl_chart.height }}" class="pnl-chart {{ 'is-positive' if pnl_chart.last_positive else 'is-negative' }}">
-      {% if pnl_chart.zero_y is not none %}
-      <line x1="0" y1="{{ pnl_chart.zero_y }}" x2="{{ pnl_chart.width }}" y2="{{ pnl_chart.zero_y }}" class="chart-zero-line" />
+    <svg viewBox="0 0 {{ equity_chart.width }} {{ equity_chart.height }}" class="pnl-chart {{ 'is-positive' if equity_chart.last_positive else 'is-negative' }}">
+      {% if equity_chart.points | length > 1 %}
+      <polygon points="{{ equity_chart.area }}" class="chart-area" />
+      <polyline points="{{ equity_chart.polyline }}" class="chart-line" />
       {% endif %}
-      {% if pnl_chart.points | length > 1 %}
-      <polygon points="{{ pnl_chart.area }}" class="chart-area" />
-      <polyline points="{{ pnl_chart.polyline }}" class="chart-line" />
-      {% endif %}
-      {% for pt in pnl_chart.points %}
-      <circle cx="{{ pt.x }}" cy="{{ pt.y }}" r="4" class="chart-point">
-        <title>{{ pt.label }}: {{ '+' if pt.cum_pct >= 0 else '' }}{{ pt.cum_pct }}%</title>
+      {% for pt in equity_chart.points %}
+      <circle cx="{{ pt.x }}" cy="{{ pt.y }}" r="3.5" class="chart-point">
+        <title>{{ pt.label }}  {{ "{:,}".format(pt.equity) }}원  누적 {{ '+' if pt.cum_pct >= 0 else '' }}{{ pt.cum_pct }}%{% if pt.day_pct is not none %}  일간 {{ '+' if pt.day_pct >= 0 else '' }}{{ pt.day_pct }}%{% endif %}</title>
       </circle>
       {% endfor %}
-      {% set last = pnl_chart.points[-1] %}
-      <text x="{{ last.x }}" y="{{ last.y - 12 }}" text-anchor="middle" class="chart-end-label">{{ '+' if last.cum_pct >= 0 else '' }}{{ last.cum_pct }}%</text>
+      {% set last = equity_chart.points[-1] %}
+      <line x1="0" y1="{{ equity_chart.bar_zero }}" x2="{{ equity_chart.width }}" y2="{{ equity_chart.bar_zero }}" class="chart-zero-line" />
+      {% for pt in equity_chart.points if pt.bar %}
+      <rect x="{{ pt.bar.x }}" y="{{ pt.bar.y }}" width="{{ equity_chart.bar_w }}" height="{{ pt.bar.h }}"
+            class="chart-bar {{ 'is-up' if pt.bar.up else 'is-down' }}">
+        <title>{{ pt.label }}  일간 {{ '+' if pt.day_pct >= 0 else '' }}{{ pt.day_pct }}%</title>
+      </rect>
+      {% endfor %}
+
+      <text x="{{ equity_chart.points[0].x }}" y="{{ equity_chart.label_y }}" class="chart-axis-label">{{ equity_chart.points[0].label }}</text>
+      <text x="{{ last.x }}" y="{{ equity_chart.label_y }}" text-anchor="end" class="chart-axis-label">{{ last.label }}</text>
     </svg>
   </div>
   {% else %}
-  <div class="empty-state">청산된 거래 없음</div>
+  <div class="empty-state">자산 기록 없음 — 스케줄러가 하루 한 번 기록합니다</div>
   {% endif %}
 </div>
 

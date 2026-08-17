@@ -185,6 +185,17 @@ a { color: inherit; text-decoration: none; }
   font-size: 13px;
   font-weight: 600;
   color: var(--text-strong);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.card-header-meta {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Tables */
@@ -352,6 +363,16 @@ svg.pnl-chart { width: 100%; height: auto; display: block; overflow: visible; }
   font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 700;
+}
+
+/* 일별 수익률 막대 */
+.chart-bar.is-up { fill: var(--profit); }
+.chart-bar.is-down { fill: var(--loss); }
+
+.chart-axis-label {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  fill: var(--muted);
 }
 
 /* Responsive: collapse sidebar to a top bar below 640px */

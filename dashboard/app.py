@@ -20,40 +20,72 @@ app.mount(
 )
 
 
-def _pnl_chart_data(closed_trades, width=720, height=180, pad_x=8, pad_y=16):
-    if not closed_trades:
-        return None
-    cum = 0.0
-    series = []
-    for t in closed_trades:
-        cum += float(t["realized_pct"]) * 100
-        series.append({"label": t["ts"].strftime("%m/%d"), "cum_pct": round(cum, 2)})
+def _equity_chart_data(rows, width=720, height=260, pad_x=10, pad_top=18,
+                       line_h=150, bar_h=48):
+    """equity_daily 행(날짜 오름차순)으로 자산곡선 + 일별 수익률 막대를 계산.
 
-    values = [s["cum_pct"] for s in series]
+    x축은 거래일 순서로 등간격이다(달력 간격이 아니라 기록이 있는 날만 잇는다).
+    """
+    if not rows:
+        return None
+
+    values = [float(r["total_equity"]) for r in rows]
+    base = values[0]
     vmin, vmax = min(values), max(values)
     if vmin == vmax:
-        vmin, vmax = vmin - 1, vmax + 1
+        vmin, vmax = vmin * 0.999, vmax * 1.001
 
-    n = len(series)
-    for i, s in enumerate(series):
-        s["x"] = round(pad_x + (i * (width - 2 * pad_x) / (n - 1) if n > 1 else (width - 2 * pad_x) / 2), 1)
-        s["y"] = round(pad_y + (vmax - s["cum_pct"]) / (vmax - vmin) * (height - 2 * pad_y), 1)
+    n = len(values)
+    span = width - 2 * pad_x
+    line_bottom = pad_top + line_h
+    bar_zero = line_bottom + 20 + bar_h / 2
+    bar_w = max(2.0, min(14.0, span / n * 0.6))
 
-    zero_y = None
-    if vmin <= 0 <= vmax:
-        zero_y = round(pad_y + (vmax - 0) / (vmax - vmin) * (height - 2 * pad_y), 1)
+    # 일별 수익률: 전일 총자산 대비. 첫날은 기준일이라 없음.
+    rets = [None] + [values[i] / values[i - 1] - 1 for i in range(1, n)]
+    max_abs = max((abs(r) for r in rets[1:]), default=0.0) or 0.01
 
-    polyline = " ".join(f"{s['x']},{s['y']}" for s in series)
-    area = f"{pad_x},{height - pad_y} {polyline} {series[-1]['x']},{height - pad_y}"
+    points = []
+    for i, v in enumerate(values):
+        x = pad_x + (i * span / (n - 1) if n > 1 else span / 2)
+        y = pad_top + (vmax - v) / (vmax - vmin) * line_h
+        r = rets[i]
+        bar = None
+        if r is not None:
+            h = abs(r) / max_abs * (bar_h / 2)
+            bar = {
+                "x": round(x - bar_w / 2, 1),
+                "y": round(bar_zero - h if r >= 0 else bar_zero, 1),
+                "h": round(max(h, 0.6), 1),
+                "up": r >= 0,
+            }
+        points.append({
+            "label": rows[i]["d"].strftime("%m/%d"),
+            "x": round(x, 1), "y": round(y, 1),
+            "equity": round(v),
+            "cum_pct": round((v / base - 1) * 100, 2),
+            "day_pct": (round(r * 100, 2) if r is not None else None),
+            "bar": bar,
+        })
+
+    polyline = " ".join(f"{p['x']},{p['y']}" for p in points)
+    area = f"{pad_x},{line_bottom} {polyline} {points[-1]['x']},{line_bottom}"
 
     return {
-        "points": series,
+        "points": points,
         "polyline": polyline,
         "area": area,
-        "last_positive": values[-1] >= 0,
-        "zero_y": zero_y,
+        "last_positive": values[-1] >= base,
         "width": width,
         "height": height,
+        "line_bottom": round(line_bottom, 1),
+        "bar_zero": round(bar_zero, 1),
+        "bar_w": round(bar_w, 1),
+        "label_y": height - 6,
+        "total_equity": round(values[-1]),
+        "cum_pct": round((values[-1] / base - 1) * 100, 2),
+        "cash": round(float(rows[-1]["cash"])),
+        "positions_value": round(float(rows[-1]["positions_value"])),
     }
 
 
@@ -77,18 +109,21 @@ def index(request: Request, mode: str = "paper"):
     """, (mode,))
     total_unrealized = sum(float(p["unrealized"] or 0) for p in positions)
 
-    closed_trades = db.fetchall("""
-        SELECT ts, realized_pct FROM trades
-        WHERE side = 'sell' AND realized_pct IS NOT NULL AND mode = %s
-        ORDER BY ts ASC
+    # 전략이 여럿이면 같은 날 행이 여러 개다 — 모드 전체 자산으로 합산한다.
+    equity_rows = db.fetchall("""
+        SELECT d, SUM(cash) AS cash,
+               SUM(positions_value) AS positions_value,
+               SUM(total_equity) AS total_equity
+        FROM equity_daily WHERE mode = %s
+        GROUP BY d ORDER BY d ASC
     """, (mode,))
-    pnl_chart = _pnl_chart_data(closed_trades)
+    equity_chart = _equity_chart_data(equity_rows)
 
     return templates.TemplateResponse(request, "index.html", {
         "positions": positions,
         "today_trades": today_trades,
         "total_unrealized": total_unrealized,
-        "pnl_chart": pnl_chart,
+        "equity_chart": equity_chart,
         "mode": mode,
     })
 

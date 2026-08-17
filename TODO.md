@@ -61,8 +61,8 @@
 외부 JS 라이브러리 없음). `templates/base.html` 사이드바와 `static/css/style.css`
 디자인 시스템에 맞춘다.
 
-- [ ] **B1. 일별 자산곡선** — `_pnl_chart_data`는 청산 거래 순번을 x축으로 쓴다.
-      `equity_daily` 기반 날짜 x축 곡선으로 교체하고 일별 수익률 막대를 함께 표시
+- [x] **B1. 일별 자산곡선** — `dashboard/app.py:_equity_chart_data()`가 `equity_daily`를
+      모드 단위로 합산해 날짜 x축 곡선 + 일별 수익률 막대를 그린다
 - [ ] **B2. 자산배분** — 보유 종목별 평가금액 비중 + 현금 비중 (도넛 또는 스택 바 SVG)
 - [ ] **B3. 매매 정보** — `/trades`에 기간·side·exit_reason 필터 추가.
       `trades.agents` JSONB(에이전트별 결정·확신·이유)를 행 펼침으로 노출
