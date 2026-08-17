@@ -123,6 +123,7 @@ a { color: inherit; text-decoration: none; }
 
 .content {
   flex: 1;
+  min-width: 0;   /* 넓은 표가 flex 아이템을 늘려 페이지 전체가 가로 스크롤되는 것을 막는다 */
   padding: var(--sp-6) var(--sp-8);
   max-width: 1200px;
 }
@@ -212,11 +213,16 @@ a { color: inherit; text-decoration: none; }
 }
 
 /* Tables */
+/* 열이 많은 표는 페이지가 아니라 카드 안에서 가로 스크롤한다. */
+.table-scroll { overflow-x: auto; }
+
 table.table {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
 }
+
+.table th, .table td { white-space: nowrap; }
 
 .table thead th {
   text-align: left;
@@ -323,6 +329,54 @@ input[type="number"]:focus {
   color: var(--muted);
   margin-top: var(--sp-1);
 }
+
+select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-strong);
+  padding: var(--sp-2) var(--sp-3);
+  font-size: 13.5px;
+  font-family: var(--font-sans);
+}
+
+select:focus { outline: none; border-color: var(--accent); }
+
+/* 필터 한 줄 (표 위) */
+.filter-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-5);
+  flex-wrap: wrap;
+}
+
+.filter-field { display: flex; flex-direction: column; }
+.filter-field .form-label { margin-bottom: var(--sp-1); }
+
+/* 에이전트 판단 근거 펼침 */
+details.agents summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.agents-list {
+  margin: var(--sp-2) 0 0;
+  width: 260px;
+  font-size: 12px;
+  white-space: normal;
+}
+
+.agents-list dt {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  margin-top: var(--sp-2);
+}
+
+.agents-list dd { margin: 2px 0 0; }
 
 /* Alerts */
 .alert {

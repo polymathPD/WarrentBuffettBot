@@ -6,14 +6,55 @@
   <a href="/trades?mode=live" class="mode-tab mode-tab-live {{ 'active' if mode == 'live' else '' }}">실전</a>
 </div>
 
+<form class="filter-row" method="get" action="/trades">
+  <input type="hidden" name="mode" value="{{ mode }}">
+
+  <label class="filter-field">
+    <span class="form-label">기간</span>
+    <select name="days">
+      <option value="7" {{ 'selected' if days == '7' }}>최근 7일</option>
+      <option value="30" {{ 'selected' if days == '30' }}>최근 30일</option>
+      <option value="90" {{ 'selected' if days == '90' }}>최근 90일</option>
+      <option value="all" {{ 'selected' if days == 'all' }}>전체</option>
+    </select>
+  </label>
+
+  <label class="filter-field">
+    <span class="form-label">구분</span>
+    <select name="side">
+      <option value="" {{ 'selected' if not side }}>전체</option>
+      <option value="buy" {{ 'selected' if side == 'buy' }}>매수</option>
+      <option value="sell" {{ 'selected' if side == 'sell' }}>매도</option>
+    </select>
+  </label>
+
+  <label class="filter-field">
+    <span class="form-label">청산사유</span>
+    <select name="reason">
+      <option value="" {{ 'selected' if not reason }}>전체</option>
+      {% for r in reasons %}
+      <option value="{{ r }}" {{ 'selected' if reason == r }}>{{ r }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <button type="submit" class="btn">적용</button>
+</form>
+
 <div class="card">
-  <div class="card-header">거래 내역 (최근 50건)</div>
+  <div class="card-header">
+    거래 내역
+    <span class="card-header-meta">
+      {{ trades | length }}건{% if trades | length == limit %} (최대 {{ limit }}건){% endif %}
+    </span>
+  </div>
   {% if trades %}
+  <div class="table-scroll">
   <table class="table">
     <thead>
       <tr>
         <th>일시</th><th>구분</th><th>종목코드</th><th>종목명</th>
-        <th>수량</th><th>체결가</th><th>금액</th><th>수익률</th><th>청산사유</th>
+        <th>수량</th><th>체결가</th><th>금액</th><th>수익률</th><th>청산사유</th><th>판단 근거</th>
       </tr>
     </thead>
     <tbody>
@@ -30,12 +71,32 @@
           {% if t.realized_pct %}{% if t.realized_pct >= 0 %}+{% endif %}{{ "%.2f"|format(t.realized_pct * 100) }}%{% else %}-{% endif %}
         </td>
         <td><small>{{ t.exit_reason or "-" }}</small></td>
+        <td>
+          {% if t.agents %}
+          <details class="agents">
+            <summary>{{ t.agents | length }}개 에이전트</summary>
+            <dl class="agents-list">
+              {% for name, a in t.agents.items() %}
+              <dt>{{ name }}</dt>
+              <dd>
+                <span class="badge {% if a.decision == '매수' %}badge-buy{% else %}badge-sell{% endif %}">{{ a.decision }}</span>
+                <span class="text-muted">확신 {{ a.score }}</span>
+                <div>{{ a.rationale }}</div>
+              </dd>
+              {% endfor %}
+            </dl>
+          </details>
+          {% else %}
+          <small class="text-muted">-</small>
+          {% endif %}
+        </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
-  <div class="empty-state">거래 내역 없음</div>
+  <div class="empty-state">조건에 맞는 거래 없음</div>
   {% endif %}
 </div>
 

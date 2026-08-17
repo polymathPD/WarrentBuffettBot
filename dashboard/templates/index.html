@@ -111,6 +111,7 @@
 <div class="card">
   <div class="card-header">보유 포지션</div>
   {% if positions %}
+  <div class="table-scroll">
   <table class="table">
     <thead>
       <tr>
@@ -138,6 +139,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
   <div class="empty-state">보유 종목 없음</div>
   {% endif %}
@@ -146,6 +148,7 @@
 {% if today_trades %}
 <div class="card">
   <div class="card-header">오늘의 거래</div>
+  <div class="table-scroll">
   <table class="table">
     <thead>
       <tr><th>구분</th><th>종목코드</th><th>종목명</th><th>체결가</th><th>수익률</th><th>청산사유</th><th>시각</th></tr>
@@ -166,6 +169,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
 </div>
 {% endif %}
 

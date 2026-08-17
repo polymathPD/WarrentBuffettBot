@@ -188,17 +188,53 @@ def index(request: Request, mode: str = "paper"):
     })
 
 
+TRADE_DAYS = ("7", "30", "90", "all")
+TRADE_LIMIT = 200
+
+
 @app.get("/trades")
-def trades_page(request: Request, mode: str = "paper"):
+def trades_page(request: Request, mode: str = "paper", days: str = "30",
+                side: str = "", reason: str = ""):
     mode = mode if mode in ("paper", "live") else "paper"
-    trades = db.fetchall("""
-        SELECT side, code, name, qty, price, amount,
-               realized_pct, exit_reason, ts
-        FROM trades WHERE mode = %s ORDER BY ts DESC LIMIT 50
-    """, (mode,))
+    days = days if days in TRADE_DAYS else "30"
+    side = side if side in ("buy", "sell") else ""
+
+    # 청산 사유는 전략마다 다르므로 목록을 DB에서 읽는다.
+    reasons = [
+        r["exit_reason"] for r in db.fetchall(
+            "SELECT DISTINCT exit_reason FROM trades "
+            "WHERE mode = %s AND exit_reason IS NOT NULL ORDER BY 1", (mode,)
+        )
+    ]
+    reason = reason if reason in reasons else ""
+
+    where = ["mode = %s"]
+    params = [mode]
+    if days != "all":
+        where.append("ts >= NOW() - (%s || ' days')::interval")
+        params.append(days)
+    if side:
+        where.append("side = %s")
+        params.append(side)
+    if reason:
+        where.append("exit_reason = %s")
+        params.append(reason)
+
+    trades = db.fetchall(
+        f"""SELECT side, code, name, qty, price, amount, strategy,
+                   realized_pct, exit_reason, agents, ts
+            FROM trades WHERE {' AND '.join(where)}
+            ORDER BY ts DESC LIMIT {TRADE_LIMIT}""",
+        tuple(params),
+    )
     return templates.TemplateResponse(request, "trades.html", {
         "trades": trades,
         "mode": mode,
+        "days": days,
+        "side": side,
+        "reason": reason,
+        "reasons": reasons,
+        "limit": TRADE_LIMIT,
     })
 
 
@@ -218,6 +254,7 @@ def settings_post(
     STOP_PCT: float = Form(...),
     MAX_HOLD_DAYS: int = Form(...),
     SLOTS: int = Form(...),
+    CAPITAL: int = Form(...),
 ):
     for key, value in [
         ("HEAT_AVOID", HEAT_AVOID),
@@ -225,6 +262,7 @@ def settings_post(
         ("STOP_PCT", STOP_PCT),
         ("MAX_HOLD_DAYS", MAX_HOLD_DAYS),
         ("SLOTS", SLOTS),
+        ("CAPITAL", CAPITAL),
     ]:
         db.execute(
             """INSERT INTO settings (key, value, updated_at)

@@ -65,8 +65,9 @@
       모드 단위로 합산해 날짜 x축 곡선 + 일별 수익률 막대를 그린다
 - [x] **B2. 자산배분** — `dashboard/app.py:_allocation_data()`가 보유 종목별 평가금액과
       현금을 스택 바 + 비중 표로 낸다. 색상 슬롯 7개를 넘으면 '기타'로 묶는다
-- [ ] **B3. 매매 정보** — `/trades`에 기간·side·exit_reason 필터 추가.
-      `trades.agents` JSONB(에이전트별 결정·확신·이유)를 행 펼침으로 노출
+- [x] **B3. 매매 정보** — `/trades`에 기간·구분·청산사유 필터.
+      `trades.agents` JSONB(에이전트별 결정·확신·이유)를 `<details>` 펼침으로 노출.
+      설정 화면에 `CAPITAL` 입력 추가
 - [ ] **B4. 백테스트 뷰** — `/backtest` 라우트 신설. run 목록 → 선택 시 자산곡선,
       청산 사유 분포, 분기별 수익률, t값·MDD·승률
 - [ ] **B5. 모드 스위치** — `dashboard/app.py`의 `mode` 검증 두 곳(`index`, `trades_page`)에
