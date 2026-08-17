@@ -85,8 +85,10 @@
 - [x] **C1. DART corp_code 매핑** — `instruments.dart_corp_code` 컬럼 +
       `collector/dart_corp_code.py`. `corpCode.xml`(zip)을 받아 상장사만 골라 붙인다.
       **실행하려면 `.env`에 `DART_API_KEY`가 필요하다** (opendart.fss.or.kr, 무료)
-- [ ] **C2. `collector/disclosure.py`** — DART 공시검색 API.
-      `disclosures` (code, rcept_no PK, d, report_nm, url)
+- [x] **C2. `collector/disclosure.py`** — DART 공시검색 API.
+      `disclosures` (rcept_no PK, code, d, report_nm, url).
+      종목별이 아니라 기간·시장(유가증권/코스닥)으로 받아 우리 종목만 남긴다.
+      `collect_cursor`에 마지막 수집일을 남겨 이어받고, 실패가 있으면 커서를 올리지 않는다
 - [ ] **C3. `collector/financials.py`** — DART 단일회사 주요계정.
       `financials` (code, period PK, revenue, op_income, net_income, equity, debt, eps, bps)
 - [ ] **C4. `collector/estimates.py`** — 소스 미정. 아래 열린 질문 참고.

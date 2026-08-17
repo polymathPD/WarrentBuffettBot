@@ -117,6 +117,17 @@ BEGIN
     END IF;
 END $$;
 
+-- DART 공시 목록
+CREATE TABLE IF NOT EXISTS disclosures (
+    rcept_no  TEXT PRIMARY KEY,   -- 접수번호 (공시 1건의 고유키)
+    code      TEXT,
+    d         DATE,               -- 접수일자
+    report_nm TEXT,
+    url       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS disclosures_code_d_idx ON disclosures (code, d);
+
 -- 수집기 커서 (마지막 수집 시점)
 CREATE TABLE IF NOT EXISTS collect_cursor (
     source    TEXT,
