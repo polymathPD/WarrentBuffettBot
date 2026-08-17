@@ -94,10 +94,13 @@
       assets, liabilities, equity).
       **EPS/BPS는 주요계정 API에 없다** — 필요하면 전체 재무제표(XBRL)를 따로 받아야 한다.
       손익 3개는 사업연도 누적치다 (`db/schema.sql` 주석 참고)
-- [ ] **C4. `collector/estimates.py`** — 소스 미정. 아래 열린 질문 참고.
-      소스를 정하지 못하면 이 축을 빼고 C2·C3만으로 진행한다
-- [ ] 과거분 백필 스크립트 (DART는 과거 공시 조회가 되므로 백테스트가 가능하다)
-- [ ] `scheduler.py:daily_job`의 수집 단계에 연결
+- [~] **C4. `collector/estimates.py`** — 보류. 공시·재무 두 축으로 먼저 전략을 만든다.
+      필요해지면 KIS 투자의견 API로 붙인다 (아래 열린 질문 참고)
+- [x] 과거분 백필 — 별도 스크립트 없이 수집기에 구간을 넘긴다:
+      `python collector/disclosure.py 2022-01-01 2024-12-31`,
+      `python collector/financials.py 2024 11011`
+- [x] `scheduler.py:daily_job`의 수집 단계에 연결.
+      재무는 `collector/financials.py:latest_period()`가 제출 기한을 보고 기간을 고른다
 
 ---
 
@@ -135,7 +138,12 @@
 
 ## 열린 질문
 
-- **추정치(컨센서스) 데이터 소스** — 무료 공식 API가 없다. 유료 API, 스크래핑, 생략 중 선택
+- **추정치(컨센서스) 데이터 소스** — 컨센서스 EPS는 무료 공식 API가 없다.
+  대안으로 **KIS 투자의견 API**(`/uapi/domestic-stock/v1/quotations/invest-opinion`,
+  `.../invest-opbysec`)를 실측했고 모의계좌에서 목표주가·투자의견·증권사가 나온다.
+  2022년까지 과거 조회가 되어 백테스트도 가능하다. 제약: 호출당 100건 상한(연 단위로
+  잘라도 대형주는 잘림), 투자의견 표기 혼재(`BUY`/`매수`), 백필 약 1.2시간(초당 2건).
+  스크래핑(FnGuide·네이버)은 과거 시계열이 없어 검증이 불가능하므로 쓰지 않는다.
 - **`CAPITAL` 초기값과 두 전략 간 자본 배분 비율**
 - **워크포워드 검증 구간 설계** — 홀드아웃 구간을 이미 쓴 상태에서 어떤 설계를 쓸지
 - **기존 역발상 전략을 모의로 계속 돌릴지** — 현재 검증 실패 상태

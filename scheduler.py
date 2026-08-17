@@ -61,6 +61,14 @@ def daily_job():
     from collector.credit_balance import collect_kis
     collect_kis()
 
+    # 3-1. 공시 (DART) — 마지막 수집일부터 오늘까지 이어받는다
+    from collector.disclosure import collect as collect_disclosure
+    collect_disclosure()
+
+    # 3-2. 재무 (DART) — 분기마다 갱신되지만 전 종목이 40여 회 호출이라 매일 확인한다
+    from collector.financials import collect as collect_financials
+    collect_financials()
+
     # 4. 신호 계산
     from processor.signals import compute_for_date
     compute_for_date(today)

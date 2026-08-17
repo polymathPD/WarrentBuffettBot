@@ -112,14 +112,37 @@ def _rows(data: dict, period: str, by_corp: dict) -> list[tuple]:
     return rows
 
 
-def collect(year: str = None, reprt_code: str = "11011") -> int:
+def latest_period(today: date = None) -> tuple[str, str]:
+    """그 시점에 제출이 끝났을 가장 최근 보고서. 제출 기한 기준으로 고른다.
+
+    분기·반기보고서는 기간 종료 후 45일, 사업보고서는 90일이 기한이다.
+    여유를 두고 5월/8월/11월/3월(전년도 사업보고서)로 넘긴다.
+    """
+    d = today or date.today()
+    if d.month >= 11:
+        return str(d.year), "11014"     # 3분기
+    if d.month >= 8:
+        return str(d.year), "11012"     # 반기
+    if d.month >= 5:
+        return str(d.year), "11013"     # 1분기
+    if d.month >= 4:
+        return str(d.year - 1), "11011"  # 전년도 사업보고서
+    return str(d.year - 2), "11011"      # 1~3월: 전년도분은 아직 제출 전
+
+
+def collect(year: str = None, reprt_code: str = None) -> int:
     """
     (year, reprt_code) 한 기간의 주요계정을 전 종목에 대해 수집한다.
     reprt_code: 11013=1분기 11012=반기 11014=3분기 11011=사업보고서
+    둘 다 생략하면 그 시점에 제출이 끝났을 최근 보고서를 받는다.
     """
     if not config.DART_API_KEY:
         print("DART_API_KEY 미설정: 재무 수집을 건너뜁니다")
         return 0
+
+    if year is None and reprt_code is None:
+        year, reprt_code = latest_period()
+    reprt_code = reprt_code or "11011"
     if reprt_code not in REPORTS:
         raise ValueError(f"reprt_code는 {list(REPORTS)} 중 하나여야 합니다: {reprt_code}")
 

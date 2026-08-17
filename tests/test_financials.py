@@ -1,4 +1,5 @@
 """collector/financials.py - 금액 파싱, 연결/개별 선택, 배치 처리. 네트워크/DB는 mock."""
+from datetime import date
 import pytest
 
 from collector import financials as fin
@@ -65,6 +66,17 @@ def test_rows_skips_unmapped_companies():
     data = {"list": [_item("99999999", "CFS", "매출액", "1,000")]}
 
     assert fin._rows(data, "2025Q4", {"00126380": "005930"}) == []
+
+
+@pytest.mark.parametrize("today, expected", [
+    (date(2026, 8, 18), ("2026", "11012")),   # 반기보고서 제출 후
+    (date(2026, 11, 20), ("2026", "11014")),  # 3분기
+    (date(2026, 5, 20), ("2026", "11013")),   # 1분기
+    (date(2026, 4, 10), ("2025", "11011")),   # 전년도 사업보고서 제출 후
+    (date(2026, 2, 10), ("2024", "11011")),   # 전년도분은 아직 제출 전
+])
+def test_latest_period_follows_filing_deadlines(today, expected):
+    assert fin.latest_period(today) == expected
 
 
 def test_collect_batches_by_api_limit(mock_db, mocker):
