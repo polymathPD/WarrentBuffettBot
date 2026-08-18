@@ -268,6 +268,7 @@ def trades_page(request: Request, mode: str = "paper", days: str = "30",
 
 
 CURVE_MAX_POINTS = 200
+BACKTEST_TRADE_LIMIT = 100
 
 SUMMARY_LABELS = {
     "n": "거래 수", "mean_pct": "평균 수익률(%)", "std_pct": "표준편차(%)",
@@ -316,7 +317,7 @@ def _backtest_curve(rows):
 
 
 @app.get("/backtest")
-def backtest_page(request: Request, run: int = 0):
+def backtest_page(request: Request, run: int = 0, reason: str = "", worst: str = ""):
     runs = db.fetchall("""
         SELECT id, ts, strategy, start_d, end_d, params, summary
         FROM backtest_runs ORDER BY strategy
@@ -327,6 +328,7 @@ def backtest_page(request: Request, run: int = 0):
         selected = runs[0]
 
     curve = mdd = reasons = quarters = None
+    trades = []
     if selected:
         curve, mdd = _backtest_curve(db.fetchall("""
             SELECT exit_d, COUNT(*) AS n, SUM(ret_pct) AS ret_sum
@@ -355,9 +357,27 @@ def backtest_page(request: Request, run: int = 0):
             "bar_pct": round(abs(float(q["avg_pct"])) / peak_abs * 100, 1),
         } for q in quarter_rows]
 
+        # 개별 매매. 기본은 최근 청산순, worst=1이면 손실 큰 순으로 본다.
+        where = ["run_id = %s"]
+        params = [selected["id"]]
+        if reason:
+            where.append("exit_reason = %s")
+            params.append(reason)
+        order = "ret_pct ASC" if worst else "exit_d DESC"
+        trades = db.fetchall(
+            f"""SELECT code, entry_d, exit_d, entry_px, exit_px, ret_pct, exit_reason
+                FROM backtest_trades WHERE {' AND '.join(where)}
+                ORDER BY {order} LIMIT {BACKTEST_TRADE_LIMIT}""",
+            tuple(params),
+        )
+
     return templates.TemplateResponse(request, "backtest.html", {
         "runs": runs,
         "selected": selected,
+        "trades": trades,
+        "reason": reason,
+        "worst": bool(worst),
+        "limit": BACKTEST_TRADE_LIMIT,
         "curve": curve,
         "mdd": mdd,
         "reasons": reasons,

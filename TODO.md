@@ -71,8 +71,9 @@
 - [x] **B4. 백테스트 뷰** — `/backtest`에서 전략 탭으로 run을 고르면 누적 수익률 곡선,
       청산 사유 분포, 분기별 평균, 거래수·평균·승률·t값과 실행 조건을 보여준다.
       곡선 로직은 `dashboard/templates/_line_chart.html` + `_line_chart_data()`로 index와 공용
-- [ ] **B5. 모드 스위치** — `dashboard/app.py`의 `mode` 검증 두 곳(`index`, `trades_page`)에
-      backtest 추가
+- [x] **B5. 백테스트 개별 매매** — 원안(`mode`에 backtest 추가)은 B4가 `/backtest`를
+      따로 만들면서 의미가 겹쳐, 실제로 비어 있던 '개별 매매를 볼 수 없다'를 채웠다.
+      `/backtest`에 매매 표(청산사유 필터 + 최근순/손실 큰 순 정렬, 최대 100건) 추가
 
 ---
 

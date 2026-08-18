@@ -121,6 +121,62 @@
 
 <div class="card">
   <div class="card-header">
+    개별 매매
+    <span class="card-header-meta">
+      {% if worst %}손실 큰 순{% else %}최근 청산순{% endif %} {{ trades | length }}건
+      {%- if trades | length == limit %} (최대 {{ limit }}건){% endif %}
+    </span>
+  </div>
+  <form class="filter-row" method="get" action="/backtest">
+    <input type="hidden" name="run" value="{{ selected.id }}">
+    <label class="filter-field">
+      <span class="form-label">청산사유</span>
+      <select name="reason">
+        <option value="" {{ 'selected' if not reason }}>전체</option>
+        {% for s in reasons.slices if s.kind == 'series' %}
+        <option value="{{ s.label }}" {{ 'selected' if reason == s.label }}>{{ s.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="filter-field">
+      <span class="form-label">정렬</span>
+      <select name="worst">
+        <option value="" {{ 'selected' if not worst }}>최근 청산순</option>
+        <option value="1" {{ 'selected' if worst }}>손실 큰 순</option>
+      </select>
+    </label>
+    <button type="submit" class="btn">적용</button>
+  </form>
+  {% if trades %}
+  <div class="table-scroll">
+  <table class="table">
+    <thead>
+      <tr><th>종목</th><th>진입일</th><th>청산일</th><th>진입가</th><th>청산가</th><th>수익률</th><th>청산사유</th></tr>
+    </thead>
+    <tbody>
+      {% for t in trades %}
+      <tr>
+        <td><code>{{ t.code }}</code></td>
+        <td>{{ t.entry_d }}</td>
+        <td>{{ t.exit_d }}</td>
+        <td>{{ "{:,.0f}".format(t.entry_px) }}</td>
+        <td>{{ "{:,.0f}".format(t.exit_px) }}</td>
+        <td class="{{ 'text-profit' if t.ret_pct >= 0 else 'text-loss' }}">
+          {{ "%+.2f"|format(t.ret_pct * 100) }}%
+        </td>
+        <td><small>{{ t.exit_reason }}</small></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty-state">조건에 맞는 매매 없음</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-header">
     실행 조건
     <span class="card-header-meta">{{ selected.ts.strftime("%Y-%m-%d %H:%M") if selected.ts }} 실행</span>
   </div>
