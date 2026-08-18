@@ -1,5 +1,6 @@
 """
 최종 관문: 에이전트 합의 + 거부권 규칙
+- 호출 실패(decision='오류')가 하나라도 있으면 판단 불가로 반려
 - 거부권: market_state 또는 risk가 '관망'/'청산' 이면 전체 반려
 - 합의: 나머지 에이전트가 전부 '매수' 이어야 통과
 전략마다 합의 에이전트가 다르다 (역발상: 수급/신용, 펀더멘털: 공시/재무).
@@ -22,6 +23,17 @@ def _gate(results: dict, consensus: tuple) -> dict:
       "reason": str
     }
     """
+    # 호출 실패를 먼저 걸러낸다. 실패는 '관망'이 아니라 '판단 없음'이다 —
+    # 거부권 사유로 섞이면 크레딧이 떨어진 날도 시장 판단으로 반려된 것처럼 보인다.
+    failed = {n: r["error"] for n, r in results.items() if r.get("error")}
+    if failed:
+        return {
+            "approved": False,
+            "agents": results,
+            "reason": "판단 불가(에이전트 오류) - "
+                      + ", ".join(f"{n}: {label}" for n, label in failed.items()),
+        }
+
     for name in VETO_AGENTS:
         decision = results[name]["decision"]
         if decision in VETO_DECISIONS:

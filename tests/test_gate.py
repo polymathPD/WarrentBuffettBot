@@ -1,7 +1,7 @@
 """agents/gate.py - veto + 2/2 합의 로직. 4개 에이전트의 analyze()를 mock으로 대체."""
 import pytest
 
-from agents import gate
+from agents import base, gate
 
 
 def _patch_agents(mocker, *, market_state, risk, retail_flow, credit_heat):
@@ -13,6 +13,11 @@ def _patch_agents(mocker, *, market_state, risk, retail_flow, credit_heat):
 
 def _decision(d, score=8.0, rationale="테스트"):
     return {"decision": d, "score": score, "rationale": rationale}
+
+
+def _error(label=base.ERR_CREDIT):
+    return {"decision": base.ERROR_DECISION, "score": 0.0,
+            "rationale": f"{label}{base.ERROR_SEP}상세", "error": label}
 
 
 def test_all_agree_buy_is_approved(mocker):
@@ -141,3 +146,37 @@ def test_fundamental_gate_passes_strategy_to_risk(mocker):
     gate.decide_fundamental("005930", "2026-08-14", "fundamental_v1")
 
     assert risk_call.call_args[0][2] == "fundamental_v1"
+
+def test_agent_error_is_reported_as_judgment_failure_not_veto(mocker):
+    """호출 실패는 거부권과 다른 사유로 보고돼야 한다.
+
+    크레딧이 떨어진 날 '거부권: market_state → 관망'으로 찍히면, 시장이 나빠서
+    안 산 것으로 읽혀 실패를 알아채지 못한다."""
+    _patch_agents(
+        mocker,
+        market_state=_error(),
+        risk=_decision("매수"),
+        retail_flow=_decision("매수"),
+        credit_heat=_decision("매수"),
+    )
+    result = gate.decide("005930", "2024-01-15", "contrarian_v1")
+
+    assert result["approved"] is False
+    assert "판단 불가" in result["reason"]
+    assert base.ERR_CREDIT in result["reason"]
+    assert "거부권" not in result["reason"]
+
+
+def test_agent_error_blocks_even_when_everyone_else_says_buy(mocker):
+    """합의 에이전트가 깨져도 나머지 표로 매수가 통과되면 안 된다."""
+    _patch_agents(
+        mocker,
+        market_state=_decision("매수"),
+        risk=_decision("매수"),
+        retail_flow=_error(base.ERR_RATE),
+        credit_heat=_decision("매수"),
+    )
+    result = gate.decide("005930", "2024-01-15", "contrarian_v1")
+
+    assert result["approved"] is False
+    assert "retail_flow" in result["reason"]

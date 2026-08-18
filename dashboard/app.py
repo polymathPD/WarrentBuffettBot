@@ -9,6 +9,7 @@ from fastapi.responses import RedirectResponse
 import db.connection as db
 import config
 from recorder.equity import cash_by_key
+from agents.base import ERROR_DECISION, ERROR_SEP
 
 app = FastAPI()
 templates = Jinja2Templates(
@@ -19,6 +20,34 @@ app.mount(
     StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")),
     name="static",
 )
+
+
+def agent_alerts() -> list[dict]:
+    """최근 24시간의 에이전트 호출 실패를 사유별로 묶는다.
+
+    실패는 '관망'과 섞이지 않도록 decision='오류'로 따로 남는다(agents/base.py 참고).
+    크레딧이 떨어지면 하루 수백 건이 쌓이므로 라벨로 묶어 건수만 보여준다.
+    base.html이 전 페이지 상단에 띄운다.
+    """
+    rows = db.fetchall(
+        """SELECT rationale, ts FROM agent_decisions
+           WHERE decision = %s AND ts > NOW() - INTERVAL '24 hours'
+           ORDER BY ts DESC LIMIT 500""",
+        (ERROR_DECISION,),
+    )
+
+    grouped: dict = {}
+    for r in rows:
+        label, _, detail = (r["rationale"] or "").partition(ERROR_SEP)
+        # rows가 최신순이므로 라벨을 처음 만난 행이 그 사유의 마지막 발생이다.
+        g = grouped.setdefault(
+            label, {"label": label, "detail": detail, "n": 0, "ts": r["ts"]}
+        )
+        g["n"] += 1
+    return list(grouped.values())
+
+
+templates.env.globals["agent_alerts"] = agent_alerts
 
 
 def _line_chart_data(rows, width=720, height=260, pad_x=10, pad_top=18,

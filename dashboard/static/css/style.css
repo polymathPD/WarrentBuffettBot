@@ -392,6 +392,28 @@ details.agents summary {
   color: var(--profit);
 }
 
+.alert-error {
+  background: var(--loss-bg);
+  border: 1px solid var(--loss-border);
+  color: var(--loss);
+}
+
+.alert-title { font-weight: 600; }
+
+.alert-meta {
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: var(--sp-2);
+  font-size: 12.5px;
+}
+
+.alert-detail {
+  margin-top: var(--sp-1);
+  color: var(--text);
+  font-size: 12.5px;
+  word-break: break-word;
+}
+
 /* Settings card centering */
 .settings-wrap {
   display: flex;

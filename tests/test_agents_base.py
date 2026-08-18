@@ -1,8 +1,17 @@
 """agents/base.py - Claude API 호출 + 캐싱 로직"""
 import pytest
 
+import httpx
+import anthropic
+
+from agents import base
 from agents.base import _parse, call
 import config
+
+
+def _fake_response(status: int) -> httpx.Response:
+    """anthropic 예외 생성에 필요한 최소 httpx.Response."""
+    return httpx.Response(status, request=httpx.Request("POST", "https://api.anthropic.com"))
 
 
 # ---------- _parse() : 순수 함수 ----------
@@ -60,18 +69,20 @@ def test_call_cache_miss_calls_claude_and_stores_result(mock_db, mock_claude):
     assert params[1] == "credit_heat"  # agent
 
 
-def test_call_without_api_key_returns_default(mock_db, mock_claude, monkeypatch):
+def test_call_without_api_key_reports_error_not_watch(mock_db, mock_claude, monkeypatch):
     monkeypatch.setattr(config, "CLAUDE_API_KEY", "")
     mock_db.fetchone.return_value = None
 
     result = call("risk", "005930", "프롬프트")
 
-    assert result["decision"] == "관망"
+    assert result["decision"] == base.ERROR_DECISION
+    assert result["error"] == base.ERR_NO_KEY
     mock_claude.mock.assert_not_called()
-    mock_db.execute.assert_not_called()
+    mock_db.execute.assert_called_once()   # 조용히 넘어가지 않고 기록에 남긴다
 
 
-def test_call_claude_api_error_returns_default(mock_db, mocker):
+def test_call_claude_api_error_reports_error_not_watch(mock_db, mocker):
+    """API 실패를 '관망'으로 떨어뜨리면 게이트의 거부권과 구분이 안 된다."""
     mock_db.fetchone.return_value = None
     fake_client = mocker.MagicMock()
     fake_client.messages.create.side_effect = RuntimeError("네트워크 오류")
@@ -79,9 +90,44 @@ def test_call_claude_api_error_returns_default(mock_db, mocker):
 
     result = call("market_state", "005930", "프롬프트")
 
-    assert result["decision"] == "관망"
+    assert result["decision"] == base.ERROR_DECISION
+    assert result["decision"] != "관망"
     assert "네트워크 오류" in result["rationale"]
-    mock_db.execute.assert_not_called()
+
+
+def test_call_failure_is_recorded_without_input_hash(mock_db, mocker):
+    """실패 행은 input_hash=NULL로 남아야 한다 — 캐시에 얹히면 다음 호출까지 오염된다."""
+    mock_db.fetchone.return_value = None
+    fake_client = mocker.MagicMock()
+    fake_client.messages.create.side_effect = RuntimeError("펑")
+    mocker.patch("agents.base._get_client", return_value=fake_client)
+
+    call("market_state", "005930", "프롬프트")
+
+    sql, params = mock_db.execute.call_args[0]
+    assert "input_hash" in sql and "NULL" in sql
+    assert params[0] == "005930"                     # code는 그대로 남는다
+    assert params[3] == base.ERROR_DECISION          # decision
+    assert len(params) == 6                          # input_hash는 SQL에 NULL 리터럴
+
+
+def test_classify_credit_exhaustion_separately_from_bad_key():
+    """크레딧 소진은 400 invalid_request_error로 온다 — 401 인증 실패와 대응이 다르다
+    (충전 vs 키 교체). 같은 라벨로 묶이면 배너를 보고 엉뚱한 조치를 하게 된다."""
+    credit = anthropic.BadRequestError(
+        "Your credit balance is too low to access the Anthropic API.",
+        response=_fake_response(400), body=None,
+    )
+    assert base._classify(credit) == base.ERR_CREDIT
+
+    bad_key = anthropic.AuthenticationError(
+        "invalid x-api-key", response=_fake_response(401), body=None,
+    )
+    assert base._classify(bad_key) == base.ERR_AUTH
+
+
+def test_classify_unknown_error_falls_back(mocker):
+    assert base._classify(RuntimeError("알 수 없음")) == base.ERR_OTHER
 
 
 def test_call_cache_scope_shares_key_across_codes(mock_db, mock_claude):

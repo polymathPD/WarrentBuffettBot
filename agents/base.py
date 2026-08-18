@@ -14,6 +14,19 @@ import config
 MODEL = "claude-sonnet-4-6"
 _client = None
 
+# 호출 실패는 '관망'과 섞지 않는다. 조용히 관망으로 떨어뜨리면 게이트의 거부권과
+# 구분이 안 돼, 크레딧이 떨어진 날에도 '시장이 안 좋아 안 샀다'로 보인다.
+ERROR_DECISION = "오류"
+ERROR_SEP = " - "
+
+# 실패 사유 라벨. 대시보드가 이 라벨로 배너를 묶으므로 문구를 바꾸면 묶음도 바뀐다.
+ERR_NO_KEY = "API 키 미설정"
+ERR_CREDIT = "크레딧 잔액 부족"
+ERR_AUTH = "API 키 인증 실패"
+ERR_RATE = "요청 한도 초과"
+ERR_NETWORK = "API 연결 실패"
+ERR_OTHER = "API 오류"
+
 
 def _get_client():
     global _client
@@ -38,6 +51,42 @@ def _parse(text: str) -> tuple[str, float, str]:
     return d, s, r
 
 
+def _classify(exc: Exception) -> str:
+    """예외를 사람이 읽을 실패 사유로 바꾼다.
+
+    크레딧 소진은 401 authentication_error가 아니라 400 invalid_request_error로
+    온다. 키가 잘못된 경우와 대응이 갈리므로(충전 vs 키 교체) 먼저 구분한다.
+    """
+    text = str(exc)
+    if "credit balance" in text or getattr(exc, "type", None) == "billing_error":
+        return ERR_CREDIT
+    if isinstance(exc, anthropic.AuthenticationError):
+        return ERR_AUTH
+    if isinstance(exc, anthropic.RateLimitError):
+        return ERR_RATE
+    if isinstance(exc, anthropic.APIConnectionError):
+        return ERR_NETWORK
+    return ERR_OTHER
+
+
+def _fail(agent_name: str, code: str, label: str, detail: str) -> dict:
+    """실패를 agent_decisions에 남기고 '오류' 결정을 반환한다.
+
+    input_hash는 NULL로 둔다 — 캐시 조회가 input_hash=%s이므로 실패한 판단이
+    캐시에 얹혀 이후 호출까지 오염시키는 일이 없다.
+    """
+    rationale = f"{label}{ERROR_SEP}{detail}"
+    db.execute(
+        """INSERT INTO agent_decisions
+           (code, agent, score, decision, rationale, model, input_hash)
+           VALUES (%s, %s, %s, %s, %s, %s, NULL)""",
+        (code, agent_name, 0.0, ERROR_DECISION, rationale, MODEL),
+    )
+    print(f"[에이전트 실패] {agent_name} {code} - {rationale}")
+    return {"decision": ERROR_DECISION, "score": 0.0,
+            "rationale": rationale, "error": label}
+
+
 def call(agent_name: str, code: str, prompt: str,
          cache_scope: str = None) -> dict:
     """
@@ -59,7 +108,7 @@ def call(agent_name: str, code: str, prompt: str,
         return dict(cached)
 
     if not config.CLAUDE_API_KEY:
-        return {"decision": "관망", "score": 5.0, "rationale": "API 키 미설정 — 기본값 반환"}
+        return _fail(agent_name, code, ERR_NO_KEY, "CLAUDE_API_KEY 환경변수가 비어 있음")
 
     try:
         resp = _get_client().messages.create(
@@ -69,7 +118,7 @@ def call(agent_name: str, code: str, prompt: str,
         )
         text = resp.content[0].text
     except Exception as e:
-        return {"decision": "관망", "score": 5.0, "rationale": f"API 오류: {e}"}
+        return _fail(agent_name, code, _classify(e), str(e))
 
     decision, score, rationale = _parse(text)
 

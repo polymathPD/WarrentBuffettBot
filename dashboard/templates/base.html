@@ -20,6 +20,17 @@
     <a href="/settings" class="{{ 'active' if request.url.path == '/settings' else '' }}">설정</a>
   </nav>
   <main class="content">
+    {% for a in agent_alerts() %}
+    <div class="alert alert-error">
+      <div class="alert-title">
+        에이전트 판단 실패 - {{ a.label }}
+        <span class="alert-meta">
+          최근 24시간 {{ a.n }}건{% if a.ts %} · 마지막 {{ a.ts.strftime("%m/%d %H:%M") }}{% endif %}
+        </span>
+      </div>
+      {% if a.detail %}<div class="alert-detail">{{ a.detail }}</div>{% endif %}
+    </div>
+    {% endfor %}
     {% block content %}{% endblock %}
   </main>
 </div>
