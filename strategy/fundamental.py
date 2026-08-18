@@ -5,6 +5,7 @@
         (1) 영업이익이 전년 동기보다 개선되고 흑자
         (2) ROE가 기준 이상, 부채비율이 기준 이하
         인 종목을 개선율 순으로 고른다. 체결은 공시일 다음 거래일 시가.
+        유동성이 얇거나(거래대금) 규모가 작은(시가총액) 종목은 뺀다.
 - 청산: 손절 → 만기 → (최소 보유기간 이후) 이익 훼손.
         최소 보유 5거래일은 손절에만 예외를 둔다.
 
@@ -18,6 +19,7 @@ import re
 from datetime import date
 import db.connection as db
 import config
+from collector.universe import large_caps
 
 STRATEGY = "fundamental_v1"
 
@@ -35,6 +37,10 @@ CANDIDATE_LIMIT = 50
 # 편도 0.2% 슬리피지 가정이 성립하는지를 직접 재는 값이라 시총보다 낫다.
 MIN_TURNOVER = 1_000_000_000   # 최근 20거래일 평균 거래대금 10억원
 TURNOVER_WINDOW = 20
+
+# 시가총액 하한은 역발상 전략과 같은 값을 쓴다(collector/universe.py:MIN_MARCAP).
+# 다만 FDR은 '현재' 시총만 주므로 과거 시점에 적용하면 지금 살아남은 종목만 남아
+# 생존 편향이 생긴다. 그래서 실전 경로에서만 켜고, 백테스트는 거래대금으로만 거른다.
 
 
 def _period_of(report_nm: str) -> str | None:
@@ -75,10 +81,14 @@ def _passes(cur: dict, prev: dict) -> tuple[bool, float]:
     return True, (op - prev_op) / equity
 
 
-def get_entry_candidates(target_date: str = None) -> list[dict]:
+def get_entry_candidates(target_date: str = None,
+                         apply_marcap: bool = True) -> list[dict]:
     """
     target_date에 실적 보고서를 낸 종목 중 조건을 통과한 후보.
     반환은 개선율 내림차순.
+
+    apply_marcap: 시가총액 하한 적용 여부. 백테스트는 False로 둬야 한다 —
+    현재 시총으로 과거를 거르면 상장폐지 종목이 통째로 빠져 성과가 부풀려진다.
     """
     d = target_date or date.today().strftime("%Y-%m-%d")
 
@@ -136,9 +146,13 @@ def get_entry_candidates(target_date: str = None) -> list[dict]:
         )
     }
 
+    big = large_caps() if apply_marcap else None
+
     candidates = []
     for code, period in wanted.items():
         if code not in prices or code not in liquid:
+            continue
+        if big is not None and code not in big:
             continue
         ok, improvement = _passes(
             by_key.get((code, period)), by_key.get((code, _prev_year(period)))

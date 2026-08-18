@@ -22,15 +22,29 @@ import db.connection as db
 
 MIN_MARCAP = 300_000_000_000  # 3000억
 
+_large_caps_cache: set | None = None
+
+
+def large_caps() -> set[str]:
+    """시총 MIN_MARCAP 이상인 종목 집합. FDR 호출이 느려 프로세스 수명 동안 캐시한다.
+
+    FDR이 주는 시총은 '현재' 값이다. 과거 시점 판단에 쓰면 지금 상장돼 있는 종목만
+    남아 생존 편향이 생기므로, 백테스트 경로에서는 쓰지 말 것.
+    """
+    global _large_caps_cache
+    if _large_caps_cache is None:
+        listing = fdr.StockListing("KRX")
+        _large_caps_cache = {
+            code
+            for code, marcap in zip(listing["Code"], listing["Marcap"])
+            if marcap and marcap >= MIN_MARCAP  # NaN은 비교에서 False
+        }
+    return _large_caps_cache
+
 
 def target_codes(source: str) -> list[str]:
     """(시총 MIN_MARCAP 이상 ∪ 해당 source로 이미 수집된 종목) ∩ stock_daily 보유 종목"""
-    listing = fdr.StockListing("KRX")
-    big = {
-        code
-        for code, marcap in zip(listing["Code"], listing["Marcap"])
-        if marcap and marcap >= MIN_MARCAP  # NaN은 비교에서 False
-    }
+    big = large_caps()
 
     in_daily = {r["code"] for r in db.fetchall("SELECT DISTINCT code FROM stock_daily")}
     already = {

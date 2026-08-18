@@ -84,7 +84,7 @@ def test_entry_candidates_ranked_by_improvement(mock_db):
         [{"code": "000001"}, {"code": "000002"}],   # 거래대금 통과
     ]
 
-    got = fnd.get_entry_candidates("2026-08-14")
+    got = fnd.get_entry_candidates("2026-08-14", apply_marcap=False)
 
     assert [c["code"] for c in got] == ["000002", "000001"]   # 자본 대비 20% > 5%
     assert got[0]["period"] == "2026Q2"
@@ -103,7 +103,7 @@ def test_entry_candidates_drop_illiquid_names(mock_db):
         [],                                         # 거래대금 미달
     ]
 
-    assert fnd.get_entry_candidates("2026-08-14") == []
+    assert fnd.get_entry_candidates("2026-08-14", apply_marcap=False) == []
 
 
 def test_entry_candidates_skip_held_positions(mock_db):
@@ -112,7 +112,7 @@ def test_entry_candidates_skip_held_positions(mock_db):
         [{"code": "000001"}],   # 이미 보유 중
     ]
 
-    assert fnd.get_entry_candidates("2026-08-14") == []
+    assert fnd.get_entry_candidates("2026-08-14", apply_marcap=False) == []
 
 
 def test_exit_holds_through_minimum_period(mock_db):
@@ -148,3 +148,46 @@ def test_exit_expiry_after_minimum_period(mock_db):
     got = fnd.get_exit_candidates("2026-09-20")
 
     assert got[0]["reason"] == "expiry"
+
+
+def test_entry_candidates_drop_small_caps_in_live_path(mock_db, mocker):
+    """실전 경로에서는 시가총액 하한도 적용한다."""
+    rows = [
+        [{"code": "000001", "report_nm": "반기보고서 (2026.06)"}],
+        [],
+        [{"code": "000001", "period": "2026Q2", "op_income": 300, "net_income": 100,
+          "equity": 1000, "liabilities": 500},
+         {"code": "000001", "period": "2025Q2", "op_income": 100, "net_income": 50,
+          "equity": 900, "liabilities": 500}],
+        [{"code": "000001", "c": 1000}],
+        [{"code": "000001"}],
+    ]
+    mock_db.fetchall.side_effect = list(rows)
+    mocker.patch.object(fnd, "large_caps", return_value=set())      # 소형주
+
+    assert fnd.get_entry_candidates("2026-08-14") == []
+
+    mock_db.fetchall.side_effect = list(rows)
+    mocker.patch.object(fnd, "large_caps", return_value={"000001"})  # 대형주
+
+    assert len(fnd.get_entry_candidates("2026-08-14")) == 1
+
+
+def test_backtest_path_skips_marcap_lookup(mock_db, mocker):
+    """백테스트는 현재 시총을 보지 않는다 (생존 편향 방지)."""
+    mock_db.fetchall.side_effect = [
+        [{"code": "000001", "report_nm": "반기보고서 (2026.06)"}],
+        [],
+        [{"code": "000001", "period": "2026Q2", "op_income": 300, "net_income": 100,
+          "equity": 1000, "liabilities": 500},
+         {"code": "000001", "period": "2025Q2", "op_income": 100, "net_income": 50,
+          "equity": 900, "liabilities": 500}],
+        [{"code": "000001", "c": 1000}],
+        [{"code": "000001"}],
+    ]
+    caps = mocker.patch.object(fnd, "large_caps", return_value=set())
+
+    got = fnd.get_entry_candidates("2026-08-14", apply_marcap=False)
+
+    assert len(got) == 1
+    caps.assert_not_called()
