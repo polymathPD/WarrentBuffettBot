@@ -41,8 +41,17 @@ def test_passes_applies_quality_screens():
     assert fnd._passes(*_fin(200.0, 100.0, equity=-100.0))[0] is False
 
 
-def test_passes_handles_turnaround_without_blowing_up():
-    """전년 적자면 개선율 분모가 0에 가까워 폭주하므로 자본으로 정규화한다."""
+def test_improvement_is_scaled_by_equity_not_prior_profit():
+    """전년 이익이 0에 가까운 종목이 랭킹을 독식하지 않도록 자본으로 나눈다."""
+    _, tiny_base = fnd._passes(*_fin(50.0, 0.01, equity=1000.0))
+    _, big_base = fnd._passes(*_fin(150.0, 100.0, equity=1000.0))
+
+    assert tiny_base == pytest.approx(49.99 / 1000.0)
+    assert big_base == pytest.approx(50.0 / 1000.0)
+    assert big_base > tiny_base   # 전년 대비 증가율로 쟀다면 정반대로 뒤집힌다
+
+
+def test_improvement_handles_turnaround():
     ok, improvement = fnd._passes(*_fin(50.0, -1.0, equity=1000.0))
 
     assert ok is True
@@ -72,12 +81,29 @@ def test_entry_candidates_ranked_by_improvement(mock_db):
              "equity": 900, "liabilities": 500},
         ],
         [{"code": "000001", "c": 10000}, {"code": "000002", "c": 20000}],
+        [{"code": "000001"}, {"code": "000002"}],   # 거래대금 통과
     ]
 
     got = fnd.get_entry_candidates("2026-08-14")
 
-    assert [c["code"] for c in got] == ["000002", "000001"]   # 개선율 200% > 50%
+    assert [c["code"] for c in got] == ["000002", "000001"]   # 자본 대비 20% > 5%
     assert got[0]["period"] == "2026Q2"
+
+
+def test_entry_candidates_drop_illiquid_names(mock_db):
+    """거래대금이 얇으면 슬리피지 가정이 성립하지 않으므로 제외한다."""
+    mock_db.fetchall.side_effect = [
+        [{"code": "000001", "report_nm": "반기보고서 (2026.06)"}],
+        [],
+        [{"code": "000001", "period": "2026Q2", "op_income": 300, "net_income": 100,
+          "equity": 1000, "liabilities": 500},
+         {"code": "000001", "period": "2025Q2", "op_income": 100, "net_income": 50,
+          "equity": 900, "liabilities": 500}],
+        [{"code": "000001", "c": 1000}],
+        [],                                         # 거래대금 미달
+    ]
+
+    assert fnd.get_entry_candidates("2026-08-14") == []
 
 
 def test_entry_candidates_skip_held_positions(mock_db):

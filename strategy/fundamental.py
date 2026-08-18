@@ -30,6 +30,12 @@ DEBT_MAX = 2.0        # 부채총계 / 자본총계
 MIN_HOLD_DAYS = 5     # 거래일 기준. 손절은 예외
 CANDIDATE_LIMIT = 50
 
+# 유동성 하한. 공시·재무는 전 종목을 받으므로 역발상 전략처럼 수집 단계에서
+# 걸러지지 않는다. 시가총액 시계열이 없어(TODO C5) 거래대금으로 대신 거른다 —
+# 편도 0.2% 슬리피지 가정이 성립하는지를 직접 재는 값이라 시총보다 낫다.
+MIN_TURNOVER = 1_000_000_000   # 최근 20거래일 평균 거래대금 10억원
+TURNOVER_WINDOW = 20
+
 
 def _period_of(report_nm: str) -> str | None:
     """'반기보고서 (2026.06)' -> '2026Q2'. 결산월이 다르면 None."""
@@ -62,9 +68,11 @@ def _passes(cur: dict, prev: dict) -> tuple[bool, float]:
     if net / equity < ROE_MIN or debt / equity > DEBT_MAX:
         return False, 0.0
 
-    # 적자에서 흑자로 돌아선 경우 분모가 0에 가까워 개선율이 폭주하므로 자본으로 잰다.
-    improvement = (op - prev_op) / abs(prev_op) if prev_op > 0 else (op - prev_op) / equity
-    return True, improvement
+    # 개선폭은 전년 영업이익이 아니라 자본총계로 나눈다.
+    # 전년 대비 증가율로 재면 '전년 이익이 0에 가까웠던 종목'이 상위를 독식한다
+    # (실측: 전년 이익 대비로 재니 1위가 +131,969%였다). 자본 대비로 재면
+    # 규모 대비 이익 개선폭이 되어 분모가 안정적이다.
+    return True, (op - prev_op) / equity
 
 
 def get_entry_candidates(target_date: str = None) -> list[dict]:
@@ -115,9 +123,22 @@ def get_entry_candidates(target_date: str = None) -> list[dict]:
         )
     }
 
+    liquid = {
+        r["code"] for r in db.fetchall(
+            """SELECT code FROM (
+                   SELECT code, c * v AS turnover,
+                          ROW_NUMBER() OVER (PARTITION BY code ORDER BY d DESC) AS rn
+                   FROM stock_daily WHERE code = ANY(%s) AND d <= %s::date
+               ) t
+               WHERE rn <= %s
+               GROUP BY code HAVING AVG(turnover) >= %s""",
+            (list(wanted), d, TURNOVER_WINDOW, MIN_TURNOVER),
+        )
+    }
+
     candidates = []
     for code, period in wanted.items():
-        if code not in prices:
+        if code not in prices or code not in liquid:
             continue
         ok, improvement = _passes(
             by_key.get((code, period)), by_key.get((code, _prev_year(period)))
