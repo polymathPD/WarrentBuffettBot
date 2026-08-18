@@ -8,6 +8,7 @@ from agents.base import call
 
 AGENT = "market_state"
 MARKET_CODE = "069500"  # KODEX 200 ETF (시장 프록시)
+CACHE_SCOPE = "market"  # 캐시는 종목이 아니라 시장 단위
 
 
 def analyze(code: str, target_date: str) -> dict:
@@ -49,4 +50,6 @@ def analyze(code: str, target_date: str) -> dict:
 그 외는 시장 분위기를 종합해 신규 매수 여부를 판단하라.
 [형식] 결정: 매수|관망|청산 / 확신: 0~10 / 이유: 1문장"""
 
-    return call(AGENT, code, prompt)
+    # 이 프롬프트에는 종목코드가 없다 — 시장 전체 판단이라 종목마다 다시 물을 이유가
+    # 없다. 캐시 키를 code로 잡으면 같은 질문을 후보 종목 수만큼 결제하게 된다.
+    return call(AGENT, code, prompt, cache_scope=CACHE_SCOPE)

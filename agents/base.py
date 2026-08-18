@@ -38,12 +38,17 @@ def _parse(text: str) -> tuple[str, float, str]:
     return d, s, r
 
 
-def call(agent_name: str, code: str, prompt: str) -> dict:
+def call(agent_name: str, code: str, prompt: str,
+         cache_scope: str = None) -> dict:
     """
     Claude API 호출. 동일 입력은 캐시에서 반환.
     반환: {"decision": str, "score": float, "rationale": str}
+
+    cache_scope: 캐시 키에서 code 대신 쓸 값. 프롬프트에 종목이 들어가지 않는
+    에이전트(시장 전체 판단 등)는 고정값을 넘겨, 같은 질문을 후보 종목 수만큼
+    반복 결제하지 않게 한다. agent_decisions.code에는 그대로 code가 남는다.
     """
-    h = _hash(agent_name + code + prompt)
+    h = _hash(agent_name + (code if cache_scope is None else cache_scope) + prompt)
 
     cached = db.fetchone(
         "SELECT decision, score, rationale FROM agent_decisions "
