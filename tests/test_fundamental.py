@@ -163,12 +163,12 @@ def test_entry_candidates_drop_small_caps_in_live_path(mock_db, mocker):
         [{"code": "000001"}],
     ]
     mock_db.fetchall.side_effect = list(rows)
-    mocker.patch.object(fnd, "large_caps", return_value=set())      # 소형주
+    mocker.patch("strategy.filters.large_caps", return_value=set())      # 소형주
 
     assert fnd.get_entry_candidates("2026-08-14") == []
 
     mock_db.fetchall.side_effect = list(rows)
-    mocker.patch.object(fnd, "large_caps", return_value={"000001"})  # 대형주
+    mocker.patch("strategy.filters.large_caps", return_value={"000001"})  # 대형주
 
     assert len(fnd.get_entry_candidates("2026-08-14")) == 1
 
@@ -185,7 +185,7 @@ def test_backtest_path_skips_marcap_lookup(mock_db, mocker):
         [{"code": "000001", "c": 1000}],
         [{"code": "000001"}],
     ]
-    caps = mocker.patch.object(fnd, "large_caps", return_value=set())
+    caps = mocker.patch("strategy.filters.large_caps", return_value=set())
 
     got = fnd.get_entry_candidates("2026-08-14", apply_marcap=False)
 

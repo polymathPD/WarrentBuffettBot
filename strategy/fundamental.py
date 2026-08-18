@@ -19,7 +19,7 @@ import re
 from datetime import date
 import db.connection as db
 import config
-from collector.universe import large_caps
+from strategy.filters import tradable
 
 STRATEGY = "fundamental_v1"
 
@@ -32,15 +32,7 @@ DEBT_MAX = 2.0        # 부채총계 / 자본총계
 MIN_HOLD_DAYS = 5     # 거래일 기준. 손절은 예외
 CANDIDATE_LIMIT = 50
 
-# 유동성 하한. 공시·재무는 전 종목을 받으므로 역발상 전략처럼 수집 단계에서
-# 걸러지지 않는다. 시가총액 시계열이 없어(TODO C5) 거래대금으로 대신 거른다 —
-# 편도 0.2% 슬리피지 가정이 성립하는지를 직접 재는 값이라 시총보다 낫다.
-MIN_TURNOVER = 1_000_000_000   # 최근 20거래일 평균 거래대금 10억원
-TURNOVER_WINDOW = 20
-
-# 시가총액 하한은 역발상 전략과 같은 값을 쓴다(collector/universe.py:MIN_MARCAP).
-# 다만 FDR은 '현재' 시총만 주므로 과거 시점에 적용하면 지금 살아남은 종목만 남아
-# 생존 편향이 생긴다. 그래서 실전 경로에서만 켜고, 백테스트는 거래대금으로만 거른다.
+# 보통주·거래대금·시가총액 필터는 strategy/filters.py 공용
 
 
 def _period_of(report_nm: str) -> str | None:
@@ -133,26 +125,11 @@ def get_entry_candidates(target_date: str = None,
         )
     }
 
-    liquid = {
-        r["code"] for r in db.fetchall(
-            """SELECT code FROM (
-                   SELECT code, c * v AS turnover,
-                          ROW_NUMBER() OVER (PARTITION BY code ORDER BY d DESC) AS rn
-                   FROM stock_daily WHERE code = ANY(%s) AND d <= %s::date
-               ) t
-               WHERE rn <= %s
-               GROUP BY code HAVING AVG(turnover) >= %s""",
-            (list(wanted), d, TURNOVER_WINDOW, MIN_TURNOVER),
-        )
-    }
-
-    big = large_caps() if apply_marcap else None
+    allowed = tradable(list(wanted), d, apply_marcap=apply_marcap)
 
     candidates = []
     for code, period in wanted.items():
-        if code not in prices or code not in liquid:
-            continue
-        if big is not None and code not in big:
+        if code not in prices or code not in allowed:
             continue
         ok, improvement = _passes(
             by_key.get((code, period)), by_key.get((code, _prev_year(period)))

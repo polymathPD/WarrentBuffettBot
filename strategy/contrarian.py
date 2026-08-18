@@ -3,6 +3,7 @@
 - 진입 조건: heat_score < HEAT_AVOID 이고, 52주 위치가 하위 30% 이하 (저평가 영역)
              (단, heat_score의 3개 입력 지표가 모두 있는 종목만 — 결측을 저과열로
               오인하지 않기 위함. get_entry_candidates() 주석 참고)
+             보통주·거래대금·시가총액 필터는 strategy/filters.py 참고
 - 청산 조건: heat_score >= HEAT_SELL 또는 보유 기간 초과 또는 손절
 """
 import sys, os
@@ -11,16 +12,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from datetime import date
 import db.connection as db
 import config
+from strategy.filters import tradable
 
 STRATEGY = "contrarian_v1"
 POS52W_ENTRY = 0.30   # 52주 위치 30% 이하 (바닥권)
+CANDIDATE_LIMIT = 50
 
 
-def get_entry_candidates(target_date: str = None) -> list[dict]:
+def get_entry_candidates(target_date: str = None,
+                         apply_marcap: bool = True) -> list[dict]:
     """
     당일 진입 후보 종목 반환.
     조건: heat_score < HEAT_AVOID AND 52주 위치 <= 30% AND 포지션 없음
           AND heat_score를 구성하는 3개 지표가 모두 존재
+          AND 보통주 AND 거래대금·시가총액 하한 통과
     """
     d = target_date or date.today().strftime("%Y-%m-%d")
 
@@ -46,14 +51,24 @@ def get_entry_candidates(target_date: str = None) -> list[dict]:
              AND cs.individual_flow_ratio IS NOT NULL
              AND cs.credit_surge_ratio IS NOT NULL
              AND cs.volume_ratio IS NOT NULL
-           ORDER BY cs.heat_score ASC
-           LIMIT 50""",
+           ORDER BY cs.heat_score ASC""",
         (d, config.get_setting("HEAT_AVOID")),
     )
 
+    # 일봉은 전 종목을 받으므로 여기서 잡주·비보통주를 거른다.
+    # heat_score가 0 근처에 몰려 정렬이 사실상 동점 처리라, 이 필터가 없으면
+    # 종목코드 순으로 신주인수권증서까지 딸려 온다.
+    #
+    # 필터를 SQL의 LIMIT 뒤에 두면 안 된다: 동점 정렬이라 코드 앞쪽 50개만 뽑아
+    # 거르게 되고, 유니버스의 나머지는 영영 후보에 오르지 못한다. 여기서는 전부
+    # 받아 거른 뒤, 52주 위치까지 통과한 것만 CANDIDATE_LIMIT개 모으고 끊는다.
+    allowed = tradable([r["code"] for r in rows], d, apply_marcap=apply_marcap)
+
     candidates = []
     for r in rows:
-        if r["code"] in held:
+        if len(candidates) >= CANDIDATE_LIMIT:
+            break
+        if r["code"] in held or r["code"] not in allowed:
             continue
         # 52주 위치 확인
         pos = db.fetchone(

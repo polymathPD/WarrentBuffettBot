@@ -6,7 +6,9 @@ import pytest
 from strategy import contrarian
 
 
-def test_entry_candidates_excludes_held_and_filters_by_pos52w(mock_db, mock_settings):
+def test_entry_candidates_excludes_held_and_filters_by_pos52w(mock_db, mock_settings, mocker):
+    mocker.patch("strategy.filters.large_caps",
+                 return_value={"000001", "000002", "000003", "000004"})
     held_rows = [{"code": "000001"}]
     candidate_rows = [
         {"code": "000001", "heat_score": 5.0, "signal": "neutral", "close_price": 100},  # 보유 중 -> 스킵
@@ -14,7 +16,10 @@ def test_entry_candidates_excludes_held_and_filters_by_pos52w(mock_db, mock_sett
         {"code": "000003", "heat_score": 6.5, "signal": "neutral", "close_price": 300},  # pos52w 0.5 -> 탈락
         {"code": "000004", "heat_score": 6.8, "signal": "neutral", "close_price": 400},  # pos52w None -> 탈락
     ]
-    mock_db.fetchall.side_effect = [held_rows, candidate_rows]
+    mock_db.fetchall.side_effect = [
+        held_rows, candidate_rows,
+        [{"code": c["code"]} for c in candidate_rows],   # tradable: 거래대금 통과
+    ]
     mock_db.fetchone.side_effect = [
         {"pos52w": 0.2},
         {"pos52w": 0.5},
@@ -29,10 +34,12 @@ def test_entry_candidates_excludes_held_and_filters_by_pos52w(mock_db, mock_sett
     assert result[0]["close"] == pytest.approx(200)
 
 
-def test_entry_candidates_boundary_pos52w_030_is_included(mock_db, mock_settings):
+def test_entry_candidates_boundary_pos52w_030_is_included(mock_db, mock_settings, mocker):
+    mocker.patch("strategy.filters.large_caps", return_value={"000005"})
     mock_db.fetchall.side_effect = [
         [],  # 보유 없음
         [{"code": "000005", "heat_score": 5.0, "signal": "neutral", "close_price": 100}],
+        [{"code": "000005"}],   # tradable: 거래대금 통과
     ]
     mock_db.fetchone.side_effect = [{"pos52w": 0.30}]  # 정확히 경계값
 
@@ -51,9 +58,10 @@ def test_missing_inputs_score_zero_and_would_rank_first(mock_settings):
     assert _heat(np.nan, np.nan, np.nan) == (0.0, "neutral")
 
 
-def test_entry_query_excludes_rows_with_missing_inputs(mock_db, mock_settings):
+def test_entry_query_excludes_rows_with_missing_inputs(mock_db, mock_settings, mocker):
+    mocker.patch("strategy.filters.large_caps", return_value=set())
     """위 결측-위장을 막는 가드가 쿼리에 실제로 걸려 있는지 고정한다."""
-    mock_db.fetchall.side_effect = [[], []]
+    mock_db.fetchall.side_effect = [[], [], []]
 
     contrarian.get_entry_candidates("2026-08-12")
 
@@ -108,3 +116,27 @@ def test_exit_no_reason_returns_empty(mock_db, mock_settings):
     }]
     result = contrarian.get_exit_candidates("2024-01-20")
     assert result == []
+
+
+def test_entry_candidates_drop_non_ordinary_and_illiquid(mock_db, mock_settings, mocker):
+    """신주인수권증서 같은 비보통주와 거래대금 미달 종목은 후보에 오르면 안 된다.
+    heat_score가 동점이라 정렬이 사실상 코드 순이어서, 필터가 없으면 이런 것들이
+    후보 최상위를 차지한다."""
+    from strategy import filters
+
+    rows = [
+        {"code": "0015S0", "heat_score": 0.0, "signal": "neutral", "close_price": 7030},
+        {"code": "000100", "heat_score": 0.0, "signal": "neutral", "close_price": 90000},
+    ]
+    mock_db.fetchall.side_effect = [
+        [],                        # 보유 없음
+        rows,
+        [{"code": "000100"}],      # 거래대금 통과한 종목만
+    ]
+    mocker.patch("strategy.filters.large_caps", return_value={"000100"})
+    mock_db.fetchone.side_effect = [{"pos52w": 0.2}]
+
+    got = contrarian.get_entry_candidates("2026-08-18")
+
+    assert [c["code"] for c in got] == ["000100"]
+    assert filters.ordinary(["0015S0", "000100"]) == ["000100"]
