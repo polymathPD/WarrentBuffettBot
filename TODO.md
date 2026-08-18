@@ -140,8 +140,10 @@ PBR/PER 같은 밸류에이션은 시가총액 시계열이 있어야 하는데 
       재무는 최근 5개 보고서의 영업이익률·ROE·부채비율 추이를 본다.
       재무 프롬프트에는 '손익이 누적치'라는 경고를 넣어 분기 비교 실수를 막는다.
       `agents/risk.py`도 전략별로 슬롯을 세도록 고쳤다 (A3 이후 전 전략을 합산하고 있었다)
-- [ ] **D3. `agents/gate.py`에 `decide_fundamental()` 추가** — 거부권/합의 구조는
-      기존 `decide()`와 같은 형태
+- [x] **D3. `agents/gate.py`에 `decide_fundamental()` 추가** — 거부권(market_state·risk)과
+      합의 로직을 `_gate()`로 공용화하고, 합의 에이전트만 전략별로 다르게 넘긴다
+      (역발상: retail_flow·credit_heat / 펀더멘털: disclosure·financials).
+      `agents/risk.py`는 `config.get_setting("SLOTS")`로 런타임 설정을 읽는다
 - [ ] **D4. 검증** — `research/README.md`의 절차를 따른다. 2025–2026 홀드아웃은 기존
       다섯 가설에 이미 소진됐으므로 워크포워드 설계가 필요하다.
       실전 자동화 전에 백테스트를 한 번은 통과해야 한다
