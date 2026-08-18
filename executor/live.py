@@ -11,6 +11,7 @@ import requests
 import db.connection as db
 import config
 from executor.sizing import position_qty
+from executor.guard import already_entered
 
 MODE = "live"
 
@@ -126,13 +127,24 @@ def get_balance() -> dict:
     return resp.json()
 
 
+def _field(item: dict, name: str, code: str):
+    """잔고 응답에서 필드를 꺼낸다. 없으면 실제 키를 담아 즉시 알린다.
+
+    필드명은 KIS 국내주식잔고조회(TTTC8434R) 스펙 기준이다. 모의계좌에 보유 종목이
+    없으면 응답이 비어 있어 미리 확인할 수 없으므로, 어긋났을 때 KeyError로 죽는 대신
+    무엇이 왔는지 보여준다."""
+    if name not in item:
+        raise RuntimeError(
+            f"KIS 잔고 응답에 '{name}' 필드가 없습니다 ({code}). 실제 필드: {sorted(item)}"
+        )
+    return item[name]
+
+
 def _find_holding(code: str) -> dict | None:
-    """잔고 조회 결과(output1)에서 특정 종목 보유 내역 조회.
-    필드명은 KIS 국내주식잔고조회(TTTC8434R) 표준 스펙 기준 — 실전 사용 전
-    모의투자로 한 번 호출해 실제 응답 필드명과 일치하는지 확인할 것."""
+    """잔고 조회 결과(output1)에서 특정 종목 보유 내역 조회."""
     balance = get_balance()
     for item in balance.get("output1", []):
-        if item.get("pdno") == code:
+        if _field(item, "pdno", code) == code:
             return item
     return None
 
@@ -143,6 +155,11 @@ def buy_and_record(code: str, name: str, strategy: str,
     슬롯은 전략별로 세고, 수량은 모의와 같은 규칙(1슬롯 = CAPITAL / SLOTS)으로 정한다.
     시장가 주문이라 체결가를 미리 알 수 없으므로 수량은 직전 종가로 계산한다.
     스케줄러에는 연결되어 있지 않음 — 수동 호출 전용."""
+    dup = already_entered(code, strategy, MODE)
+    if dup:
+        print(f"[실전 매수 거부] {code} - {dup}")
+        return False
+
     held = db.fetchone(
         "SELECT COUNT(*) AS n FROM positions WHERE mode=%s AND strategy=%s",
         (MODE, strategy),
@@ -173,7 +190,7 @@ def buy_and_record(code: str, name: str, strategy: str,
         print(f"[실전 매수 체결 확인 실패] {code} — 잔고에서 조회 안 됨, DB 기록 생략")
         return False
 
-    entry_px = float(holding["pchs_avg_pric"])
+    entry_px = float(_field(holding, "pchs_avg_pric", code))
     stop_px = entry_px * (1 - config.get_setting("STOP_PCT"))
 
     db.execute(
@@ -200,7 +217,7 @@ def sell_and_record(code: str, name: str, qty: float, entry_px: float,
     체결가는 주문 직전 잔고의 현재가(prpr)로 근사 기록 — 실제 체결가와 오차가
     있을 수 있으므로 정확한 정산은 KIS 앱/HTS 체결내역으로 별도 확인 권장."""
     holding = _find_holding(code)
-    approx_px = float(holding["prpr"]) if holding else entry_px
+    approx_px = float(_field(holding, "prpr", code)) if holding else entry_px
 
     result = sell(code, int(qty))
     if result.get("rt_cd") != "0":

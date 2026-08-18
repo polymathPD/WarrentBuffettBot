@@ -46,6 +46,7 @@ def test_previous_day_signal_actually_produces_a_fill(mock_db, mock_settings):
     mock_db.fetchone.side_effect = [
         {"d": date(2026, 8, 11)},  # _entry_signal_date: 마지막 신호일
         {"d": date(2026, 8, 12)},  # _entry_signal_date: 체결일 = 오늘
+        None, None,                # paper.buy: 중복 진입 가드 통과
         {"n": 0},                  # paper.buy: 슬롯 여유
         {"o": 70000},              # paper.buy: 신호일 다음 거래일(=오늘) 시가
     ]

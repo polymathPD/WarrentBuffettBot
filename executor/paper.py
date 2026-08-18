@@ -9,6 +9,7 @@ from datetime import date, timedelta
 import db.connection as db
 import config
 from executor.sizing import position_qty
+from executor.guard import already_entered
 
 MODE = "paper"
 
@@ -28,6 +29,11 @@ def buy(code: str, name: str, signal_date: str, close_px: float,
     signal_date 기준 다음 거래일 시가로 매수.
     슬롯 여유 확인 후 positions에 등록. 슬롯은 전략별로 센다.
     """
+    dup = already_entered(code, strategy, MODE)
+    if dup:
+        print(f"[모의 매수 거부] {code} - {dup}")
+        return False
+
     # 슬롯 확인
     held = db.fetchone(
         "SELECT COUNT(*) AS n FROM positions WHERE mode=%s AND strategy=%s",
