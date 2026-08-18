@@ -56,3 +56,17 @@ def test_previous_day_signal_actually_produces_a_fill(mock_db, mock_settings):
     assert paper.buy("005930", "삼성전자", signal_date, 69000, 5.0, {},
                      "contrarian_v1") is True
     assert mock_db.execute.call_count == 2  # positions + trades
+
+
+def test_prev_trading_day_is_last_bar_before_today(mock_db):
+    """공시는 장중에도 나오므로 그날 시가로 체결하면 미래 참조다.
+    직전 거래일 공시를 오늘 시가로 체결한다."""
+    mock_db.fetchone.return_value = {"d": date(2026, 8, 14)}
+
+    assert scheduler._prev_trading_day("2026-08-18") == "2026-08-14"
+
+
+def test_prev_trading_day_none_when_no_bars(mock_db):
+    mock_db.fetchone.return_value = {"d": None}
+
+    assert scheduler._prev_trading_day("2026-08-18") is None

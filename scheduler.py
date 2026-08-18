@@ -44,6 +44,18 @@ def _entry_signal_date(today: str):
     return signal_date
 
 
+def _prev_trading_day(today: str):
+    """오늘 시가로 체결할 신호일. 일봉 기준 직전 거래일이다.
+
+    공시는 장중·장마감 후 아무 때나 나오므로, 그날 공시를 그날 시가로 체결했다고
+    보면 미래를 참조하게 된다. 직전 거래일 공시를 오늘 시가로 체결한다.
+    """
+    import db.connection as db
+
+    row = db.fetchone("SELECT MAX(d) AS d FROM stock_daily WHERE d < %s::date", (today,))
+    return row["d"].strftime("%Y-%m-%d") if row and row["d"] else None
+
+
 def daily_job():
     today = date.today().strftime("%Y-%m-%d")
     print(f"\n{'='*50}")
@@ -73,42 +85,58 @@ def daily_job():
     from processor.signals import compute_for_date
     compute_for_date(today)
 
-    # 5. 청산 후보 처리
-    from strategy.contrarian import get_exit_candidates, STRATEGY
-    exits = get_exit_candidates(today)
-    if exits:
-        from executor.paper import sell
-        for e in exits:
+    # 5. 청산 후보 처리 (전략별로 규칙이 다르다)
+    from strategy import contrarian, fundamental
+    from executor.paper import sell
+
+    for strat in (contrarian, fundamental):
+        for e in strat.get_exit_candidates(today):
             sell(e["code"], e["name"], e["qty"], e["entry_px"], e["close"],
-                 e["reason"], STRATEGY)
+                 e["reason"], strat.STRATEGY)
 
     # 6. 진입 후보 → 에이전트 판단 → 모의 매수
     #    직전 거래일 신호를 오늘 시가로 체결한다 (_entry_signal_date 참고)
-    from strategy.contrarian import get_entry_candidates
-    from agents.gate import decide
+    from agents.gate import decide, decide_fundamental
     from executor.paper import buy
     import db.connection as db
 
+    def name_of(code):
+        row = db.fetchone("SELECT name FROM instruments WHERE code=%s", (code,))
+        return row["name"] if row else code
+
+    STRATEGY = contrarian.STRATEGY
     signal_date = _entry_signal_date(today)
     if signal_date is None:
         print("진입 후보: 체결 가능한 직전 거래일 신호 없음 — 매수 단계 건너뜀")
         candidates = []
     else:
-        candidates = get_entry_candidates(signal_date)
+        candidates = contrarian.get_entry_candidates(signal_date)
         print(f"진입 후보({signal_date} 신호 → {today} 시가 체결): {len(candidates)}종목")
 
     for c in candidates:
         code = c["code"]
         gate = decide(code, signal_date, STRATEGY)
         if gate["approved"]:
-            name_row = db.fetchone(
-                "SELECT name FROM instruments WHERE code=%s", (code,)
-            )
-            name = name_row["name"] if name_row else code
-            buy(code, name, signal_date, c["close"], c["heat_score"],
+            buy(code, name_of(code), signal_date, c["close"], c["heat_score"],
                 gate["agents"], STRATEGY)
         else:
             print(f"  [반려] {code}: {gate['reason']}")
+
+    # 6-2. 펀더멘털 진입: 직전 거래일 공시를 오늘 시가로 체결
+    prev_day = _prev_trading_day(today)
+    if prev_day is None:
+        print("펀더멘털 진입: 직전 거래일 없음 - 건너뜀")
+    else:
+        f_candidates = fundamental.get_entry_candidates(prev_day)
+        print(f"펀더멘털 후보({prev_day} 공시 -> {today} 시가 체결): {len(f_candidates)}종목")
+        for c in f_candidates:
+            code = c["code"]
+            gate = decide_fundamental(code, prev_day, fundamental.STRATEGY)
+            if gate["approved"]:
+                buy(code, name_of(code), prev_day, c["close"], 0.0,
+                    gate["agents"], fundamental.STRATEGY)
+            else:
+                print(f"  [반려] {code}: {gate['reason']}")
 
     # 7. 자산 스냅샷 + 성과 출력
     from recorder.equity import snapshot
