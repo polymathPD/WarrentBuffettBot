@@ -24,7 +24,11 @@ from executor.live import _get_token, _BASE_URL
 SOURCE = "investor_flow"
 API_URL = "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily"
 TR_ID = "FHPTJ04160001"
-SLEEP_SEC = 0.3
+# KIS 모의투자 계정은 초당 2건 한도다. 한도를 넘으면 HTTP 500 + msg1
+# "초당 거래건수를 초과하였습니다"로 돌아온다(429가 아니다).
+# 실측: sleep 0.3s면 12건 중 2건이 이 오류였고, 0.6s면 0건이었다.
+# 재시도가 다시 한도를 먹어 실패가 실패를 부르므로 간격을 넉넉히 둔다.
+SLEEP_SEC = 0.6
 MAX_RETRIES = 3       # 페이지 단위 재시도 (KIS 간헐적 5xx 대응)
 RETRY_WAIT_SEC = 1.0  # 재시도 대기 (시도마다 선형 증가)
 # 한 페이지당 최대 30건이지만 다음 페이지가 앵커 날짜를 다시 포함하므로
@@ -98,7 +102,12 @@ def _fetch_page(code: str, anchor_date: str) -> list[dict]:
             continue
 
         if resp.status_code >= 500 and not last:
-            time.sleep(RETRY_WAIT_SEC * (attempt + 1))
+            # 초당 한도는 잠깐 더 쉬어야 풀린다. 일반 5xx와 같은 간격으로 재시도하면
+            # 재시도가 다시 한도를 먹는다.
+            wait = RETRY_WAIT_SEC * (attempt + 1)
+            if "초당" in resp.text:
+                wait = max(wait, SLEEP_SEC * 3)
+            time.sleep(wait)
             continue
 
         resp.raise_for_status()

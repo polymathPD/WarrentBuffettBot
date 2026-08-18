@@ -105,3 +105,20 @@ def test_falls_back_to_stub_without_api_keys(mock_db, mocker):
     stub.assert_called_once_with("20220101", "20220105")
     fetch.assert_not_called()
     universe.assert_not_called()
+
+
+def test_rate_limit_waits_longer_than_generic_5xx(mocker):
+    """KIS 초당 한도는 HTTP 500으로 온다. 일반 5xx와 같은 간격으로 재시도하면
+    재시도가 다시 한도를 먹는다."""
+    from collector import credit_balance as cb
+
+    mocker.patch.object(cb, "_headers", return_value={})
+    limited = mocker.MagicMock(status_code=500, text="초당 거래건수를 초과하였습니다")
+    ok = mocker.MagicMock(status_code=200)
+    ok.json.return_value = {"rt_cd": "0", "output": []}
+    mocker.patch("requests.get", side_effect=[limited, ok])
+    sleep = mocker.patch("time.sleep")
+
+    cb._fetch_page("005930", "20260818")
+
+    assert sleep.call_args[0][0] >= cb.SLEEP_SEC * 3
