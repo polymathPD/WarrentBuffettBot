@@ -144,9 +144,12 @@ PBR/PER 같은 밸류에이션은 시가총액 시계열이 있어야 하는데 
       합의 로직을 `_gate()`로 공용화하고, 합의 에이전트만 전략별로 다르게 넘긴다
       (역발상: retail_flow·credit_heat / 펀더멘털: disclosure·financials).
       `agents/risk.py`는 `config.get_setting("SLOTS")`로 런타임 설정을 읽는다
-- [ ] **D4. 검증** — `research/README.md`의 절차를 따른다. 2025–2026 홀드아웃은 기존
-      다섯 가설에 이미 소진됐으므로 워크포워드 설계가 필요하다.
-      실전 자동화 전에 백테스트를 한 번은 통과해야 한다
+- [x] **D4. 검증** — `research/fundamental_backtest.py`. **기각됐다.**
+      훈련(22–24) +5.82%/+3.22% → 검증(25–26) −1.23%/−3.05%로 부호가 뒤집혔고,
+      12슬롯 검증은 t −3.22로 유의하게 음수다. 결과와 진단은 `research/README.md` 참고.
+      → **Phase E(실전 자동 주문)로 넘어가면 안 된다.** 모의로만 돌린다
+- [x] **D5. 모의 실행 연결** — `scheduler.py:daily_job`이 두 전략의 청산·진입을 모두 돈다.
+      펀더멘털은 직전 거래일 공시를 오늘 시가로 체결한다(`_prev_trading_day`)
 
 ---
 
