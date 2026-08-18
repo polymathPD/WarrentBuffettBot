@@ -99,7 +99,7 @@ def daily_job():
 
     for c in candidates:
         code = c["code"]
-        gate = decide(code, signal_date)
+        gate = decide(code, signal_date, STRATEGY)
         if gate["approved"]:
             name_row = db.fetchone(
                 "SELECT name FROM instruments WHERE code=%s", (code,)

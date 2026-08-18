@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from agents import retail_flow, credit_heat, market_state, risk
 
 
-def decide(code: str, target_date: str) -> dict:
+def decide(code: str, target_date: str, strategy: str) -> dict:
     """
     반환: {
       "approved": bool,
@@ -21,7 +21,7 @@ def decide(code: str, target_date: str) -> dict:
         "retail_flow": retail_flow.analyze(code, target_date),
         "credit_heat": credit_heat.analyze(code, target_date),
         "market_state": market_state.analyze(code, target_date),
-        "risk": risk.analyze(code, target_date),
+        "risk": risk.analyze(code, target_date, strategy),
     }
 
     # 거부권 에이전트 체크
