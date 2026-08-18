@@ -24,10 +24,30 @@ def test_parse_normal_format():
     assert rationale == "저평가 구간 진입"
 
 
-def test_parse_missing_decision_defaults_to_watch():
-    text = "확신: 6\n이유: 애매함"
+def test_parse_unrecognized_decision_returns_none():
+    """못 알아본 결정을 '관망'으로 눙치면 거부권과 구분이 안 된다."""
+    decision, score, rationale = _parse("확신: 6\n이유: 애매함")
+    assert decision is None
+
+
+@pytest.mark.parametrize("text", [
+    "**결정: 청산 / 확신: 10 / 이유: 약세장**",        # 줄 전체가 굵게
+    "**결정: 청산** / **확신: 10** / **이유: 약세장**",  # 항목마다 굵게
+    "결정: **청산** / 확신: 10 / 이유: 약세장",         # 값만 굵게
+    "**결정**: 청산 / 확신: 10 / 이유: 약세장",         # 라벨만 굵게
+])
+def test_parse_tolerates_markdown_emphasis(text):
+    """모델이 매번 같은 형태로 주지 않는다. 결정을 \\S+로 통째로 집으면 '청산**'이
+    나와 게이트의 문자열 비교를 빗나가고, 거부권이 조용히 무시된다."""
     decision, score, rationale = _parse(text)
-    assert decision == "관망"
+    assert decision == "청산"
+    assert score == 10.0
+    assert rationale == "약세장"
+
+
+def test_parse_strips_emphasis_from_rationale():
+    _, _, rationale = _parse("결정: 매수 / 확신: 8 / 이유: **저평가 구간**")
+    assert rationale == "저평가 구간"
 
 
 def test_parse_missing_score_defaults_to_5():
@@ -172,3 +192,16 @@ def test_market_state_caches_per_market_not_per_code(mock_db, mock_claude):
     # 종목코드는 캐시 키에서만 빠지고, 기록에는 그대로 남는다
     codes = [c[0][1][0] for c in mock_db.execute.call_args_list]
     assert codes == ["005930", "000660"]
+
+
+def test_unparseable_response_is_recorded_as_error(mock_db, mock_claude):
+    """형식이 깨진 응답도 조용히 '관망'이 되지 않는다."""
+    mock_db.fetchone.return_value = None
+    mock_claude.return_value = "음... 잘 모르겠습니다"
+
+    result = call("retail_flow", "005930", "프롬프트")
+
+    assert result["decision"] == base.ERROR_DECISION
+    assert result["error"] == base.ERR_PARSE
+    sql, params = mock_db.execute.call_args[0]
+    assert "NULL" in sql          # 깨진 응답은 캐시하지 않는다

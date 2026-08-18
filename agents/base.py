@@ -25,7 +25,10 @@ ERR_CREDIT = "크레딧 잔액 부족"
 ERR_AUTH = "API 키 인증 실패"
 ERR_RATE = "요청 한도 초과"
 ERR_NETWORK = "API 연결 실패"
+ERR_PARSE = "응답 형식 오류"
 ERR_OTHER = "API 오류"
+
+DECISIONS = ("매수", "관망", "청산")
 
 
 def _get_client():
@@ -39,15 +42,31 @@ def _hash(text: str) -> str:
     return hashlib.md5(text.encode()).hexdigest()
 
 
-def _parse(text: str) -> tuple[str, float, str]:
-    """'결정: X / 확신: Y / 이유: Z' 형식 파싱"""
-    decision = re.search(r"결정\s*:\s*(\S+)", text)
-    score = re.search(r"확신\s*:\s*([0-9.]+)", text)
-    reason = re.search(r"이유\s*:\s*(.+)", text)
+# 라벨과 값 사이/양옆에 마크다운 강조가 섞여 들어온다 (`**결정: 청산**`, `결정: **매수**`).
+# 모델이 매번 같은 형태로 주지 않으므로 별표를 흘려보낸다.
+_STAR = r"\s*\**\s*"
+_RE_DECISION = re.compile(r"결정" + _STAR + r":" + _STAR + r"(" + "|".join(DECISIONS) + r")")
+_RE_SCORE = re.compile(r"확신" + _STAR + r":" + _STAR + r"([0-9.]+)")
+_RE_REASON = re.compile(r"이유" + _STAR + r":" + _STAR + r"(.+)")
 
-    d = decision.group(1).strip() if decision else "관망"
+
+def _parse(text: str) -> tuple[str | None, float, str]:
+    """'결정: X / 확신: Y / 이유: Z' 형식 파싱.
+
+    결정은 아는 값(DECISIONS)에만 맞춘다. `\S+`로 통째로 집으면 `청산**` 같은 값이
+    나와 게이트의 거부권·합의 비교(문자열 일치)를 조용히 빗나간다 — 거부권이
+    발동해야 할 자리에서 아무 일도 안 일어난다.
+
+    못 알아본 결정은 '관망'으로 눙치지 않고 None을 돌려준다. 호출부가 실패로
+    기록해 대시보드에 띄운다.
+    """
+    decision = _RE_DECISION.search(text)
+    score = _RE_SCORE.search(text)
+    reason = _RE_REASON.search(text)
+
+    d = decision.group(1) if decision else None
     s = float(score.group(1)) if score else 5.0
-    r = reason.group(1).strip() if reason else text[:200]
+    r = (reason.group(1) if reason else text[:200]).strip().strip("*").strip()
     return d, s, r
 
 
@@ -121,6 +140,8 @@ def call(agent_name: str, code: str, prompt: str,
         return _fail(agent_name, code, _classify(e), str(e))
 
     decision, score, rationale = _parse(text)
+    if decision is None:
+        return _fail(agent_name, code, ERR_PARSE, text[:300])
 
     db.execute(
         """INSERT INTO agent_decisions (code, agent, score, decision, rationale, model, input_hash)
