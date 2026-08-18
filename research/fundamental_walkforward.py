@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import numpy as np
+import pandas as pd
 import db.connection as db
 from backtester.fundamental_sim import load_prices, simulate, stats
 from backtester.store import save_run
@@ -148,8 +149,9 @@ def main():
                       "marcap_filter": MIN_MARCAP, "windows": len(WINDOWS),
                       "selection": "학습 구간 거래당 평균 최대"},
                      s,
-                     [{"code": t["code"], "entry_d": t["entry_d"].date() if hasattr(t["entry_d"], "date") else t["entry_d"],
-                       "exit_d": t["exit_d"].date() if hasattr(t["exit_d"], "date") else t["exit_d"],
+                     [{"code": t["code"],
+                       "entry_d": pd.Timestamp(t["entry_d"]).date(),
+                       "exit_d": pd.Timestamp(t["exit_d"]).date(),
                        "entry_px": t["entry_px"], "exit_px": t["exit_px"],
                        "ret_pct": t["ret"], "exit_reason": t["reason"]} for t in trades])
 

@@ -11,8 +11,23 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import json
+from datetime import datetime
 import psycopg2.extras
 import db.connection as db
+
+
+def _native(v):
+    """numpy/pandas 스칼라를 psycopg2가 아는 타입으로 끊는다.
+
+    이 저장소에서 세 번 겪은 실패다: numpy 2.0의 repr('np.float64(...)')이 SQL에
+    그대로 박히거나, numpy.datetime64를 adapt하지 못해 INSERT가 죽는다
+    (processor/signals.py의 _f() 주석 참고). 호출부마다 캐스팅하는 대신 여기서 막는다.
+    """
+    if hasattr(v, "item"):          # numpy 스칼라
+        v = v.item()
+    if isinstance(v, datetime):     # pandas Timestamp 등
+        return v.date()
+    return v
 
 
 def save_run(strategy: str, start_d: str, end_d: str,
@@ -49,8 +64,10 @@ def save_run(strategy: str, start_d: str, end_d: str,
                     """INSERT INTO backtest_trades
                        (run_id, code, entry_d, exit_d, entry_px, exit_px, ret_pct, exit_reason)
                        VALUES %s""",
-                    [(run_id, t["code"], t["entry_d"], t["exit_d"], t["entry_px"],
-                      t["exit_px"], t["ret_pct"], t["exit_reason"]) for t in trades],
+                    [tuple(_native(x) for x in
+                           (run_id, t["code"], t["entry_d"], t["exit_d"], t["entry_px"],
+                            t["exit_px"], t["ret_pct"], t["exit_reason"]))
+                     for t in trades],
                 )
         conn.commit()
     except Exception:

@@ -80,3 +80,19 @@ def test_collect_rejects_unknown_report_code(mock_db, mocker):
 
     with pytest.raises(ValueError, match="reprt_code"):
         sh.collect("2025", "99999")
+
+
+# ---------- backtester/store.py 의 numpy 방어 ----------
+
+def test_store_coerces_numpy_and_pandas_scalars():
+    """numpy 스칼라/datetime64가 그대로 SQL에 가면 INSERT가 죽는다."""
+    import numpy as np
+    import pandas as pd
+    from backtester.store import _native
+
+    assert _native(np.float64(1.5)) == 1.5 and type(_native(np.float64(1.5))) is float
+    assert _native(np.int64(7)) == 7 and type(_native(np.int64(7))) is int
+    assert _native(np.datetime64("2026-08-14")).isoformat() == "2026-08-14"
+    assert _native(pd.Timestamp("2026-08-14 09:30")).isoformat() == "2026-08-14"
+    assert _native("stop") == "stop"
+    assert _native(None) is None
