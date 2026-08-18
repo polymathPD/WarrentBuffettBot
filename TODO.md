@@ -102,7 +102,7 @@
 - [x] `scheduler.py:daily_job`의 수집 단계에 연결.
       재무는 `collector/financials.py:latest_period()`가 제출 기한을 보고 기간을 고른다
 
-### C5. 발행주식수 (밸류에이션 팩터의 전제) — 보류
+### C5. 발행주식수 (밸류에이션 팩터의 전제)
 
 PBR/PER 같은 밸류에이션은 시가총액 시계열이 있어야 하는데 지금은 없다. 실측으로
 소스는 확정해 뒀다.
@@ -118,8 +118,12 @@ PBR/PER 같은 밸류에이션은 시가총액 시계열이 있어야 하는데 
   권한다 (3,925종목 × 5년 ≈ 19,625콜, 하루)
 - pykrx 과거 시가총액 경로는 이 환경에서 라이브러리 내부 인코딩 오류로 실패한다
 
-- [ ] `collector/shares.py` + `shares(code, period, issued, treasury, floating)` 테이블
+- [x] `collector/shares.py` + `shares(code, period, issued, treasury, floating)` 테이블.
+      보통주 행만 쓰고, 이미 저장된 (종목, 기간)은 건너뛰어 중단 후 재개가 된다.
+      DART 일일 한도(status 020)를 만나면 즉시 멈춘다
 - [ ] 시가총액 = 종가 × 발행주식수, PBR = 시가총액 / 자본총계로 팩터 추가
+- [ ] 펀더멘털 전략의 시총 필터를 `shares` 기반으로 바꿔 백테스트에서도 켤 수 있게 하기
+      (지금은 FDR 현재 시총이라 실전 경로에서만 켠다)
 
 ---
 

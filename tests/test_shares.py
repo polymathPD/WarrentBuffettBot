@@ -1,0 +1,82 @@
+"""collector/shares.py - 보통주 선택, 한도 초과 중단, 재개. 네트워크/DB는 mock."""
+import pytest
+
+from collector import shares as sh
+
+
+SAMPLE = {"status": "000", "list": [
+    {"se": "보통주", "istc_totqy": "5,846,278,608",
+     "tesstk_co": "82,086,705", "distb_stock_co": "5,764,191,903"},
+    {"se": "우선주", "istc_totqy": "822,886,700",
+     "tesstk_co": "-", "distb_stock_co": "802,371,203"},
+    {"se": "합계", "istc_totqy": "6,669,165,308",
+     "tesstk_co": "82,086,705", "distb_stock_co": "6,566,563,106"},
+]}
+
+
+def test_count_parsing():
+    assert sh._count("5,846,278,608") == 5846278608
+    assert sh._count("-") is None
+    assert sh._count("") is None
+    assert sh._count(None) is None
+
+
+def test_row_takes_common_shares_only():
+    """우선주는 종목코드가 따로고, 시총은 보통주 기준으로 잰다."""
+    assert sh._row(SAMPLE, "005930", "2025Q4") == (
+        "005930", "2025Q4", 5846278608, 82086705, 5764191903)
+
+
+def test_row_returns_none_when_no_common_row():
+    assert sh._row({"list": [{"se": "우선주", "istc_totqy": "1,000"}]},
+                   "005930", "2025Q4") is None
+
+
+def test_fetch_raises_rate_limited_on_020(mocker):
+    mocker.patch.object(sh.config, "DART_API_KEY", "dummy")
+    resp = mocker.MagicMock()
+    resp.json.return_value = {"status": "020", "message": "요청 제한 초과"}
+    mocker.patch("requests.get", return_value=resp)
+
+    with pytest.raises(sh.RateLimited):
+        sh.fetch("00126380", "2025", "11011")
+
+
+def test_collect_skips_already_stored_codes(mock_db, mocker):
+    """중간에 끊겨도 다시 실행하면 남은 종목만 받는다."""
+    mocker.patch.object(sh.config, "DART_API_KEY", "dummy")
+    mock_db.fetchall.side_effect = [
+        [{"code": "005930"}],                                    # 이미 수집
+        [{"code": "005930", "dart_corp_code": "00126380"},
+         {"code": "000270", "dart_corp_code": "00106641"}],
+    ]
+    fetch = mocker.patch.object(sh, "fetch", return_value=SAMPLE)
+    mocker.patch("time.sleep")
+
+    sh.collect("2025", "11011")
+
+    assert fetch.call_count == 1
+    assert fetch.call_args[0][0] == "00106641"
+
+
+def test_collect_stops_on_rate_limit(mock_db, mocker):
+    mocker.patch.object(sh.config, "DART_API_KEY", "dummy")
+    mock_db.fetchall.side_effect = [
+        [],
+        [{"code": f"{i:06d}", "dart_corp_code": f"{i:08d}"} for i in range(5)],
+    ]
+    fetch = mocker.patch.object(sh, "fetch",
+                                side_effect=[SAMPLE, sh.RateLimited("한도 초과")])
+    mocker.patch("time.sleep")
+
+    sh.collect("2025", "11011")
+
+    assert fetch.call_count == 2      # 한도 초과 즉시 중단
+    assert mock_db.executemany.call_count == 1   # 그때까지 받은 건 저장
+
+
+def test_collect_rejects_unknown_report_code(mock_db, mocker):
+    mocker.patch.object(sh.config, "DART_API_KEY", "dummy")
+
+    with pytest.raises(ValueError, match="reprt_code"):
+        sh.collect("2025", "99999")

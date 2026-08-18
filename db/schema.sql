@@ -148,6 +148,17 @@ CREATE TABLE IF NOT EXISTS financials (
     PRIMARY KEY (code, period)
 );
 
+-- 발행주식수 (시가총액·PBR의 전제)
+-- 시가총액 = 종가 × issued. 자기주식을 뺀 유통주식(floating)도 함께 둔다.
+CREATE TABLE IF NOT EXISTS shares (
+    code     TEXT,
+    period   TEXT,      -- financials와 같은 표기 (2025Q4 = 2025 사업보고서)
+    issued   BIGINT,    -- 발행주식의 총수(보통주)
+    treasury BIGINT,    -- 자기주식
+    floating BIGINT,    -- 유통주식
+    PRIMARY KEY (code, period)
+);
+
 -- 수집기 커서 (마지막 수집 시점)
 CREATE TABLE IF NOT EXISTS collect_cursor (
     source    TEXT,
