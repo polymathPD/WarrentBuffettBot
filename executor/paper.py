@@ -14,6 +14,15 @@ from executor.guard import already_entered
 MODE = "paper"
 
 
+def free_slots(strategy: str, mode: str = MODE) -> int:
+    """전략별 남은 슬롯 수. 슬롯은 전략마다 따로 센다."""
+    n = db.fetchone(
+        "SELECT COUNT(*) AS n FROM positions WHERE mode=%s AND strategy=%s",
+        (mode, strategy),
+    )["n"]
+    return config.get_setting("SLOTS") - int(n)
+
+
 def _next_open(code: str, after_date: str) -> float | None:
     """after_date 다음 거래일의 시가 반환"""
     row = db.fetchone(
@@ -35,11 +44,7 @@ def buy(code: str, name: str, signal_date: str, close_px: float,
         return False
 
     # 슬롯 확인
-    held = db.fetchone(
-        "SELECT COUNT(*) AS n FROM positions WHERE mode=%s AND strategy=%s",
-        (MODE, strategy),
-    )
-    if int(held["n"]) >= config.get_setting("SLOTS"):
+    if free_slots(strategy) <= 0:
         print(f"[모의 매수 거부] {code} — 슬롯 부족")
         return False
 

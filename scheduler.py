@@ -97,7 +97,7 @@ def daily_job():
     # 6. 진입 후보 → 에이전트 판단 → 모의 매수
     #    직전 거래일 신호를 오늘 시가로 체결한다 (_entry_signal_date 참고)
     from agents.gate import decide, decide_fundamental
-    from executor.paper import buy
+    from executor.paper import buy, free_slots
     import db.connection as db
 
     def name_of(code):
@@ -113,7 +113,14 @@ def daily_job():
         candidates = contrarian.get_entry_candidates(signal_date)
         print(f"진입 후보({signal_date} 신호 → {today} 시가 체결): {len(candidates)}종목")
 
-    for c in candidates:
+    # 슬롯이 차면 남은 후보는 게이트에 올리지 않는다. risk 에이전트가 '여유 슬롯
+    # 0개'로 반려해 주긴 하지만, 그건 산술 계산 하나를 LLM 호출로 대신하는 것이라
+    # 후보 수만큼 크레딧이 나간다 (2026-08-19: 38종목이 전부 이 사유로 반려됐다).
+    # 판단 결과는 달라지지 않는다 — 어차피 executor도 같은 조건으로 거부한다.
+    for i, c in enumerate(candidates):
+        if free_slots(STRATEGY) <= 0:
+            print(f"  슬롯 소진 — 남은 후보 {len(candidates) - i}종목 건너뜀")
+            break
         code = c["code"]
         gate = decide(code, signal_date, STRATEGY)
         if gate["approved"]:
@@ -129,7 +136,10 @@ def daily_job():
     else:
         f_candidates = fundamental.get_entry_candidates(prev_day)
         print(f"펀더멘털 후보({prev_day} 공시 -> {today} 시가 체결): {len(f_candidates)}종목")
-        for c in f_candidates:
+        for i, c in enumerate(f_candidates):
+            if free_slots(fundamental.STRATEGY) <= 0:
+                print(f"  슬롯 소진 - 남은 후보 {len(f_candidates) - i}종목 건너뜀")
+                break
             code = c["code"]
             gate = decide_fundamental(code, prev_day, fundamental.STRATEGY)
             if gate["approved"]:

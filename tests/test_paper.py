@@ -140,3 +140,22 @@ def test_buy_rejected_when_already_bought_today(mock_db, mock_settings):
 
     assert result is False
     mock_db.execute.assert_not_called()
+
+
+def test_free_slots_counts_only_this_strategy(mock_db, mock_settings):
+    """슬롯은 전략별로 센다. 다른 전략의 보유가 이 전략 슬롯을 먹으면 안 된다."""
+    from executor import paper
+
+    mock_db.fetchone.return_value = {"n": 3}
+
+    assert paper.free_slots("contrarian_v1") == config.get_setting("SLOTS") - 3
+    args = mock_db.fetchone.call_args[0][1]
+    assert args == ("paper", "contrarian_v1")
+
+
+def test_free_slots_zero_when_full(mock_db, mock_settings):
+    from executor import paper
+
+    mock_db.fetchone.return_value = {"n": config.get_setting("SLOTS")}
+
+    assert paper.free_slots("contrarian_v1") == 0
