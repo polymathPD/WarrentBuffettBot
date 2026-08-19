@@ -64,7 +64,7 @@ def decide(code: str, target_date: str, strategy: str) -> dict:
     return _gate({
         "retail_flow": retail_flow.analyze(code, target_date),
         "credit_heat": credit_heat.analyze(code, target_date),
-        "market_state": market_state.analyze(code, target_date),
+        "market_state": market_state.analyze(code, target_date, strategy),
         "risk": risk.analyze(code, target_date, strategy),
     }, consensus=("retail_flow", "credit_heat"))
 
@@ -74,6 +74,6 @@ def decide_fundamental(code: str, target_date: str, strategy: str) -> dict:
     return _gate({
         "disclosure": disclosure.analyze(code, target_date),
         "financials": financials.analyze(code, target_date),
-        "market_state": market_state.analyze(code, target_date),
+        "market_state": market_state.analyze(code, target_date, strategy),
         "risk": risk.analyze(code, target_date, strategy),
     }, consensus=("disclosure", "financials"))

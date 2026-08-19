@@ -179,8 +179,8 @@ def test_market_state_caches_per_market_not_per_code(mock_db, mock_claude):
     mock_db.fetchone.return_value = None
     mock_claude.return_value = "결정: 매수 / 확신: 8 / 이유: 강세장"
 
-    market_state.analyze("005930", "2026-08-19")
-    market_state.analyze("000660", "2026-08-19")
+    market_state.analyze("005930", "2026-08-19", "contrarian_v1")
+    market_state.analyze("000660", "2026-08-19", "contrarian_v1")
 
     keys = [
         c[0][1][0]
