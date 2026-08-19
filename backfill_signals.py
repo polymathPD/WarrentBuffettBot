@@ -62,13 +62,19 @@ def _load_batch(codes: list[str], load_floor):
 
 
 def backfill(start_date: str, end_date: str, buffer_days: int = 60,
-             code_batch: int = 300):
+             code_batch: int = 300, start_idx: int = 0):
     """
     종목을 code_batch개씩 끊어 적재→계산→삽입한다.
 
     전 종목·전 기간을 한 번에 올리면(일봉 350만 + 수급 236만 + 신용 106만 행)
     fetchall이 만드는 파이썬 dict/Decimal 객체만으로 메모리가 터진다. 배치로
     끊으면 사용량이 배치 크기에 비례해 일정하게 유지된다.
+
+    code_batch=300은 전 구간(2022~2026)을 돌릴 때 프로세스가 조용히 죽는 크기다
+    (출력도 안 남기고 사라진다). 60으로 낮추면 완주한다.
+
+    start_idx: 종목코드 오름차순 기준 시작 위치. 중간에 끊겼을 때 이어붙인다.
+    삽입이 UPSERT라 겹치는 구간을 다시 돌려도 안전하니 넉넉히 앞에서 시작해도 된다.
     """
     end_buffer = pd.Timestamp(end_date) + pd.Timedelta(days=buffer_days)
     # WINDOW(30거래일) 워밍업 확보용 여유. 휴장일을 감안해 넉넉히 잡는다.
@@ -76,7 +82,11 @@ def backfill(start_date: str, end_date: str, buffer_days: int = 60,
 
     all_codes = [r["code"] for r in
                  db.fetchall("SELECT DISTINCT code FROM stock_daily ORDER BY code")]
-    print(f"대상 {len(all_codes):,}종목, {code_batch}종목씩 처리 (기준일 {load_floor} 이후)")
+    total_codes = len(all_codes)
+    all_codes = all_codes[start_idx:]
+    print(f"대상 {len(all_codes):,}종목"
+          + (f" ({start_idx:,}번째부터 재개, 전체 {total_codes:,})" if start_idx else "")
+          + f", {code_batch}종목씩 처리 (기준일 {load_floor} 이후)", flush=True)
 
     t0 = time.time()
     total_out = 0
@@ -86,8 +96,8 @@ def backfill(start_date: str, end_date: str, buffer_days: int = 60,
         if merged.empty:
             continue
         total_out += _process(merged, start_date, end_buffer)
-        print(f"  {min(b0 + code_batch, len(all_codes)):,}/{len(all_codes):,}종목  "
-              f"누적 {total_out:,}행  ({time.time() - t0:.0f}s)")
+        print(f"  {start_idx + min(b0 + code_batch, len(all_codes)):,}/{total_codes:,}종목  "
+              f"누적 {total_out:,}행  ({time.time() - t0:.0f}s)", flush=True)
 
     print(f"\n완료: {total_out:,}행, {time.time() - t0:.0f}s")
 
@@ -184,4 +194,6 @@ def _process(merged, start_date, end_buffer) -> int:
 if __name__ == "__main__":
     s = sys.argv[1] if len(sys.argv) > 1 else "2022-01-01"
     e = sys.argv[2] if len(sys.argv) > 2 else "2024-12-31"
-    backfill(s, e)
+    batch = int(sys.argv[3]) if len(sys.argv) > 3 else 60
+    idx = int(sys.argv[4]) if len(sys.argv) > 4 else 0
+    backfill(s, e, code_batch=batch, start_idx=idx)
