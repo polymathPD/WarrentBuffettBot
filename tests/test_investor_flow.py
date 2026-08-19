@@ -89,7 +89,7 @@ def test_end_anchor_defaults_to_latest_daily_bar(mock_db, mocker):
     mocker.patch("collector.investor_flow.target_codes", return_value=["005930"])
     mock_db.fetchone.side_effect = [
         {"d": date(2026, 8, 12)},  # _latest_available_date: stock_daily 최신일
-        None,                      # _last_collected: 커서 없음
+        {"d": None},               # _last_data_date: 이 종목 데이터 없음
     ]
     fetch = mocker.patch(
         "collector.investor_flow._fetch_page", return_value=[_row("20220101")]
@@ -116,9 +116,10 @@ def test_stalled_anchor_stops_instead_of_refetching(mock_db, mocker):
     assert len(_cursor_calls(mock_db)) == 1
 
 
-def test_already_collected_today_is_skipped_without_api_call(mock_db, mocker):
+def test_skipped_when_data_already_reaches_target_date(mock_db, mocker):
+    """목표일까지 이미 받아 뒀으면 API를 부르지 않는다."""
     mocker.patch("collector.investor_flow.target_codes", return_value=["005930"])
-    mock_db.fetchone.return_value = {"last_seen": datetime.now(timezone.utc)}
+    mock_db.fetchone.return_value = {"d": date(2026, 8, 13)}
     fetch = mocker.patch("collector.investor_flow._fetch_page")
 
     investor_flow.collect(start_date="20220101", end_date="20260813")
@@ -126,20 +127,22 @@ def test_already_collected_today_is_skipped_without_api_call(mock_db, mocker):
     fetch.assert_not_called()
 
 
-def test_utc_cursor_is_compared_in_local_time(mock_db, mocker):
-    """커서는 Postgres NOW()(UTC)로 저장된다. KST 00~09시에는 UTC 날짜가 하루
-    뒤처지므로, 로컬 변환 없이 date.today()와 비교하면 오늘 끝낸 종목을 다시 받는다."""
+def test_collection_running_past_midnight_does_not_skip_next_day(mock_db, mocker):
+    """회귀: 증분 기준을 '수집 시각'으로 잡으면 안 된다.
+
+    전 종목 수집이 13시간 걸려 자정을 넘겨 끝나면 커서(UTC NOW)의 로컬 날짜가
+    다음 날이 된다. 그걸로 '오늘 이미 했다'를 판정하면 다음 실행이 전 종목을
+    건너뛰고, 실제로 하루치 수급이 통째로 비었다. 기준은 데이터 최신일이다."""
     mocker.patch("collector.investor_flow.target_codes", return_value=["005930"])
-    # 로컬 기준 오늘 08:00에 수집 완료 -> UTC로는 어제 23:00일 수 있다
-    local_today_morning = datetime.combine(
-        date.today(), time(8, 0), tzinfo=datetime.now().astimezone().tzinfo
-    )
-    mock_db.fetchone.return_value = {"last_seen": local_today_morning.astimezone(timezone.utc)}
-    fetch = mocker.patch("collector.investor_flow._fetch_page")
+    # 데이터는 08-18까지만 있다 (커서 시각이 무엇이든 08-19는 받아야 한다)
+    mock_db.fetchone.return_value = {"d": date(2026, 8, 18)}
+    fetch = mocker.patch("collector.investor_flow._fetch_page",
+                         return_value=[_row("20260819")])
 
-    investor_flow.collect(start_date="20220101", end_date="20260813")
+    investor_flow.collect(start_date="20220101", end_date="20260819")
 
-    fetch.assert_not_called()
+    assert fetch.called, "데이터가 목표일에 못 미치면 반드시 수집해야 한다"
+    assert mock_db.executemany.called
 
 
 # --- 행 파싱 ----------------------------------------------------------------

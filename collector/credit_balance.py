@@ -76,14 +76,17 @@ def _latest_available_date() -> str:
     return date.today().strftime("%Y%m%d")
 
 
-def _last_collected(code: str):
-    row = db.fetchone(
-        "SELECT last_seen FROM collect_cursor WHERE source=%s AND code=%s",
-        (SOURCE, code),
-    )
-    # last_seen은 Postgres NOW()(UTC). date.today()는 로컬(KST)이라 그대로 비교하면
-    # KST 00~09시 구간에서 하루 어긋난다 — 로컬로 변환 후 비교한다.
-    return row["last_seen"].astimezone().date() if row else None
+def _last_data_date(code: str):
+    """이 종목의 실제 데이터 최신일. 없으면 None.
+
+    증분 수집의 기준은 '언제 수집했는가'(collect_cursor.last_seen)가 아니라
+    '어디까지 받았는가'여야 한다. 커서는 Postgres NOW()(UTC)라, 전 종목 수집이
+    자정을 넘겨 끝나면 그 시각이 다음 날짜로 읽혀 다음 실행이 전 종목을 건너뛴다.
+    시간대 해석이 끼어들지 않도록 데이터 자체를 본다. (커서는
+    universe.target_codes()가 수집 이력을 유지하는 데 계속 쓰인다.)
+    """
+    row = db.fetchone("SELECT MAX(d) AS d FROM credit_balance WHERE code=%s", (code,))
+    return row["d"] if row and row["d"] else None
 
 
 def _headers() -> dict:
@@ -147,7 +150,6 @@ def collect_kis(start_date: str = "20220101", end_date: str = None):
         collect_stub(start_date, end_date)
         return
 
-    today = date.today()
     end = end_date or _latest_available_date()
     tickers = target_codes(SOURCE)
     total = len(tickers)
@@ -157,8 +159,8 @@ def collect_kis(start_date: str = "20220101", end_date: str = None):
 
     for i, code in enumerate(tickers, 1):
         try:
-            last = _last_collected(code)
-            if last and last >= today:
+            last = _last_data_date(code)
+            if last and last.strftime("%Y%m%d") >= end:
                 continue
             start_bound = last.strftime("%Y%m%d") if last else start_date
             if start_bound > end:
