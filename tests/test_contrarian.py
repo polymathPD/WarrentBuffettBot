@@ -77,8 +77,9 @@ def test_exit_stop_takes_priority_over_expiry(mock_db, mock_settings):
         "code": "000001", "name": "테스트종목", "entry_date": date(2024, 1, 1),
         "entry_px": 10000, "qty": 1, "stop_px": 9000, "max_hold_days": 5,
         "mode": "paper", "close_price": 8000, "heat_score": 9.0, "signal": "sell",
+        "held_days": 13,
     }]
-    result = contrarian.get_exit_candidates("2024-01-20")  # 19일 경과, 손절가 밑
+    result = contrarian.get_exit_candidates("2024-01-20")  # 만기 초과 + 손절가 밑
 
     assert len(result) == 1
     assert result[0]["reason"] == "stop"
@@ -89,8 +90,9 @@ def test_exit_expiry_when_not_stopped(mock_db, mock_settings):
         "code": "000001", "name": "테스트종목", "entry_date": date(2024, 1, 1),
         "entry_px": 10000, "qty": 1, "stop_px": 9000, "max_hold_days": 5,
         "mode": "paper", "close_price": 9500, "heat_score": 3.0, "signal": "neutral",
+        "held_days": 13,
     }]
-    result = contrarian.get_exit_candidates("2024-01-20")  # 19일 경과, 손절가 위
+    result = contrarian.get_exit_candidates("2024-01-20")  # 13거래일 경과, 손절가 위
 
     assert len(result) == 1
     assert result[0]["reason"] == "expiry"
@@ -101,8 +103,9 @@ def test_exit_heat_signal_when_not_stopped_or_expired(mock_db, mock_settings):
         "code": "000001", "name": "테스트종목", "entry_date": date(2024, 1, 15),
         "entry_px": 10000, "qty": 1, "stop_px": 9000, "max_hold_days": 20,
         "mode": "paper", "close_price": 9500, "heat_score": 9.0, "signal": "sell",
+        "held_days": 3,
     }]
-    result = contrarian.get_exit_candidates("2024-01-20")  # 5일 경과, HEAT_SELL(8.5) 초과
+    result = contrarian.get_exit_candidates("2024-01-20")  # 3거래일 경과, HEAT_SELL(8.5) 초과
 
     assert len(result) == 1
     assert result[0]["reason"] == "heat_signal"
@@ -113,6 +116,7 @@ def test_exit_no_reason_returns_empty(mock_db, mock_settings):
         "code": "000001", "name": "테스트종목", "entry_date": date(2024, 1, 15),
         "entry_px": 10000, "qty": 1, "stop_px": 9000, "max_hold_days": 20,
         "mode": "paper", "close_price": 9500, "heat_score": 3.0, "signal": "neutral",
+        "held_days": 3,
     }]
     result = contrarian.get_exit_candidates("2024-01-20")
     assert result == []
@@ -140,3 +144,17 @@ def test_entry_candidates_drop_non_ordinary_and_illiquid(mock_db, mock_settings,
 
     assert [c["code"] for c in got] == ["000100"]
     assert filters.ordinary(["0015S0", "000100"]) == ["000100"]
+
+
+def test_exit_counts_holding_period_in_trading_days(mock_db, mock_settings):
+    """보유기간은 달력일이 아니라 거래일(stock_daily 봉 수)이어야 한다.
+
+    백테스트(research/portfolio_backtest.py)는 거래일 인덱스 차이로 센다.
+    달력일로 세면 MAX_HOLD_DAYS=20이 검증에서는 20거래일(약 28달력일)인데
+    운용에서는 20달력일(약 14거래일)이 되어 30% 일찍 팔린다."""
+    mock_db.fetchall.return_value = []
+    contrarian.get_exit_candidates("2024-01-20")
+
+    sql = mock_db.fetchall.call_args[0][0]
+    assert "COUNT(*) FROM stock_daily" in sql, "거래일 봉 수를 세야 한다"
+    assert "h.d > p.entry_date" in sql and "h.d <= %s::date" in sql

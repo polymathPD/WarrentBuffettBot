@@ -94,6 +94,12 @@ def get_entry_candidates(target_date: str = None,
 def get_exit_candidates(target_date: str = None) -> list[dict]:
     """
     청산 후보: 과열 신호 발생 또는 보유 기간 초과 포지션
+
+    보유기간은 거래일 기준으로 센다(달력일이 아니라 stock_daily 봉 수).
+    백테스트(research/portfolio_backtest.py)가 거래일 인덱스 차이로 세므로,
+    달력일로 세면 MAX_HOLD_DAYS=20이 검증에서는 20거래일(약 28달력일)인데
+    운용에서는 20달력일(약 14거래일)이 되어 30% 일찍 팔린다. 검증한 규칙과
+    운용 규칙이 갈라지면 백테스트 수치가 운용을 설명하지 못한다.
     """
     d = target_date or date.today().strftime("%Y-%m-%d")
 
@@ -102,20 +108,22 @@ def get_exit_candidates(target_date: str = None) -> list[dict]:
                   p.max_hold_days, p.mode,
                   sd.c AS close_price,
                   COALESCE(cs.heat_score, 0) AS heat_score,
-                  COALESCE(cs.signal, 'neutral') AS signal
+                  COALESCE(cs.signal, 'neutral') AS signal,
+                  (SELECT COUNT(*) FROM stock_daily h
+                    WHERE h.code = p.code AND h.d > p.entry_date AND h.d <= %s::date)
+                    AS held_days
            FROM positions p
            JOIN stock_daily sd ON sd.code = p.code AND sd.d = %s::date
            LEFT JOIN contrarian_signals cs ON cs.code = p.code AND cs.d = %s::date
            WHERE p.strategy = %s""",
-        (d, d, STRATEGY),
+        (d, d, d, STRATEGY),
     )
 
     exits = []
-    today = date.fromisoformat(d)
     for r in rows:
         reason = None
         close = float(r["close_price"])
-        held_days = (today - r["entry_date"]).days
+        held_days = int(r["held_days"])
 
         if close <= float(r["stop_px"]):
             reason = "stop"
