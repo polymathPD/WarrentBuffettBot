@@ -180,3 +180,18 @@ def test_agent_error_blocks_even_when_everyone_else_says_buy(mocker):
 
     assert result["approved"] is False
     assert "retail_flow" in result["reason"]
+
+
+def test_approval_survives_mixed_score_types(mocker):
+    """캐시(Decimal)와 신규 호출(float)이 섞여도 승인 경로가 살아 있어야 한다.
+    avg_score는 승인될 때만 계산돼, 이 버그는 통과하는 순간에만 드러났다."""
+    from decimal import Decimal
+    _patch_agents(
+        mocker,
+        market_state=_decision("매수", score=Decimal("7.0")),
+        risk=_decision("매수", score=8.0),
+        retail_flow=_decision("매수", score=Decimal("9.0")),
+        credit_heat=_decision("매수", score=6.0),
+    )
+    result = gate.decide("005930", "2024-01-15", "contrarian_v1")
+    assert result["approved"] is True

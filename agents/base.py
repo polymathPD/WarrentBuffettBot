@@ -124,7 +124,12 @@ def call(agent_name: str, code: str, prompt: str,
         (h,),
     )
     if cached:
-        return dict(cached)
+        # score는 NUMERIC이라 psycopg2가 Decimal로 준다. 캐시 히트와 미스가 서로
+        # 다른 타입을 돌려주면 게이트에서 float와 Decimal을 더하다 TypeError로 죽는다.
+        # 하필 avg_score는 승인 경로에서만 계산되므로, 승인될 때만 터진다.
+        row = dict(cached)
+        row["score"] = float(row["score"]) if row["score"] is not None else 0.0
+        return row
 
     if not config.CLAUDE_API_KEY:
         return _fail(agent_name, code, ERR_NO_KEY, "CLAUDE_API_KEY 환경변수가 비어 있음")

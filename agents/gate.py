@@ -51,7 +51,10 @@ def _gate(results: dict, consensus: tuple) -> dict:
             "reason": f"합의 미달: 매수 {buy_votes}/{len(consensus)}",
         }
 
-    avg_score = sum(r["score"] for r in results.values()) / len(results)
+    # float()로 못박는다. score는 DB에서 오면 Decimal, API에서 오면 float이라
+    # 그냥 더하면 TypeError가 난다 — 그것도 승인될 때만 계산되는 줄이라
+    # 통과하는 순간에만 터진다.
+    avg_score = sum(float(r["score"]) for r in results.values()) / len(results)
     return {
         "approved": True,
         "agents": results,

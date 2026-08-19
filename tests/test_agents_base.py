@@ -205,3 +205,15 @@ def test_unparseable_response_is_recorded_as_error(mock_db, mock_claude):
     assert result["error"] == base.ERR_PARSE
     sql, params = mock_db.execute.call_args[0]
     assert "NULL" in sql          # 깨진 응답은 캐시하지 않는다
+
+
+def test_cached_score_is_float_not_decimal(mock_db, mock_claude):
+    """DB의 NUMERIC은 Decimal로 돌아온다. 캐시 히트/미스가 타입이 다르면
+    게이트가 float+Decimal을 더하다 죽는다 — 그것도 '승인'될 때만."""
+    from decimal import Decimal
+    mock_db.fetchone.return_value = {
+        "decision": "매수", "score": Decimal("8.0"), "rationale": "캐시",
+    }
+    result = call("retail_flow", "005930", "프롬프트")
+    assert isinstance(result["score"], float)
+    assert result["score"] + 1.0 == 9.0        # 섞어 써도 터지지 않는다
