@@ -1,6 +1,6 @@
 """
 역발상 과열 신호 계산 → contrarian_signals
-heat_score 0~10: 높을수록 과열(개인 쏠림, 신용 급증, 거래대금 급증)
+heat_score -10~+10: 높을수록 과열, 낮을수록 소외(개인·신용·거래대금 모두 한산)
 
 외국인/기관 순매수 배율과 신용잔고 비율(수준)도 함께 기록하지만 heat_score에는
 반영하지 않는다 — 가중치를 정할 근거(수익률과의 관계)를 아직 측정하지 않았기 때문.
@@ -72,22 +72,32 @@ def _heat(flow_r, credit_r, vol_r) -> tuple[float, str]:
     신용잔고 비율(credit_ratio_level)도 마찬가지다. credit_surge_ratio가 '변화'라면
     이쪽은 '수준'이라 개념적으로 독립이지만, 아직 표본이 부족해 기록만 한다.
     """
+    # 각 항의 하한은 상한과 대칭이다(0이 아니다). 하한을 0에 두면 세 배율이 모두
+    # 기준선 아래인 종목이 전부 정확히 0.0이 되는데, 그건 이 전략이 매수 대상으로
+    # 삼는 바로 그 구간이다. 2026-08-18 기준 필터 통과 1,324종목 중 426종목이
+    # heat_score 0.0 동점이었고(전 구간 평균 66~74%), ORDER BY heat_score ASC가
+    # 사실상 DB 행 순서로 종목을 골랐다.
+    #
+    # 과열에서 팔고 비과열에서 사려면 자가 양쪽으로 뻗어야 한다. 상한 쪽 의미는
+    # 그대로라 HEAT_AVOID(7.0) · HEAT_SELL(8.5) 임계값은 건드리지 않는다.
     score = 0.0
     count = 0
 
-    # 개인 순매수 배율: 2.0 이상이면 과열 의심
+    # 개인 순매수 배율: 2.0 이상이면 과열 의심, 낮을수록 개인이 손 뗀 상태
     if not np.isnan(flow_r):
-        score += _clamp((flow_r - 1.0) * 3.0, 0, 4.0)
+        score += _clamp((flow_r - 1.0) * 3.0, -4.0, 4.0)
         count += 1
 
-    # 신용잔고 급증 배율
+    # 신용잔고 급증 배율: 낮을수록 빚내서 사는 사람이 없는 상태
     if not np.isnan(credit_r):
-        score += _clamp((credit_r - 1.0) * 3.0, 0, 3.0)
+        score += _clamp((credit_r - 1.0) * 3.0, -3.0, 3.0)
         count += 1
 
-    # 거래대금 급증 배율
+    # 거래대금 급증 배율: 낮을수록 그날 관심이 없었다는 뜻.
+    # 유동성 자체가 낮은 종목이 상위로 오는 것은 아니다 — 이 값은 '평소 대비'
+    # 상대량이고, 절대 유동성은 strategy/filters.py의 거래대금 하한이 따로 막는다.
     if not np.isnan(vol_r):
-        score += _clamp((vol_r - 1.5) * 2.0, 0, 3.0)
+        score += _clamp((vol_r - 1.5) * 2.0, -3.0, 3.0)
         count += 1
 
     heat = score if count > 0 else np.nan

@@ -24,10 +24,28 @@ def test_credit_ratio_contribution_clamped_to_3():
     assert heat == pytest.approx(3.0)
 
 
-def test_volume_ratio_below_threshold_contributes_zero():
-    # (vol_r - 1.5) * 2.0, vol_r=1.0 -> 음수이므로 0으로 클램프
-    heat, signal = _heat(np.nan, np.nan, 1.0)
-    assert heat == pytest.approx(0.0)
+def test_below_threshold_scores_negative_not_zero():
+    """기준선 아래는 0이 아니라 음수여야 한다.
+
+    하한을 0에 두면 세 배율이 모두 낮은 종목이 전부 0.0으로 동점이 되는데,
+    그게 이 전략이 사려는 구간이다. 2026-08-18에 필터 통과 1,324종목 중
+    426종목이 0.0 동점이라 랭킹이 DB 행 순서로 결정됐다."""
+    heat, signal = _heat(np.nan, np.nan, 1.0)   # (1.0-1.5)*2 = -1.0
+    assert heat == pytest.approx(-1.0)
+    assert signal == "neutral"
+
+
+def test_quiet_stocks_are_ranked_apart_from_each_other():
+    """소외 정도가 다르면 점수도 달라야 한다 — 동점이 생기면 안 된다."""
+    mild = _heat(0.95, 0.98, 1.40)[0]
+    deep = _heat(0.30, 0.55, 0.60)[0]
+    assert deep < mild < 0
+
+
+def test_heat_never_goes_below_minus_10():
+    heat, signal = _heat(0.0, 0.0, 0.0)
+    assert heat >= -10.0
+    assert signal == "neutral"
 
 
 def test_combined_score_reaches_avoid_threshold():
