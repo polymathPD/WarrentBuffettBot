@@ -21,6 +21,7 @@ def _isolate(mocker):
 
 
 def _row(d, ind=1000, frg=-400, org=-600):
+    """KIS 응답 한 건. *_ntby_tr_pbmn은 백만원 단위다 (수집기가 원으로 환산한다)."""
     return {
         "stck_bsop_date": d,
         "prsn_ntby_tr_pbmn": str(ind),
@@ -153,7 +154,35 @@ def test_rows_older_than_start_bound_are_not_inserted(mock_db, mocker):
     investor_flow.collect(start_date="20220101", end_date="20220105")
 
     rows = mock_db.executemany.call_args[0][1]
-    assert rows == [("005930", date(2022, 1, 5), 1000, -400, -600)]
+    M = investor_flow.PBMN_TO_WON
+    assert rows == [("005930", date(2022, 1, 5), 1000 * M, -400 * M, -600 * M)]
+
+
+def test_amounts_are_stored_in_won_not_millions(mock_db, mocker):
+    """KIS는 백만원으로 준다. 원으로 환산하지 않으면 참조 DB에서 이관한 원 단위
+    데이터와 10^6배 어긋나고, flow_ratio의 30일 창이 두 단위를 물어 heat_score가
+    전 종목 0으로 죽는다."""
+    _one_code(mock_db, mocker)
+    mocker.patch("collector.investor_flow._fetch_page",
+                 return_value=[_row("20220105", ind=946, frg=-730, org=-216)])
+
+    investor_flow.collect(start_date="20220101", end_date="20220105")
+
+    _, d, ind, frg, org = mock_db.executemany.call_args[0][1][0]
+    assert (ind, frg, org) == (946_000_000, -730_000_000, -216_000_000)
+
+
+def test_recollection_overwrites_existing_rows(mock_db, mocker):
+    """DO NOTHING이면 단위가 틀린 행을 재수집으로 고칠 수 없다 — 실제로 그래서
+    수집기를 다시 돌려도 데이터가 복구되지 않았다."""
+    _one_code(mock_db, mocker)
+    mocker.patch("collector.investor_flow._fetch_page",
+                 return_value=[_row("20220105")])
+
+    investor_flow.collect(start_date="20220101", end_date="20220105")
+
+    sql = mock_db.executemany.call_args[0][0]
+    assert "DO UPDATE" in sql and "DO NOTHING" not in sql
 
 
 def test_malformed_dates_are_skipped(mock_db, mocker):

@@ -21,12 +21,21 @@ CREATE TABLE IF NOT EXISTS stock_daily (
 );
 
 -- 투자자별 순매수 (개인/외국인/기관)
+-- 투자자별 순매수
+--
+-- 단위: 원(KRW). 반드시 지킬 것.
+--   KIS의 *_ntby_tr_pbmn 필드는 '백만원'이고 *_ntby_qty는 '주'다. 수집기가
+--   collector/investor_flow.py의 PBMN_TO_WON으로 원으로 환산해 넣는다.
+--   과거에 이 환산이 없어 참조 DB에서 이관한 원 단위 행과 10^6배 어긋났고,
+--   processor/signals.py의 flow_ratio(오늘/30일 평균)가 창 하나에 두 단위를
+--   물면서 heat_score가 전 종목 0으로 죽었다. 단위를 섞으면 신호가 조용히
+--   사라지고 백테스트까지 무의미해진다.
 CREATE TABLE IF NOT EXISTS investor_flow (
     code            TEXT,
     d               DATE,
-    individual_net  BIGINT,
-    foreign_net     BIGINT,
-    institution_net BIGINT,
+    individual_net  BIGINT,   -- 원
+    foreign_net     BIGINT,   -- 원
+    institution_net BIGINT,   -- 원
     PRIMARY KEY (code, d)
 );
 

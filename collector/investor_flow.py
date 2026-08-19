@@ -22,6 +22,9 @@ from collector.universe import target_codes
 from executor.live import _get_token, _BASE_URL
 
 SOURCE = "investor_flow"
+
+# KIS의 *_ntby_tr_pbmn 필드 단위(백만원) -> DB 저장 단위(원)
+PBMN_TO_WON = 1_000_000
 API_URL = "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily"
 TR_ID = "FHPTJ04160001"
 # KIS 모의투자 계정은 초당 2건 한도다. 한도를 넘으면 HTTP 500 + msg1
@@ -160,16 +163,24 @@ def collect(start_date: str = "20220101", end_date: str = None):
                         oldest_d = d
                     if d.strftime("%Y%m%d") < start_bound:
                         continue
-                    individual = int(r.get("prsn_ntby_tr_pbmn") or 0)
-                    foreign = int(r.get("frgn_ntby_tr_pbmn") or 0)
-                    institution = int(r.get("orgn_ntby_tr_pbmn") or 0)
+                    # KIS의 *_ntby_tr_pbmn은 '백만원' 단위다. DB는 원 단위로 통일해
+                    # 저장하므로 여기서 환산한다 (db/schema.sql의 investor_flow 주석 참고).
+                    # 과거에 이 환산이 없어 참조 DB에서 이관한 원 단위 데이터와 10^6배
+                    # 어긋났고, heat_score가 전 종목 0으로 죽었다.
+                    individual = int(r.get("prsn_ntby_tr_pbmn") or 0) * PBMN_TO_WON
+                    foreign = int(r.get("frgn_ntby_tr_pbmn") or 0) * PBMN_TO_WON
+                    institution = int(r.get("orgn_ntby_tr_pbmn") or 0) * PBMN_TO_WON
                     to_insert.append((code, d, individual, foreign, institution))
 
                 if to_insert:
                     db.executemany(
                         """INSERT INTO investor_flow
                            (code, d, individual_net, foreign_net, institution_net)
-                           VALUES %s ON CONFLICT (code, d) DO NOTHING""",
+                           VALUES %s
+                           ON CONFLICT (code, d) DO UPDATE SET
+                             individual_net = EXCLUDED.individual_net,
+                             foreign_net = EXCLUDED.foreign_net,
+                             institution_net = EXCLUDED.institution_net""",
                         to_insert,
                     )
                     collected_any = True
