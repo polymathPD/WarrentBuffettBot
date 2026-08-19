@@ -1,14 +1,13 @@
-"""agents/gate.py - veto + 2/2 합의 로직. 4개 에이전트의 analyze()를 mock으로 대체."""
+"""agents/gate.py - veto + 합의 로직. 각 에이전트의 analyze()를 mock으로 대체."""
 import pytest
 
 from agents import base, gate
 
 
-def _patch_agents(mocker, *, market_state, risk, retail_flow, credit_heat):
+def _patch_agents(mocker, *, market_state, risk, value_trap):
     mocker.patch("agents.market_state.analyze", return_value=market_state)
     mocker.patch("agents.risk.analyze", return_value=risk)
-    mocker.patch("agents.retail_flow.analyze", return_value=retail_flow)
-    mocker.patch("agents.credit_heat.analyze", return_value=credit_heat)
+    mocker.patch("agents.value_trap.analyze", return_value=value_trap)
 
 
 def _decision(d, score=8.0, rationale="테스트"):
@@ -25,8 +24,7 @@ def test_all_agree_buy_is_approved(mocker):
         mocker,
         market_state=_decision("매수"),
         risk=_decision("매수"),
-        retail_flow=_decision("매수"),
-        credit_heat=_decision("매수"),
+        value_trap=_decision("매수"),
     )
     result = gate.decide("005930", "2024-01-15", "contrarian_v1")
     assert result["approved"] is True
@@ -37,8 +35,7 @@ def test_market_state_veto_rejects_regardless_of_others(mocker):
         mocker,
         market_state=_decision("청산"),
         risk=_decision("매수"),
-        retail_flow=_decision("매수"),
-        credit_heat=_decision("매수"),
+        value_trap=_decision("매수"),
     )
     result = gate.decide("005930", "2024-01-15", "contrarian_v1")
     assert result["approved"] is False
@@ -50,21 +47,19 @@ def test_risk_veto_rejects_regardless_of_others(mocker):
         mocker,
         market_state=_decision("매수"),
         risk=_decision("관망"),
-        retail_flow=_decision("매수"),
-        credit_heat=_decision("매수"),
+        value_trap=_decision("매수"),
     )
     result = gate.decide("005930", "2024-01-15", "contrarian_v1")
     assert result["approved"] is False
     assert "risk" in result["reason"]
 
 
-def test_only_one_of_two_consensus_votes_is_rejected(mocker):
+def test_consensus_agent_holding_off_is_rejected(mocker):
     _patch_agents(
         mocker,
         market_state=_decision("매수"),
         risk=_decision("매수"),
-        retail_flow=_decision("매수"),
-        credit_heat=_decision("관망"),  # 1/2 표만 매수
+        value_trap=_decision("관망"),   # 가치 함정으로 판정
     )
     result = gate.decide("005930", "2024-01-15", "contrarian_v1")
     assert result["approved"] is False
@@ -77,8 +72,7 @@ def test_veto_checked_before_consensus(mocker):
         mocker,
         market_state=_decision("관망"),
         risk=_decision("매수"),
-        retail_flow=_decision("매수"),
-        credit_heat=_decision("매수"),
+        value_trap=_decision("매수"),
     )
     result = gate.decide("005930", "2024-01-15", "contrarian_v1")
     assert result["approved"] is False
@@ -90,12 +84,11 @@ def test_approved_result_includes_average_score(mocker):
         mocker,
         market_state=_decision("매수", score=10.0),
         risk=_decision("매수", score=8.0),
-        retail_flow=_decision("매수", score=6.0),
-        credit_heat=_decision("매수", score=4.0),
+        value_trap=_decision("매수", score=6.0),
     )
     result = gate.decide("005930", "2024-01-15", "contrarian_v1")
     assert result["approved"] is True
-    assert "7.0" in result["reason"]  # (10+8+6+4)/4 = 7.0
+    assert "8.0" in result["reason"]  # (10+8+6)/3 = 8.0
 
 
 # ---------- 펀더멘털 게이트 ----------
@@ -156,8 +149,7 @@ def test_agent_error_is_reported_as_judgment_failure_not_veto(mocker):
         mocker,
         market_state=_error(),
         risk=_decision("매수"),
-        retail_flow=_decision("매수"),
-        credit_heat=_decision("매수"),
+        value_trap=_decision("매수"),
     )
     result = gate.decide("005930", "2024-01-15", "contrarian_v1")
 
@@ -173,13 +165,12 @@ def test_agent_error_blocks_even_when_everyone_else_says_buy(mocker):
         mocker,
         market_state=_decision("매수"),
         risk=_decision("매수"),
-        retail_flow=_error(base.ERR_RATE),
-        credit_heat=_decision("매수"),
+        value_trap=_error(base.ERR_RATE),
     )
     result = gate.decide("005930", "2024-01-15", "contrarian_v1")
 
     assert result["approved"] is False
-    assert "retail_flow" in result["reason"]
+    assert "value_trap" in result["reason"]
 
 
 def test_approval_survives_mixed_score_types(mocker):
@@ -190,8 +181,7 @@ def test_approval_survives_mixed_score_types(mocker):
         mocker,
         market_state=_decision("매수", score=Decimal("7.0")),
         risk=_decision("매수", score=8.0),
-        retail_flow=_decision("매수", score=Decimal("9.0")),
-        credit_heat=_decision("매수", score=6.0),
+        value_trap=_decision("매수", score=Decimal("9.0")),
     )
     result = gate.decide("005930", "2024-01-15", "contrarian_v1")
     assert result["approved"] is True

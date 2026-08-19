@@ -78,3 +78,21 @@ def mock_claude(mocker):
             return fake_client.messages.create
 
     return _Proxy()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_api_calls(mocker):
+    """테스트가 실제 Anthropic API를 때리지 못하게 막는다.
+
+    2026-08-20에 gate 테스트가 새 에이전트를 mock하지 않은 채로 돌아 실제 호출이
+    한 건 나갔다. 테스트는 조용히 통과했고(반환값이 우연히 '매수'였다) 실행시간이
+    늘어난 것 말고는 신호가 없었다. mock_claude를 쓰는 테스트는 같은 대상을 다시
+    patch하므로 이 가드를 덮어쓴다 — 즉 의도적으로 mock한 경우만 통과한다.
+    """
+    def _blocked(*args, **kwargs):
+        raise AssertionError(
+            "테스트에서 실제 Claude API를 호출하려 했다. "
+            "해당 에이전트의 analyze()를 mock하거나 mock_claude 픽스처를 써라."
+        )
+
+    return mocker.patch("agents.base._get_client", side_effect=_blocked)
