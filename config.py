@@ -19,7 +19,7 @@ FEE_BPS = 1.5       # 수수료 0.015%
 TAX_BPS = 20        # 거래세 0.20% (매도 시)
 
 # 기본값 (DB settings 테이블로 런타임 변경 가능)
-SLOTS = 12
+SLOTS = 5
 HEAT_AVOID = 7.0
 HEAT_SELL = 8.5
 MAX_HOLD_DAYS = 20
