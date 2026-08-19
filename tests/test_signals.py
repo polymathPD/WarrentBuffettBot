@@ -174,3 +174,33 @@ def test_foreign_and_institution_do_not_change_heat(mock_db):
         return mock_db.executemany.call_args[0][1][0][8]  # heat_score
 
     assert run(-200, 100) == run(9999, -9999)
+
+
+def test_backfill_uses_the_same_formula_as_the_live_path():
+    """수식이 두 곳에 복제되면 백필이 운용 신호를 조용히 다른 값으로 덮는다.
+
+    backfill_signals.py는 processor/signals.py의 contributions()를 import해야 하고,
+    자기 버전의 clip 상수를 들고 있으면 안 된다."""
+    import io
+    import os
+
+    src = io.open(
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     "backfill_signals.py"),
+        encoding="utf-8").read()
+
+    assert "from processor.signals import contributions" in src
+    assert "np.clip((fr" not in src
+    assert "np.clip((vr" not in src
+    assert "np.clip((cr" not in src
+
+
+def test_contributions_accepts_arrays_and_scalars_alike():
+    """백필은 배열로, 운용은 스칼라로 같은 함수를 부른다."""
+    from processor.signals import contributions
+
+    scalar = contributions(0.30, 0.55, 0.60)
+    arrays = contributions(np.array([0.30]), np.array([0.55]), np.array([0.60]))
+
+    for s_val, a_val in zip(scalar, arrays):
+        assert float(a_val[0]) == pytest.approx(float(s_val))

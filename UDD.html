@@ -132,7 +132,7 @@
     <h2>1. 프로젝트 개요</h2>
     <p>
       <strong>WarrenBuffett Bot</strong>은 개인 투자자(개미) 과열 신호를 역이용하는 역발상(Contrarian) 자동매매 시스템입니다.
-      매일 16:10 KST에 pykrx(일봉)와 KIS OpenAPI(투자자별 수급·신용잔고)로 당일 데이터를 수집하고, Claude API 기반 4개 에이전트 합의 게이트를 통과한 종목만 매수합니다.
+      매일 16:10 KST에 pykrx(일봉)와 KIS OpenAPI(투자자별 수급·신용잔고)로 당일 데이터를 수집하고, Claude API 기반 3개 에이전트 게이트를 통과한 종목만 매수합니다.
       Railway PostgreSQL에 모든 상태를 저장하며 FastAPI 웹 대시보드로 포지션·거래내역을 관리합니다.
     </p>
 
@@ -171,7 +171,7 @@
 
     <div class="callout callout-info">
       <strong>핵심 혁신</strong>
-      4개 에이전트 합의 게이트: <code>market_state</code>·<code>risk</code>는 거부권(veto)을 보유하고, <code>retail_flow</code>·<code>credit_heat</code>는 2/2 합의 투표를 담당합니다. 어느 한 veto 에이전트가 "관망" 또는 "청산"을 리턴하면 즉시 매수 거부됩니다.
+      3개 에이전트 게이트: <code>market_state</code>·<code>risk</code>는 거부권(veto)을 보유하고, <code>value_trap</code>이 합의 투표를 담당합니다. 어느 한 veto 에이전트가 "관망" 또는 "청산"을 리턴하면 즉시 매수 거부됩니다.
     </div>
   </section>
 
@@ -201,7 +201,7 @@
 │   └── credit_balance.py   # KIS 신용잔고 일별추이 (증분)
 │
 ├── processor/
-│   ├── signals.py          # heat_score 계산 (0~10)
+│   ├── signals.py          # heat_score 계산 (-10~+10)
 │   └── indicators.py       # SMA, 변동성, 52주 위치 등
 │
 ├── strategy/
@@ -212,8 +212,7 @@
 │   ├── gate.py             # 합의 게이트 (veto + vote)
 │   ├── market_state.py     # 시장 전반 상태 분석 (veto)
 │   ├── risk.py             # 포트폴리오 리스크 (veto)
-│   ├── retail_flow.py      # 개인 자금 흐름 분석 (vote)
-│   └── credit_heat.py      # 신용·거래량 과열 (vote)
+│   └── value_trap.py       # 공시 텍스트로 가치 함정 판별 (vote)
 │
 ├── executor/
 │   ├── paper.py            # 모의 매매 실행
@@ -318,13 +317,11 @@
   │     ↳ free_slots = 0    → 하드코딩 "관망" (VETO)
   │     ↳ same_sector ≥ 3  → 하드코딩 "관망" (VETO)
   │
-  ├─ retail_flow.analyze()   → decision: 매수 | 관망  (vote)
-  │
-  └─ credit_heat.analyze()   → decision: 매수 | 관망  (vote)
+  └─ value_trap.analyze()    → decision: 매수 | 관망  (vote)
 
 결과:
   veto 에이전트 중 하나라도 관망/청산 → approved = False
-  retail_flow + credit_heat 중 "매수" &lt; 2 → approved = False
+  value_trap 이 "매수"가 아니면 → approved = False
   모두 통과 → approved = True → paper.buy() 호출</code></pre>
   </section>
 
@@ -340,7 +337,7 @@
       <tr><td><code>SLIP_BPS</code></td><td>20</td><td>슬리피지 0.20% (편도)</td></tr>
       <tr><td><code>FEE_BPS</code></td><td>1.5</td><td>수수료 0.015%</td></tr>
       <tr><td><code>TAX_BPS</code></td><td>20</td><td>증권거래세 0.20% (매도 시)</td></tr>
-      <tr><td><code>SLOTS</code></td><td>12</td><td>최대 동시 보유 종목 수</td></tr>
+      <tr><td><code>SLOTS</code></td><td>5</td><td>최대 동시 보유 종목 수 (전략별로 셈)</td></tr>
       <tr><td><code>HEAT_AVOID</code></td><td>7.0</td><td>진입 불가 임계값</td></tr>
       <tr><td><code>HEAT_SELL</code></td><td>8.5</td><td>청산 신호 임계값</td></tr>
       <tr><td><code>MAX_HOLD_DAYS</code></td><td>20</td><td>최대 보유 기간(일)</td></tr>
@@ -497,14 +494,14 @@
     <h2>8. Processor 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">processor/</small></h2>
 
     <h3>signals.py — Heat Score 계산</h3>
-    <p>대상 날짜의 전 종목에 대해 30일 이동 기준(window) 대비 오늘 값의 비율을 계산하고, 3가지 요소를 결합하여 0~10 스케일의 <code>heat_score</code>를 산출합니다.</p>
+    <p>대상 날짜의 전 종목에 대해 30일 이동 기준(window) 대비 오늘 값의 비율을 계산하고, 3가지 요소를 결합하여 -10~+10 스케일의 <code>heat_score</code>를 산출합니다. 높으면 과열, 낮으면 소외입니다.</p>
 
     <h4>구성 요소 및 가중치</h4>
     <table>
-      <tr><th>요소</th><th>계산식</th><th>최대 기여</th></tr>
-      <tr><td>개인 순매수 비율</td><td><code>(individual_flow_ratio - 1.0) × 3.0</code></td><td>4.0점</td></tr>
-      <tr><td>신용 급등 비율</td><td><code>(credit_surge_ratio - 1.0) × 3.0</code></td><td>3.0점</td></tr>
-      <tr><td>거래량 급등 비율</td><td><code>(volume_ratio - 1.5) × 2.0</code></td><td>3.0점</td></tr>
+      <tr><th>요소</th><th>계산식</th><th>기여 범위</th></tr>
+      <tr><td>개인 순매수 비율</td><td><code>(individual_flow_ratio - 1.0) × 3.0</code></td><td>-4.0 ~ +4.0</td></tr>
+      <tr><td>신용 급등 비율</td><td><code>(credit_surge_ratio - 1.0) × 3.0</code></td><td>-3.0 ~ +3.0</td></tr>
+      <tr><td>거래량 급등 비율</td><td><code>(volume_ratio - 1.5) × 2.0</code></td><td>-3.0 ~ +3.0</td></tr>
     </table>
 
     <h4>Signal 분류</h4>
@@ -590,8 +587,7 @@ score ≥ 8.5        → "sell"    (청산 신호)</code></pre>
       <tr><th>에이전트</th><th>역할</th><th>veto</th><th>하드코딩 규칙</th></tr>
       <tr><td><code>market_state</code></td><td>시장 전반 상태</td><td><span class="badge badge-red">Yes</span></td><td>fall_pct ≥ 70% → 강제 "청산"</td></tr>
       <tr><td><code>risk</code></td><td>포트폴리오 리스크</td><td><span class="badge badge-red">Yes</span></td><td>free_slots = 0 또는 same_sector ≥ 3 → 강제 "관망"</td></tr>
-      <tr><td><code>retail_flow</code></td><td>개인 자금 흐름</td><td><span class="badge badge-green">No</span></td><td>없음 (Claude 판단만)</td></tr>
-      <tr><td><code>credit_heat</code></td><td>신용·거래량 과열</td><td><span class="badge badge-green">No</span></td><td>없음 (Claude 판단만)</td></tr>
+      <tr><td><code>value_trap</code></td><td>공시 기반 가치 함정 판별</td><td><span class="badge badge-green">No</span></td><td>없음 (Claude 판단만)</td></tr>
     </table>
 
     <h3>에이전트별 입력 데이터</h3>
@@ -601,12 +597,27 @@ score ≥ 8.5        → "sell"    (청산 신호)</code></pre>
 
     <h4>risk</h4>
     <p>남은 슬롯 수(<code>free_slots</code>), 동일 섹터(코드 앞 3자리) 보유 수(<code>same_sector</code>). 슬롯·섹터 집중 리스크 기반 매수/관망 판단.</p>
+    <div class="callout callout-warn">
+      <strong>섹터 근사가 실제로는 동작하지 않습니다</strong>
+      한국 종목코드 앞 3자리는 업종이 아니라 상장 순서에 가깝습니다. 예를 들어
+      <code>003000</code> 부광약품(제약), <code>003030</code> 세아제강지주(철강),
+      <code>003020</code> 남양(식품), <code>003070</code> 코오롱글로벌(건설)이 같은 접두사입니다.
+      따라서 "같은 업종 3개 이상이면 관망" 규칙은 사실상 발동하지 않고, 발동한다면
+      무관한 종목을 거릅니다. 업종 분산은 현재 작동하지 않는 상태이며,
+      <code>instruments</code>에 업종 컬럼을 추가해야 고칠 수 있습니다.
+    </div>
 
-    <h4>retail_flow</h4>
-    <p><code>individual_flow_ratio</code>, <code>heat_score</code>, 최근 5일 개인 순매수 추세. 프롬프트에 역사적 맥락("개인 순매수 비율 ≥ 2.0이면 20일 후 평균 -1.2% 수익률") 포함.</p>
-
-    <h4>credit_heat</h4>
-    <p><code>credit_surge_ratio</code>, <code>volume_ratio</code>, <code>heat_score</code>. 프롬프트에 역사적 맥락("신용 비율 ≥ 1.5 → 10일 평균 -0.8%, 거래량 비율 3.0+ → 65% 확률로 급락") 포함.</p>
+    <h4>value_trap</h4>
+    <p>최근 90일 <code>disclosures</code> 공시 제목(최대 25건)과 60·250거래일 수익률. 52주 최저 부근 하락이 (A) 업황 사이클에 따른 일시적 조정인지 (B) 기업의 구조적 훼손인지 판별합니다.</p>
+    <div class="callout callout-warn">
+      <strong>필터가 이미 쓴 지표는 넘기지 않습니다</strong>
+      <code>heat_score</code>와 그 구성 지표(<code>individual_flow_ratio</code>·<code>credit_surge_ratio</code>·<code>volume_ratio</code>)는
+      프롬프트에서 제외됩니다. 후보는 이미 <code>heat_score &lt; HEAT_AVOID</code>로 걸러져 들어오므로,
+      과열되지 않도록 미리 고른 종목에게 과열 여부를 되물으면 판단이 아니라 동어반복이 됩니다.
+      실제로 2026-08-19 기록에서 이전 두 에이전트(<code>retail_flow</code>·<code>credit_heat</code>)는
+      100건 중 100건 "매수"였습니다. 숫자 판정은 룰(필터)이 하고, LLM에는 룰로 표현할 수 없는
+      공시 텍스트만 줍니다. <code>tests/test_value_trap.py</code>가 이 규약을 강제합니다.
+    </div>
   </section>
 
   <hr class="divider" />
@@ -779,7 +790,7 @@ pytest tests/ -v</code></pre>
       <tr><td><code>test_signals.py</code></td><td><code>_heat()</code>의 요소별 클램프 상한(4/3/3), signal 분류 경계(7.0 / 8.5), 결측 처리</td></tr>
       <tr><td><code>test_contrarian.py</code></td><td>보유 종목 제외, 52주 위치 경계값, 결측 지표 가드, 청산 사유 우선순위(stop &gt; expiry &gt; heat_signal)</td></tr>
       <tr><td><code>test_paper.py</code></td><td>슬롯 초과 거부, 신호일 이후 봉 부재 시 거부, 매수/매도 비용모델 계산과 DB 기록</td></tr>
-      <tr><td><code>test_agents_base.py</code><br/><code>test_gate.py</code></td><td>Claude 응답 파싱, 캐시 히트/미스, API 키 미설정·API 오류 폴백, veto 우선순위와 2/2 합의</td></tr>
+      <tr><td><code>test_agents_base.py</code><br/><code>test_gate.py</code></td><td>Claude 응답 파싱, 캐시 히트/미스, API 키 미설정·API 오류 폴백, veto 우선순위와 합의</td></tr>
       <tr><td><code>test_cost_model.py</code></td><td><code>buy_price</code>/<code>sell_price</code>/<code>net_return</code> 계산</td></tr>
       <tr><td><code>test_connection.py</code></td><td>쿼리 실패 시 롤백, 롤백조차 실패하면 커넥션 폐기 후 재연결, 원본 예외 보존</td></tr>
       <tr><td><code>test_engine.py</code></td><td>동일 종목 중복 포지션 방지, 청산 이후 재진입 가능, 손절이 만기보다 우선</td></tr>
@@ -811,12 +822,22 @@ pytest tests/ -v</code></pre>
     <h2>17. 핵심 비즈니스 로직</h2>
 
     <h3>Heat Score 공식</h3>
-    <pre><code>heat_score = clamp(
-    (flow_ratio - 1.0) * 3.0      # 개인 과열 기여 [0, 4]
-  + (credit_ratio - 1.0) * 3.0    # 신용 과열 기여 [0, 3]
-  + (vol_ratio - 1.5) * 2.0,      # 거래량 급등 기여 [0, 3]
-  0, 10
-)</code></pre>
+    <pre><code>heat_score =
+    clamp((flow_ratio   - 1.0) * 3.0, -4, 4)   # 개인   [-4, +4]
+  + clamp((credit_ratio - 1.0) * 3.0, -3, 3)   # 신용   [-3, +3]
+  + clamp((vol_ratio    - 1.5) * 2.0, -3, 3)   # 거래대금 [-3, +3]</code></pre>
+    <div class="callout callout-warn">
+      <strong>하한은 0이 아니라 상한과 대칭입니다</strong>
+      하한을 0에 두면 세 배율이 모두 기준선 아래인 종목이 전부 정확히 0.0이 되는데,
+      그게 이 전략이 매수 대상으로 삼는 구간입니다. 2026-08-18 기준 필터를 통과한
+      1,324종목 중 426종목이 0.0 동점이었고(전 구간 66~74%),
+      <code>ORDER BY heat_score ASC</code>가 사실상 DB 행 순서로 종목을 골랐습니다.
+      과열에서 팔고 비과열에서 사려면 자가 양쪽으로 뻗어야 합니다. 상한 쪽은 그대로라
+      <code>HEAT_AVOID</code>·<code>HEAT_SELL</code> 임계값의 의미는 바뀌지 않습니다.
+      수식은 <code>processor/signals.py</code>의 <code>contributions()</code> 한 곳에만 두고
+      <code>backfill_signals.py</code>가 이를 import합니다 — 복제하면 백필이 운용 신호를
+      다른 수식으로 조용히 덮어씁니다.
+    </div>
 
     <h3>진입 조건 체크리스트</h3>
     <ol style="margin: 8px 0 16px 20px; line-height: 2.2;">
@@ -827,7 +848,7 @@ pytest tests/ -v</code></pre>
       <li>52주 위치 ≤ 30%</li>
       <li>market_state 에이전트 → 매수 승인</li>
       <li>risk 에이전트 → 매수 승인</li>
-      <li>retail_flow + credit_heat 모두 "매수" 투표</li>
+      <li>value_trap 에이전트 → 매수 (공시에 구조적 훼손 근거 없음)</li>
     </ol>
 
     <h3>청산 조건 (우선순위)</h3>

@@ -59,6 +59,34 @@ def _abs_ratio(arr: np.ndarray) -> float:
     return arr[-1] / avg_abs if avg_abs > 0 else np.nan
 
 
+def contributions(flow_r, credit_r, vol_r):
+    """
+    세 배율의 기여도. 스칼라와 numpy 배열을 모두 받는다.
+
+    수식은 여기에만 둔다. backfill_signals.py가 같은 계산을 벡터화해서 돌리는데,
+    그쪽에 수식을 복제해 두면 한쪽만 고쳤을 때 백필이 운용 신호를 다른 수식으로
+    조용히 덮어쓴다 (2026-08-20에 실제로 그럴 뻔했다).
+
+    각 항의 하한은 상한과 대칭이다(0이 아니다). 하한을 0에 두면 세 배율이 모두
+    기준선 아래인 종목이 전부 정확히 0.0이 되는데, 그게 이 전략이 매수 대상으로
+    삼는 바로 그 구간이다. 2026-08-18 기준 필터 통과 1,324종목 중 426종목이
+    heat_score 0.0 동점이었고(전 구간 평균 66~74%), ORDER BY heat_score ASC가
+    사실상 DB 행 순서로 종목을 골랐다.
+
+    과열에서 팔고 비과열에서 사려면 자가 양쪽으로 뻗어야 한다. 상한 쪽 의미는
+    그대로라 HEAT_AVOID(7.0) · HEAT_SELL(8.5) 임계값은 건드리지 않는다.
+
+    - 개인 순매수 배율: 높으면 개인 쏠림, 낮으면 개인이 손 뗀 상태
+    - 신용잔고 급증 배율: 낮을수록 빚내서 사는 사람이 없다
+    - 거래대금 급증 배율: 낮을수록 그날 관심이 없었다. 유동성이 낮은 종목이
+      상위로 오는 것은 아니다 — 이건 '평소 대비' 상대량이고 절대 유동성은
+      strategy/filters.py의 거래대금 하한이 따로 막는다.
+    """
+    return (np.clip((flow_r - 1.0) * 3.0, -4.0, 4.0),
+            np.clip((credit_r - 1.0) * 3.0, -3.0, 3.0),
+            np.clip((vol_r - 1.5) * 2.0, -3.0, 3.0))
+
+
 def _heat(flow_r, credit_r, vol_r) -> tuple[float, str]:
     """
     세 신호를 합산해 heat_score와 signal을 반환.
@@ -72,33 +100,16 @@ def _heat(flow_r, credit_r, vol_r) -> tuple[float, str]:
     신용잔고 비율(credit_ratio_level)도 마찬가지다. credit_surge_ratio가 '변화'라면
     이쪽은 '수준'이라 개념적으로 독립이지만, 아직 표본이 부족해 기록만 한다.
     """
-    # 각 항의 하한은 상한과 대칭이다(0이 아니다). 하한을 0에 두면 세 배율이 모두
-    # 기준선 아래인 종목이 전부 정확히 0.0이 되는데, 그건 이 전략이 매수 대상으로
-    # 삼는 바로 그 구간이다. 2026-08-18 기준 필터 통과 1,324종목 중 426종목이
-    # heat_score 0.0 동점이었고(전 구간 평균 66~74%), ORDER BY heat_score ASC가
-    # 사실상 DB 행 순서로 종목을 골랐다.
-    #
-    # 과열에서 팔고 비과열에서 사려면 자가 양쪽으로 뻗어야 한다. 상한 쪽 의미는
-    # 그대로라 HEAT_AVOID(7.0) · HEAT_SELL(8.5) 임계값은 건드리지 않는다.
+    contrib_flow, contrib_credit, contrib_vol = contributions(flow_r, credit_r, vol_r)
+
     score = 0.0
     count = 0
-
-    # 개인 순매수 배율: 2.0 이상이면 과열 의심, 낮을수록 개인이 손 뗀 상태
-    if not np.isnan(flow_r):
-        score += _clamp((flow_r - 1.0) * 3.0, -4.0, 4.0)
-        count += 1
-
-    # 신용잔고 급증 배율: 낮을수록 빚내서 사는 사람이 없는 상태
-    if not np.isnan(credit_r):
-        score += _clamp((credit_r - 1.0) * 3.0, -3.0, 3.0)
-        count += 1
-
-    # 거래대금 급증 배율: 낮을수록 그날 관심이 없었다는 뜻.
-    # 유동성 자체가 낮은 종목이 상위로 오는 것은 아니다 — 이 값은 '평소 대비'
-    # 상대량이고, 절대 유동성은 strategy/filters.py의 거래대금 하한이 따로 막는다.
-    if not np.isnan(vol_r):
-        score += _clamp((vol_r - 1.5) * 2.0, -3.0, 3.0)
-        count += 1
+    for value, contrib in ((flow_r, contrib_flow),
+                           (credit_r, contrib_credit),
+                           (vol_r, contrib_vol)):
+        if not np.isnan(value):
+            score += float(contrib)
+            count += 1
 
     heat = score if count > 0 else np.nan
     if np.isnan(heat):

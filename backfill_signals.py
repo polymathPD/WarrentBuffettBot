@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 import db.connection as db
 import config
+from processor.signals import contributions
 
 WINDOW = 30
 BATCH = 5000
@@ -133,9 +134,8 @@ def _process(merged, start_date, end_buffer) -> int:
         valid_vr = ~np.isnan(vr) & (amt_roll.to_numpy() > 0)
         valid_cr = ~np.isnan(cr) & (cred_roll.to_numpy() > 0)
 
-        contrib_fr = np.clip((fr - 1.0) * 3.0, 0, 4.0)
-        contrib_vr = np.clip((vr - 1.5) * 2.0, 0, 3.0)
-        contrib_cr = np.clip((cr - 1.0) * 3.0, 0, 3.0)
+        # 수식은 processor/signals.py에만 둔다 (복제하면 조용히 어긋난다)
+        contrib_fr, contrib_cr, contrib_vr = contributions(fr, cr, vr)
 
         score = (np.where(valid_fr, contrib_fr, 0)
                  + np.where(valid_vr, contrib_vr, 0)
