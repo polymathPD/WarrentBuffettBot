@@ -413,6 +413,214 @@ def _combined_verdict(group):
             "note": "구간에 따라 방향이 뒤집힙니다. 어느 쪽도 채택 근거가 아닙니다."}
 
 
+# ── 팩터 귀속 ────────────────────────────────────────────────────────────
+# knob 하나만 다른 두 실행을 같은 구간에서 비교하면, 성과 차이를 그 knob에 돌릴
+# 수 있다. 여러 knob이 동시에 바뀐 쌍은 무엇 때문인지 가릴 수 없으므로 뺀다.
+#
+# exit_rank_pct와 exit_cols처럼 항상 같이 움직이는 값은 논리적으로 한 knob이다.
+# 따로 세면 "두 개가 바뀐 쌍"이 되어 비교에서 통째로 빠진다.
+KNOB_GROUPS = {
+    "exit_rank_pct": "신호 청산", "exit_cols": "신호 청산",
+    "pbr_applied": "PBR 적용", "selection": "PBR 적용",
+}
+# 랭킹 팩터는 쌍대 차이로 보지 않는다. 팩터가 N개면 쌍이 N(N-1)/2개로 불어나는데,
+# "A 대신 B로 바꾸면 얼마 오르나"는 답할 질문이 아니다. 알고 싶은 것은 각 팩터가
+# 그 자체로 구간을 넘어 작동하느냐이므로, _rank_factor_table()에서 절대 성과로 본다.
+RANK_KEYS = {"rank_col", "ascending"}
+# 비교 자체가 성립하지 않는 knob (구간·자본은 규칙이 아니다)
+KNOB_SKIP = {"marcap_filter", "windows", "pbr_limits"}
+
+
+def _logical(key):
+    return KNOB_GROUPS.get(key, KNOB_LABELS.get(key, key))
+
+
+def _current_runs(runs):
+    """같은 규칙을 같은 구간에 다시 잰 실행이 있으면 최신만 남긴다."""
+    kept = []
+    for r in sorted(runs, key=lambda x: x["ts"], reverse=True):
+        fp = _fingerprint(r["params"])
+        if not any(fp == _fingerprint(k["params"]) and _overlaps(r, k) for k in kept):
+            kept.append(r)
+    return kept
+
+
+def _describe_change(group, a, b):
+    """a → b 로 무엇이 바뀌었는지 한 문장."""
+    pa, pb_ = a["params"] or {}, b["params"] or {}
+    keys = [k for k, v in KNOB_GROUPS.items() if v == group] or [
+        k for k in set(pa) | set(pb_) if _logical(k) == group]
+    parts = []
+    for k in keys:
+        if k not in pa and k not in pb_:
+            continue
+        if k == "ascending" and "rank_col" in keys:
+            continue
+        before = _knob_value(k, pa.get(k), pa) if k in pa else "-"
+        after = _knob_value(k, pb_.get(k), pb_) if k in pb_ else "-"
+        if before != after:
+            parts.append(f"{before} → {after}")
+    return " / ".join(parts) or "변경 없음"
+
+
+def _pair_delta(a, b):
+    """
+    b가 a보다 거래당 평균이 얼마나 높은지와, 그 차이가 잡음보다 큰지.
+
+    표준오차는 두 표본이 독립이라고 보고 더한다. 실제로는 같은 구간·같은
+    유니버스라 양의 상관이 있어 진짜 오차는 이보다 작다 — 즉 이 z는 보수적이다.
+    """
+    sa, sb = a["summary"] or {}, b["summary"] or {}
+    for k in ("mean_pct", "std_pct", "n"):
+        if sa.get(k) is None or sb.get(k) is None:
+            return None
+    if not sa["n"] or not sb["n"]:
+        return None
+    delta = sb["mean_pct"] - sa["mean_pct"]
+    se = (sa["std_pct"] ** 2 / sa["n"] + sb["std_pct"] ** 2 / sb["n"]) ** 0.5
+    return {"delta": delta, "z": delta / se if se else 0.0, "se": se}
+
+
+def _factor_table(runs):
+    """
+    knob 하나만 다른 쌍을 모아 knob별로 묶는다.
+
+    한 knob의 판정은 비교가 둘 이상이고 부호가 일관할 때만 준다. 구간마다
+    방향이 뒤집히는 것은 이 저장소가 반복해서 겪은 실패 형태다.
+    """
+    import itertools
+
+    runs = _current_runs(runs)
+    groups = {}
+    for a, b in itertools.combinations(sorted(runs, key=lambda r: r["id"]), 2):
+        if (a["start_d"], a["end_d"]) != (b["start_d"], b["end_d"]):
+            continue
+        pa, pb_ = a["params"] or {}, b["params"] or {}
+        raw_changed = {k for k in set(pa) | set(pb_)
+                       if k not in KNOB_SKIP and pa.get(k) != pb_.get(k)}
+        if raw_changed & RANK_KEYS:
+            continue
+        changed = {_logical(k) for k in raw_changed}
+        if len(changed) != 1:
+            continue
+        d = _pair_delta(a, b)
+        if d is None:
+            continue
+        knob = changed.pop()
+        groups.setdefault(knob, []).append({
+            "knob": knob, "from": a, "to": b,
+            "change": _describe_change(knob, a, b),
+            "window": f"{a['start_d']} ~ {a['end_d']}",
+            **d,
+        })
+
+    out = []
+    for knob, comps in groups.items():
+        deltas = [c["delta"] for c in comps]
+        strong = [c for c in comps if abs(c["z"]) >= 2]
+        if len(comps) < 2:
+            verdict = {"kind": "none", "text": "비교 1건 — 근거 부족",
+                       "note": "다른 구간에서도 같은 방향인지 확인해야 합니다."}
+        elif all(d > 0 for d in deltas) or all(d < 0 for d in deltas):
+            if strong:
+                verdict = {"kind": "good", "text": "방향 일관 · 크기 유의",
+                           "note": "모든 비교에서 같은 방향이고, 적어도 한 비교는 잡음보다 큽니다."}
+            else:
+                verdict = {"kind": "warn", "text": "방향은 일관, 크기는 잡음 수준",
+                           "note": "부호는 유지되지만 |z| < 2 라 표본 변동으로도 나올 수 있습니다."}
+        else:
+            verdict = {"kind": "bad", "text": "방향 불일치",
+                       "note": "구간·전략에 따라 부호가 뒤집힙니다. 이 knob으로는 성과를 설명할 수 없습니다."}
+        out.append({
+            "knob": knob, "comparisons": sorted(comps, key=lambda c: c["window"]),
+            "n_comp": len(comps),
+            "mean_delta": sum(deltas) / len(deltas),
+            "max_abs_z": max(abs(c["z"]) for c in comps),
+            "verdict": verdict,
+        })
+    out.sort(key=lambda g: (-g["max_abs_z"], g["knob"]))
+    return out
+
+
+FACTOR_NAMES = {
+    "heat_score": "과열 점수", "individual_flow_ratio": "개인 순매수 배율",
+    "credit_surge_ratio": "신용잔고 급증 배율", "volume_ratio": "거래대금 배율",
+    "foreign_flow_ratio": "외국인 순매수 배율", "institution_flow_ratio": "기관 순매수 배율",
+}
+
+
+def _factor_label(params):
+    p = params or {}
+    name = FACTOR_NAMES.get(p.get("rank_col"), p.get("rank_col"))
+    direction = "낮은 순" if p.get("ascending", True) else "높은 순"
+    extra = []
+    if p.get("pos52w_filter") is False:
+        extra.append("52주 필터 끔")
+    if p.get("slots") not in (None, 5):
+        extra.append(f"슬롯 {p['slots']}")
+    if p.get("exit_rank_pct") is not None:
+        extra.append("신호 청산 켬")
+    return f"{name} {direction}" + (f" · {' · '.join(extra)}" if extra else "")
+
+
+def _rank_factor_table(runs):
+    """
+    랭킹 팩터별 절대 성과를 구간별로 나란히 놓는다.
+
+    "유의미한 팩터가 있나"는 곧 "훈련과 검증에서 같은 방향이고, 그 크기가 잡음을
+    넘느냐"다. 한 구간만 있는 팩터는 답할 수 없으므로 판정을 주지 않는다.
+    """
+    groups = {}
+    for r in _current_runs(runs):
+        if "rank_col" not in (r["params"] or {}):
+            continue
+        groups.setdefault(_fingerprint(r["params"]), []).append(r)
+
+    out = []
+    for g in groups.values():
+        g.sort(key=lambda r: r["start_d"])
+        windows = [{"run": w, "label": f"{w['start_d'].year}~{w['end_d'].year}",
+                    "mean_pct": (w["summary"] or {}).get("mean_pct"),
+                    "t_val": (w["summary"] or {}).get("t_val"),
+                    "n": (w["summary"] or {}).get("n")} for w in g]
+        means = [w["mean_pct"] for w in windows if w["mean_pct"] is not None]
+        ts = [abs(w["t_val"]) for w in windows if w["t_val"] is not None]
+        if not means:
+            continue
+        if len(means) < 2:
+            verdict = {"kind": "none", "text": "구간 1개 — 판정 불가",
+                       "note": "다른 구간에서도 재야 방향이 유지되는지 알 수 있습니다."}
+        elif all(m > 0 for m in means):
+            verdict = ({"kind": "good", "text": "전 구간 양수 · 유의",
+                        "note": "두 구간 모두 양수이고 |t| ≥ 2 입니다. 이 저장소에서 가장 강한 형태의 관찰입니다."}
+                       if any(t >= 2 for t in ts) else
+                       {"kind": "warn", "text": "전 구간 양수, 유의하지 않음",
+                        "note": "부호는 유지되지만 |t| < 2 라 0과 구분되지 않습니다."})
+        elif all(m < 0 for m in means):
+            verdict = ({"kind": "bad", "text": "전 구간 음수 · 유의",
+                        "note": "구간을 바꿔도 손해입니다. 이 팩터로 랭킹하면 안 됩니다."}
+                       if any(t >= 2 for t in ts) else
+                       {"kind": "bad", "text": "전 구간 음수",
+                        "note": "부호가 일관되게 음수입니다."})
+        else:
+            verdict = {"kind": "bad", "text": "구간마다 부호가 뒤집힘",
+                       "note": "방향이 유지되지 않습니다. 이 팩터로는 성과를 설명할 수 없습니다."}
+        out.append({
+            "label": _factor_label(g[0]["params"]),
+            "windows": windows,
+            "best_mean": max(means),
+            "verdict": verdict,
+        })
+    order = {"good": 0, "warn": 1, "none": 2, "bad": 3}
+    out.sort(key=lambda f: (order[f["verdict"]["kind"]], -f["best_mean"]))
+    return out
+
+
+def _multiple_comparison_pct(k):
+    """변형 k개를 재면 그중 하나가 우연히 양수로 나올 확률."""
+    return round((1 - 0.95 ** k) * 100, 1)
+
+
 def _backtest_curve(rows):
     """청산일별 수익률 합을 누적한 곡선.
 
@@ -547,6 +755,9 @@ def backtest_page(request: Request, run: int = 0, reason: str = "", worst: str =
         "superseded": superseded,
         "combined": combined,
         "is_superseded": is_superseded,
+        "factors": _factor_table(runs),
+        "rank_factors": _rank_factor_table(runs),
+        "multiple_pct": _multiple_comparison_pct(len(runs)),
     })
 
 

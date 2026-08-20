@@ -100,3 +100,175 @@ def test_overlapping_windows_are_detected():
 
     assert _overlaps(a, b) is True
     assert _overlaps(a, c) is False
+
+
+# ── 팩터 귀속 ────────────────────────────────────────────────────────────
+from dashboard.app import (_current_runs, _factor_table, _rank_factor_table,  # noqa: E402
+                           _multiple_comparison_pct, _pair_delta)
+
+
+def _fr(rid, params, start="2022-01-01", end="2024-12-31",
+        ts="2026-08-20T10:00", mean=0.0, std=15.0, n=250, strategy="s"):
+    r = _run(rid, params, start, end, ts,
+             {"n": n, "mean_pct": mean, "std_pct": std, "t_val": 0.0})
+    r["strategy"] = strategy
+    return r
+
+
+def test_only_pairs_differing_in_one_knob_are_compared():
+    """두 knob이 동시에 바뀌면 무엇 때문인지 가릴 수 없다."""
+    runs = [
+        _fr(1, {"slots": 5, "rank_col": "heat_score", "ascending": True}),
+        _fr(2, {"slots": 12, "rank_col": "heat_score", "ascending": True}),
+        _fr(3, {"slots": 12, "rank_col": "volume_ratio", "ascending": True}),
+    ]
+    knobs = {g["knob"] for g in _factor_table(runs)}
+
+    assert knobs == {"슬롯"}   # 1-2는 슬롯. 1-3은 두 개가 바뀌어 제외
+
+
+def test_pairs_from_different_windows_are_not_compared():
+    runs = [
+        _fr(1, {"slots": 5}, start="2022-01-01", end="2024-12-31"),
+        _fr(2, {"slots": 12}, start="2025-01-01", end="2026-08-19"),
+    ]
+    assert _factor_table(runs) == []
+
+
+def test_always_paired_knobs_count_as_one_change():
+    """exit_rank_pct와 exit_cols는 늘 같이 움직인다 — 따로 세면 비교에서 빠진다."""
+    runs = [
+        _fr(1, {"exit_rank_pct": None, "exit_cols": []}),
+        _fr(2, {"exit_rank_pct": 0.9, "exit_cols": ["credit_surge_ratio"]}),
+    ]
+    table = _factor_table(runs)
+
+    assert len(table) == 1
+    assert table[0]["knob"] == "신호 청산"
+
+
+def test_sign_flip_across_comparisons_is_reported_as_unexplained():
+    runs = [
+        _fr(1, {"slots": 5}, mean=-1.5),
+        _fr(2, {"slots": 12}, mean=-0.5),                       # +1.0%p
+        _fr(3, {"slots": 5}, start="2025-01-01", end="2026-01-01", mean=+1.0),
+        _fr(4, {"slots": 12}, start="2025-01-01", end="2026-01-01", mean=-1.0),  # -2.0%p
+    ]
+    assert _factor_table(runs)[0]["verdict"]["kind"] == "bad"
+
+
+def test_consistent_direction_with_a_large_gap_is_the_strongest_reading():
+    runs = [
+        _fr(1, {"slots": 5}, mean=-3.0, std=8.0, n=400),
+        _fr(2, {"slots": 12}, mean=+1.0, std=8.0, n=400),
+        _fr(3, {"slots": 5}, start="2025-01-01", end="2026-01-01", mean=-2.0, std=8.0, n=400),
+        _fr(4, {"slots": 12}, start="2025-01-01", end="2026-01-01", mean=+1.5, std=8.0, n=400),
+    ]
+    g = _factor_table(runs)[0]
+
+    assert g["verdict"]["kind"] == "good"
+    assert g["max_abs_z"] >= 2
+
+
+def test_consistent_direction_within_noise_is_not_called_significant():
+    runs = [
+        _fr(1, {"slots": 5}, mean=-1.0, std=25.0, n=120),
+        _fr(2, {"slots": 12}, mean=-0.8, std=25.0, n=120),
+        _fr(3, {"slots": 5}, start="2025-01-01", end="2026-01-01", mean=-1.0, std=25.0, n=120),
+        _fr(4, {"slots": 12}, start="2025-01-01", end="2026-01-01", mean=-0.9, std=25.0, n=120),
+    ]
+    assert _factor_table(runs)[0]["verdict"]["kind"] == "warn"
+
+
+def test_delta_standard_error_uses_both_samples():
+    a = {"summary": {"mean_pct": 0.0, "std_pct": 10.0, "n": 100}}
+    b = {"summary": {"mean_pct": 2.0, "std_pct": 10.0, "n": 100}}
+
+    d = _pair_delta(a, b)
+    assert d["delta"] == pytest.approx(2.0)
+    assert d["se"] == pytest.approx((1.0 + 1.0) ** 0.5)
+
+
+def test_remeasured_runs_are_dropped_before_comparing():
+    """수정 전 측정이 남아 있으면 팩터 차이가 데이터 변경분까지 떠안는다."""
+    runs = [
+        _fr(1, {"slots": 5}, ts="2026-08-19T10:00", mean=+1.2, strategy="old"),
+        _fr(2, {"slots": 5}, ts="2026-08-20T10:00", mean=-1.5, strategy="new"),
+        _fr(3, {"slots": 12}, ts="2026-08-20T10:00", mean=-1.1, strategy="new12"),
+    ]
+    kept = {r["id"] for r in _current_runs(runs)}
+    assert kept == {2, 3}
+
+    comps = _factor_table(runs)[0]["comparisons"]
+    assert len(comps) == 1
+    assert comps[0]["from"]["strategy"] == "new"
+
+
+def test_multiple_comparison_probability_grows_with_run_count():
+    assert _multiple_comparison_pct(1) == pytest.approx(5.0)
+    assert _multiple_comparison_pct(20) > 60
+
+
+def test_ranking_factors_are_not_compared_pairwise():
+    """팩터가 N개면 쌍이 N(N-1)/2개로 불어나고, "A 대신 B" 는 답할 질문이 아니다.
+    랭킹은 쌍대 차이가 아니라 팩터별 절대 성과로 본다."""
+    runs = [
+        _fr(1, {"slots": 5, "rank_col": "heat_score", "ascending": True}),
+        _fr(2, {"slots": 5, "rank_col": "volume_ratio", "ascending": True}),
+        _fr(3, {"slots": 5, "rank_col": "heat_score", "ascending": False}),
+    ]
+    assert _factor_table(runs) == []
+
+
+def test_a_factor_measured_in_one_window_gets_no_verdict():
+    runs = [_fr(1, {"slots": 5, "rank_col": "heat_score", "ascending": True}, mean=2.0)]
+    assert _rank_factor_table(runs)[0]["verdict"]["kind"] == "none"
+
+
+def test_factor_positive_in_both_windows_but_weak_is_not_called_significant():
+    """이 저장소가 반복해서 속은 자리다 — 부호만 보고 채택하면 안 된다."""
+    runs = [
+        _fr(1, {"rank_col": "institution_flow_ratio", "ascending": True},
+            mean=+0.93, n=234),
+        _fr(2, {"rank_col": "institution_flow_ratio", "ascending": True},
+            start="2025-01-01", end="2026-08-19", mean=+1.51, n=133),
+    ]
+    for r in runs:
+        r["summary"]["t_val"] = 1.0
+
+    f = _rank_factor_table(runs)[0]
+    assert f["verdict"]["kind"] == "warn"
+    assert "유의하지 않음" in f["verdict"]["text"]
+
+
+def test_factor_flipping_sign_between_windows_is_rejected():
+    runs = [
+        _fr(1, {"rank_col": "volume_ratio", "ascending": True}, mean=-0.50),
+        _fr(2, {"rank_col": "volume_ratio", "ascending": True},
+            start="2025-01-01", end="2026-08-19", mean=+0.50),
+    ]
+    assert _rank_factor_table(runs)[0]["verdict"]["kind"] == "bad"
+
+
+def test_factor_label_spells_out_direction_and_deviations():
+    from dashboard.app import _factor_label
+
+    assert _factor_label({"rank_col": "heat_score", "ascending": True}) == "과열 점수 낮은 순"
+    assert "52주 필터 끔" in _factor_label(
+        {"rank_col": "heat_score", "ascending": True, "pos52w_filter": False})
+    assert "신호 청산 켬" in _factor_label(
+        {"rank_col": "credit_surge_ratio", "ascending": True, "exit_rank_pct": 0.9})
+
+
+def test_factor_rows_put_the_survivors_first():
+    """전 구간 음수인 팩터가 위에 오면 표를 읽는 순서가 뒤집힌다."""
+    runs = [
+        _fr(1, {"rank_col": "heat_score", "ascending": True}, mean=-1.46),
+        _fr(2, {"rank_col": "heat_score", "ascending": True},
+            start="2025-01-01", end="2026-08-19", mean=-0.60),
+        _fr(3, {"rank_col": "institution_flow_ratio", "ascending": True}, mean=+0.93),
+        _fr(4, {"rank_col": "institution_flow_ratio", "ascending": True},
+            start="2025-01-01", end="2026-08-19", mean=+1.51),
+    ]
+    labels = [f["label"] for f in _rank_factor_table(runs)]
+    assert labels[0].startswith("기관 순매수 배율")
