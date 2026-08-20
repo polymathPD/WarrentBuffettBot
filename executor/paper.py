@@ -33,10 +33,17 @@ def _next_open(code: str, after_date: str) -> float | None:
 
 
 def buy(code: str, name: str, signal_date: str, close_px: float,
-        heat_score: float, agents_summary: dict, strategy: str) -> bool:
+        heat_score: float, agents_summary: dict, strategy: str,
+        fill_px: float | None = None) -> bool:
     """
     signal_date 기준 다음 거래일 시가로 매수.
     슬롯 여유 확인 후 positions에 등록. 슬롯은 전략별로 센다.
+
+    fill_px: 체결가를 직접 넘길 때만 쓴다(장중 실행). 기본은 None이고, 그때는
+    stock_daily에서 signal_date 다음 봉의 시가를 읽는다. 일봉은 장 마감 후에야
+    들어오므로 장중에 돌리면 그 조회가 None이 되어 매수가 전부 거부된다 —
+    2026-08-12에 모의매매가 한 건도 체결되지 않았던 원인이다. 시가 자체는 09:00에
+    확정되므로, 장중에 그 값을 따로 받아 여기로 넘기면 체결 규칙은 그대로 지켜진다.
     """
     dup = already_entered(code, strategy, MODE)
     if dup:
@@ -48,7 +55,8 @@ def buy(code: str, name: str, signal_date: str, close_px: float,
         print(f"[모의 매수 거부] {code} — 슬롯 부족")
         return False
 
-    fill_px = _next_open(code, signal_date)
+    if fill_px is None:
+        fill_px = _next_open(code, signal_date)
     if fill_px is None:
         print(f"[모의 매수 거부] {code} — 다음 거래일 데이터 없음")
         return False

@@ -159,3 +159,27 @@ def test_free_slots_zero_when_full(mock_db, mock_settings):
     mock_db.fetchone.return_value = {"n": config.get_setting("SLOTS")}
 
     assert paper.free_slots("contrarian_v1") == 0
+
+
+def test_explicit_fill_px_bypasses_the_daily_bar_lookup(mock_db, mock_settings, mocker):
+    """장중 실행: 일봉이 아직 없어도 확정된 시가를 직접 넘기면 체결된다."""
+    from executor import paper
+
+    next_open = mocker.patch("executor.paper._next_open")
+    mock_db.fetchone.side_effect = [None, None, {"n": 0}]   # 중복가드 2회, 슬롯
+
+    assert paper.buy("005930", "삼성전자", "2026-08-19", 69000, 5.0, {},
+                     "contrarian_v1", fill_px=70000) is True
+    next_open.assert_not_called()
+
+
+def test_missing_fill_px_still_falls_back_to_the_daily_bar(mock_db, mock_settings, mocker):
+    """기본 경로는 그대로다 — 일봉이 없으면 거부해야 한다."""
+    from executor import paper
+
+    mocker.patch("executor.paper._next_open", return_value=None)
+    mock_db.fetchone.side_effect = [None, None, {"n": 0}]
+
+    assert paper.buy("005930", "삼성전자", "2026-08-19", 69000, 5.0, {},
+                     "contrarian_v1") is False
+    mock_db.execute.assert_not_called()
