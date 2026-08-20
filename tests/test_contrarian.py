@@ -11,10 +11,10 @@ def test_entry_candidates_excludes_held_and_filters_by_pos52w(mock_db, mock_sett
                  return_value={"000001", "000002", "000003", "000004"})
     held_rows = [{"code": "000001"}]
     candidate_rows = [
-        {"code": "000001", "heat_score": 5.0, "signal": "neutral", "close_price": 100},  # 보유 중 -> 스킵
-        {"code": "000002", "heat_score": 6.0, "signal": "neutral", "close_price": 200},  # pos52w 0.2 -> 통과
-        {"code": "000003", "heat_score": 6.5, "signal": "neutral", "close_price": 300},  # pos52w 0.5 -> 탈락
-        {"code": "000004", "heat_score": 6.8, "signal": "neutral", "close_price": 400},  # pos52w None -> 탈락
+        {"code": "000001", "heat_score": 5.0, "signal": "neutral", "rank_value": -1.0, "close_price": 100},  # 보유 중 -> 스킵
+        {"code": "000002", "heat_score": 6.0, "signal": "neutral", "rank_value": -1.0, "close_price": 200},  # pos52w 0.2 -> 통과
+        {"code": "000003", "heat_score": 6.5, "signal": "neutral", "rank_value": -1.0, "close_price": 300},  # pos52w 0.5 -> 탈락
+        {"code": "000004", "heat_score": 6.8, "signal": "neutral", "rank_value": -1.0, "close_price": 400},  # pos52w None -> 탈락
     ]
     mock_db.fetchall.side_effect = [
         held_rows, candidate_rows,
@@ -38,7 +38,7 @@ def test_entry_candidates_boundary_pos52w_030_is_included(mock_db, mock_settings
     mocker.patch("strategy.filters.large_caps", return_value={"000005"})
     mock_db.fetchall.side_effect = [
         [],  # 보유 없음
-        [{"code": "000005", "heat_score": 5.0, "signal": "neutral", "close_price": 100}],
+        [{"code": "000005", "heat_score": 5.0, "signal": "neutral", "rank_value": -1.0, "close_price": 100}],
         [{"code": "000005"}],   # tradable: 거래대금 통과
     ]
     mock_db.fetchone.side_effect = [{"pos52w": 0.30}]  # 정확히 경계값
@@ -49,7 +49,7 @@ def test_entry_candidates_boundary_pos52w_030_is_included(mock_db, mock_settings
 
 
 def test_missing_inputs_score_zero_and_would_rank_first(mock_settings):
-    """데이터가 전혀 없는 종목은 heat=0.0/neutral이 되어 ORDER BY heat_score ASC의
+    """데이터가 전혀 없는 종목은 heat=0.0/neutral이 되어 heat 오름차순 정렬의
     최상위를 차지한다 — '결측'이 '가장 안 과열됨'으로 둔갑한다. 그래서
     get_entry_candidates()가 3개 지표 결측 행을 걸러내야 한다."""
     import numpy as np
@@ -58,7 +58,7 @@ def test_missing_inputs_score_zero_and_would_rank_first(mock_settings):
     assert _heat(np.nan, np.nan, np.nan) == (0.0, "neutral")
 
 
-def test_entry_query_excludes_rows_with_missing_inputs(mock_db, mock_settings, mocker):
+def test_entry_query_requires_only_the_ranking_column(mock_db, mock_settings, mocker):
     mocker.patch("strategy.filters.large_caps", return_value=set())
     """위 결측-위장을 막는 가드가 쿼리에 실제로 걸려 있는지 고정한다."""
     mock_db.fetchall.side_effect = [[], [], []]
@@ -66,9 +66,14 @@ def test_entry_query_excludes_rows_with_missing_inputs(mock_db, mock_settings, m
     contrarian.get_entry_candidates("2026-08-12")
 
     sql = mock_db.fetchall.call_args_list[1][0][0]
-    assert "cs.individual_flow_ratio IS NOT NULL" in sql
-    assert "cs.credit_surge_ratio IS NOT NULL" in sql
-    assert "cs.volume_ratio IS NOT NULL" in sql
+    # 정렬 컬럼만 요구한다. 랭킹에 쓰지도 않는 지표까지 NOT NULL로 걸면 후보가
+    # 근거 없이 줄어들고(2026-08-19 기준 2,649 → 1,943), 검증 경로와 갈라진다.
+    # NULL·±Infinity·NaN을 한 번에 끊는다. -Infinity는 오름차순 1순위가 된다.
+    assert f"cs.{contrarian.RANK_COL} > '-Infinity'::numeric" in sql
+    assert f"cs.{contrarian.RANK_COL} < 'Infinity'::numeric" in sql
+    assert f"ORDER BY cs.{contrarian.RANK_COL} ASC" in sql
+    assert "cs.individual_flow_ratio IS NOT NULL" not in sql
+    assert "cs.credit_surge_ratio IS NOT NULL" not in sql
 
 
 def test_exit_stop_takes_priority_over_expiry(mock_db, mock_settings):
@@ -124,13 +129,13 @@ def test_exit_no_reason_returns_empty(mock_db, mock_settings):
 
 def test_entry_candidates_drop_non_ordinary_and_illiquid(mock_db, mock_settings, mocker):
     """신주인수권증서 같은 비보통주와 거래대금 미달 종목은 후보에 오르면 안 된다.
-    heat_score가 동점이라 정렬이 사실상 코드 순이어서, 필터가 없으면 이런 것들이
+    정렬 상위에 잡주가 오면 그대로 매수되므로, 필터가 없으면 이런 것들이
     후보 최상위를 차지한다."""
     from strategy import filters
 
     rows = [
-        {"code": "0015S0", "heat_score": 0.0, "signal": "neutral", "close_price": 7030},
-        {"code": "000100", "heat_score": 0.0, "signal": "neutral", "close_price": 90000},
+        {"code": "0015S0", "heat_score": 0.0, "signal": "neutral", "rank_value": -1.0, "close_price": 7030},
+        {"code": "000100", "heat_score": 0.0, "signal": "neutral", "rank_value": -1.0, "close_price": 90000},
     ]
     mock_db.fetchall.side_effect = [
         [],                        # 보유 없음
@@ -158,3 +163,24 @@ def test_exit_counts_holding_period_in_trading_days(mock_db, mock_settings):
     sql = mock_db.fetchall.call_args[0][0]
     assert "COUNT(*) FROM stock_daily" in sql, "거래일 봉 수를 세야 한다"
     assert "h.d > p.entry_date" in sql and "h.d <= %s::date" in sql
+
+
+def test_ranking_column_is_the_one_walkforward_selected(mock_db, mock_settings, mocker):
+    """운용 정렬 기준과 검증에서 고른 팩터가 갈라지면, 백테스트 수치가 운용을
+    설명하지 못한다. heat_score는 훈련·검증 모두 음수였고 방향을 뒤집어도 같았다."""
+    assert contrarian.RANK_COL == "institution_flow_ratio"
+
+
+def test_candidates_carry_the_value_they_were_ranked_by(mock_db, mock_settings, mocker):
+    """어떤 값으로 뽑혔는지 남지 않으면 나중에 진입 근거를 되짚을 수 없다."""
+    mock_db.fetchall.side_effect = [
+        [],  # 보유 없음
+        [{"code": "000002", "heat_score": 1.0, "signal": "neutral",
+          "rank_value": -3.5, "close_price": 200}],
+    ]
+    mock_db.fetchone.return_value = {"pos52w": 0.2}
+    mocker.patch("strategy.contrarian.tradable", return_value={"000002"})
+
+    got = contrarian.get_entry_candidates("2026-08-19")
+
+    assert got[0]["rank_value"] == pytest.approx(-3.5)

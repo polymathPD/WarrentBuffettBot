@@ -43,14 +43,21 @@ def _surge_ratio(arr: np.ndarray) -> np.ndarray:
 
 
 def _f(x):
-    """DB 삽입용 변환: NaN -> None, numpy 스칼라 -> 파이썬 float.
+    """DB 삽입용 변환: 유한하지 않은 값 -> None, numpy 스칼라 -> 파이썬 float.
 
     np.float64를 그대로 psycopg2에 넘기면 numpy 2.0의 repr("np.float64(...)")이
     SQL에 박혀 INSERT가 실패하므로 반드시 네이티브 float로 캐스팅한다.
+
+    NaN뿐 아니라 ±inf도 None으로 끊는다. 배율은 '오늘 / 과거 30일 평균'이라
+    분모가 0이면 무한대가 나오는데, PostgreSQL의 NUMERIC은 Infinity를 그대로
+    저장하고 IS NOT NULL도 통과시킨다. 그러면 오름차순 정렬에서 -Infinity가
+    맨 앞을 차지해, 값이 없는 종목이 1순위 후보가 된다.
+    백테스트(research/portfolio_backtest.py의 load)는 non-finite를 NaN으로
+    바꿔 버리므로, 여기서 끊지 않으면 운용과 검증이 서로 다른 종목을 본다.
     """
     if x is None:
         return None
-    return None if np.isnan(x) else float(x)
+    return float(x) if np.isfinite(x) else None
 
 
 def _abs_ratio(arr: np.ndarray) -> float:

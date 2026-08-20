@@ -204,3 +204,16 @@ def test_contributions_accepts_arrays_and_scalars_alike():
 
     for s_val, a_val in zip(scalar, arrays):
         assert float(a_val[0]) == pytest.approx(float(s_val))
+
+
+def test_infinite_ratios_are_stored_as_null():
+    """배율은 분모가 0이면 무한대가 된다. NUMERIC은 Infinity를 그대로 담고
+    IS NOT NULL도 통과시키므로, 오름차순 정렬의 1순위가 '데이터가 없는 종목'이 된다.
+    백테스트는 non-finite를 제외하므로 여기서 끊지 않으면 운용과 검증이 갈라진다."""
+    from processor.signals import _f
+
+    assert _f(float("inf")) is None
+    assert _f(float("-inf")) is None
+    assert _f(float("nan")) is None
+    assert _f(np.float64(2.5)) == pytest.approx(2.5)
+    assert isinstance(_f(np.float64(2.5)), float)
