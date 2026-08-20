@@ -550,11 +550,31 @@ def backtest_page(request: Request, run: int = 0, reason: str = "", worst: str =
     })
 
 
+# 설정이 언제부터 듣는지가 항목마다 다르다. HEAT_*는 매 판단 때 읽으므로 보유
+# 중인 포지션의 청산 판정까지 바로 바뀌지만, 나머지 넷은 진입 시점에 positions
+# 행으로 박제된다(max_hold_days 컬럼, stop_px 계산값, 슬롯 수·수량). 화면에
+# 적어두지 않으면 "손절을 5%로 바꿨는데 왜 그대로냐"를 알 길이 없다.
+SETTING_SCOPE = {
+    "HEAT_AVOID": ("즉시", "다음 판단부터 신규 매수 필터에 적용됩니다."),
+    "HEAT_SELL": ("즉시", "보유 중인 포지션의 청산 판정에도 바로 적용됩니다."),
+    "STOP_PCT": ("신규 진입분만", "손절가는 진입 시점에 계산해 positions.stop_px에 저장됩니다. 지금 보유 중인 종목의 손절가는 바뀌지 않습니다."),
+    "MAX_HOLD_DAYS": ("신규 진입분만", "보유기간 한도는 진입 시점에 positions.max_hold_days로 박제됩니다."),
+    "SLOTS": ("신규 진입분만", "보유 수가 이 값을 넘어도 강제 청산하지 않습니다 — 자리가 빌 때까지 신규 매수만 멈춥니다."),
+    "CAPITAL": ("신규 진입분만", "1슬롯 = CAPITAL / SLOTS로 수량을 정합니다. 이미 산 종목의 수량은 그대로입니다."),
+}
+
+
 @app.get("/settings")
 def settings_get(request: Request, saved: str = ""):
+    updated = {r["key"]: r["updated_at"]
+               for r in db.fetchall("SELECT key, updated_at FROM settings")}
     settings = {k: config.get_setting(k) for k in config._DEFAULTS}
     return templates.TemplateResponse(request, "settings.html", {
         "settings": settings,
+        "defaults": config._DEFAULTS,
+        "scope": SETTING_SCOPE,
+        "updated": updated,
+        "cache_ttl": config._CACHE_TTL,
         "saved": saved == "1",
     })
 

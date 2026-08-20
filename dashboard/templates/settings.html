@@ -3,57 +3,69 @@
 
 {% if saved %}
 <div class="alert alert-success">
-  설정이 저장되었습니다. 다음 스케줄 실행 시 적용됩니다.
+  저장했습니다. 실행 중인 스케줄러는 최대 {{ cache_ttl }}초 안에 새 값을 읽습니다.
 </div>
 {% endif %}
 
 <div class="settings-wrap">
   <div class="card">
-    <div class="card-header">전략 파라미터 설정</div>
+    <div class="card-header">
+      전략 파라미터
+      <span class="card-header-meta">저장 즉시 반영되는 단일 설정입니다</span>
+    </div>
     <div class="card-body">
+      <div class="verdict-box">
+        <p>
+          이 화면은 <strong>조합을 만들어 이름으로 저장하는 곳이 아닙니다.</strong>
+          값은 <code>settings</code> 테이블에 키 하나당 한 행으로 덮어써지며, 운용 중인
+          설정은 언제나 이 한 벌뿐입니다. 이전 값은 남지 않고, 되돌리려면 직접 다시
+          입력해야 합니다.
+        </p>
+        <p style="margin-top: var(--sp-2);">
+          적용은 됩니다 — 모의·실전 실행기와 스케줄러가 모두 <code>config.get_setting()</code>으로
+          이 값을 읽습니다. 다만 <strong>항목마다 언제부터 듣는지가 다릅니다.</strong>
+          아래 각 항목의 배지를 보십시오.
+        </p>
+        <p style="margin-top: var(--sp-2);">
+          규칙 조합을 비교하고 싶다면 이 화면이 아니라 백테스트를 쓰십시오 —
+          <a href="/backtest">백테스트</a>는 조합마다 별도 실행으로 남고 서로 덮어쓰지 않습니다.
+        </p>
+      </div>
+
       <form method="post" action="/settings">
 
+        {% macro field(key, label, help, step, min, max) %}
         <div class="form-group">
-          <label class="form-label">HEAT_AVOID — 신규 매수 회피 임계값</label>
-          <input type="number" name="HEAT_AVOID"
-                 value="{{ settings.HEAT_AVOID }}" step="0.1" min="1" max="10" required>
-          <div class="form-help">heat_score 가 이 값 이상이면 신규 매수하지 않음 (기본 7.0)</div>
+          <label class="form-label">
+            {{ key }} — {{ label }}
+            <span class="verdict {{ 'verdict-good' if scope[key][0] == '즉시' else 'verdict-warn' }}">
+              {{ scope[key][0] }}
+            </span>
+          </label>
+          <input type="number" name="{{ key }}" value="{{ settings[key] }}"
+                 step="{{ step }}" min="{{ min }}" max="{{ max }}" required>
+          <div class="form-help">
+            {{ help }} · 기본 {{ defaults[key] }}
+            {% if updated.get(key) %}
+            <br><span class="text-muted">마지막 변경 {{ updated[key].strftime('%Y-%m-%d %H:%M') }}</span>
+            {% endif %}
+            <br><span class="text-muted">{{ scope[key][1] }}</span>
+          </div>
         </div>
+        {% endmacro %}
 
-        <div class="form-group">
-          <label class="form-label">HEAT_SELL — 강제 청산 임계값</label>
-          <input type="number" name="HEAT_SELL"
-                 value="{{ settings.HEAT_SELL }}" step="0.1" min="1" max="10" required>
-          <div class="form-help">heat_score 가 이 값 이상이면 보유 중이라도 청산 (기본 8.5)</div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">STOP_PCT — 손절 비율</label>
-          <input type="number" name="STOP_PCT"
-                 value="{{ settings.STOP_PCT }}" step="0.01" min="0.01" max="0.3" required>
-          <div class="form-help">진입가 대비 하락 시 손절 (기본 0.07 = 7%)</div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">MAX_HOLD_DAYS — 최대 보유 일수</label>
-          <input type="number" name="MAX_HOLD_DAYS"
-                 value="{{ settings.MAX_HOLD_DAYS }}" step="1" min="1" max="120" required>
-          <div class="form-help">이 기간을 넘기면 수익/손실 무관 청산 (기본 20일)</div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">SLOTS — 최대 동시 보유 종목 수</label>
-          <input type="number" name="SLOTS"
-                 value="{{ settings.SLOTS }}" step="1" min="1" max="50" required>
-          <div class="form-help">이 수를 초과하면 신규 매수 거부 (기본 12)</div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">CAPITAL — 전략당 운용 자금(원)</label>
-          <input type="number" name="CAPITAL"
-                 value="{{ settings.CAPITAL }}" step="100000" min="100000" required>
-          <div class="form-help">1슬롯 = CAPITAL / SLOTS 금액으로 수량을 정함 (기본 10,000,000)</div>
-        </div>
+        {{ field("HEAT_AVOID", "신규 매수 회피 임계값",
+                 "heat_score 가 이 값 이상이면 신규 매수하지 않음", "0.1", "-10", "10") }}
+        {{ field("HEAT_SELL", "강제 청산 임계값",
+                 "heat_score 가 이 값 이상이면 보유 중이라도 청산", "0.1", "-10", "10") }}
+        {{ field("STOP_PCT", "손절 비율",
+                 "진입가 대비 이만큼 내려가면 청산 (0.07 = 7%)", "0.01", "0.01", "0.3") }}
+        {{ field("MAX_HOLD_DAYS", "최대 보유 거래일",
+                 "이 기간을 넘기면 손익 무관 청산 (달력일 아님)", "1", "1", "120") }}
+        {{ field("SLOTS", "최대 동시 보유 종목 수",
+                 "전략별로 셉니다 — 역발상과 펀더멘털이 각각 이만큼", "1", "1", "50") }}
+        {{ field("CAPITAL", "전략당 운용 자금(원)",
+                 "1슬롯 = CAPITAL / SLOTS 금액으로 수량 결정", "100000", "100000", "") }}
 
         <button type="submit" class="btn btn-primary">저장</button>
       </form>
