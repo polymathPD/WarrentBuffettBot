@@ -16,6 +16,135 @@
   {% endfor %}
 </div>
 
+<div class="card">
+  <div class="card-header">
+    전체 실행 비교
+    <span class="card-header-meta">이름이 아니라 knob 조합으로 읽습니다 · 판정 기준은 거래당 평균의 부호와 |t|≥2</span>
+  </div>
+  <div class="table-scroll">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>실행</th><th>구간</th><th>랭킹</th><th>슬롯</th><th>52주 필터</th>
+        <th>신호 청산</th><th>거래</th><th>평균</th><th>t값</th><th>판정</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in runs %}
+      <tr class="{{ 'is-selected-row' if selected and r.id == selected.id else '' }}">
+        <td><a href="/backtest?run={{ r.id }}"><code>{{ r.strategy }}</code></a></td>
+        <td class="text-muted">{{ r.start_d }} ~ {{ r.end_d }}</td>
+        {% for k in r.knobs_key %}<td>{{ k.value }}</td>{% endfor %}
+        {% for _ in range(4 - r.knobs_key|length) %}<td class="text-muted">-</td>{% endfor %}
+        <td>{{ "{:,}".format(r.summary.n) if r.summary.n else "-" }}</td>
+        <td class="{{ 'text-profit' if r.summary.mean_pct >= 0 else 'text-loss' }}">
+          {{ "%+.2f"|format(r.summary.mean_pct) }}%
+        </td>
+        <td>{{ "%+.2f"|format(r.summary.t_val) }}</td>
+        <td><span class="verdict verdict-{{ r.verdict.kind }}">{{ r.verdict.text }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="chart-note">
+    같은 knob 조합이 여러 줄에 보이면 구간만 다른 것입니다. 훈련 구간과 검증 구간의
+    부호가 갈리면 채택 근거가 되지 못합니다.
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <code>{{ selected.strategy }}</code> — 이 실행의 규칙
+    <span class="card-header-meta">측정일 {{ selected.ts.strftime('%Y-%m-%d %H:%M') }}</span>
+  </div>
+  <div class="card-body">
+    <dl class="knob-list">
+      {% for k in knobs %}
+      <div class="knob">
+        <dt>{{ k.label }}</dt>
+        <dd>{{ k.value }}</dd>
+      </div>
+      {% endfor %}
+    </dl>
+
+    <div class="verdict-box verdict-{{ verdict.kind }}">
+      <div class="verdict-head">
+        <span class="verdict verdict-{{ verdict.kind }}">{{ verdict.text }}</span>
+        <span class="text-muted">
+          거래 {{ "{:,}".format(selected.summary.n) }}건 ·
+          평균 {{ "%+.2f"|format(selected.summary.mean_pct) }}% ·
+          t {{ "%+.2f"|format(selected.summary.t_val) }}
+        </span>
+      </div>
+      <p>{{ verdict.note }}</p>
+    </div>
+
+    {% if combined %}
+    <div class="verdict-box verdict-{{ combined.kind }}">
+      <div class="verdict-head">
+        <span class="verdict verdict-{{ combined.kind }}">같은 규칙, 다른 구간 → {{ combined.text }}</span>
+      </div>
+      <p>{{ combined.note }}</p>
+      <ul class="sibling-list">
+        {% for sib in siblings %}
+        <li>
+          <a href="/backtest?run={{ sib.id }}"><code>{{ sib.strategy }}</code></a>
+          <span class="text-muted">{{ sib.start_d }} ~ {{ sib.end_d }}</span>
+          <span class="{{ 'text-profit' if sib.summary.mean_pct >= 0 else 'text-loss' }}">
+            {{ "%+.2f"|format(sib.summary.mean_pct) }}%
+          </span>
+          <span class="text-muted">(t {{ "%+.2f"|format(sib.summary.t_val) }}, {{ "{:,}".format(sib.summary.n) }}건)</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if is_superseded %}
+    <div class="verdict-box verdict-warn">
+      <div class="verdict-head">
+        <span class="verdict verdict-warn">이 실행은 더 최근 측정으로 대체됐습니다</span>
+      </div>
+      <p>
+        같은 knob 조합을 같은 구간에 다시 돌린 실행이 있습니다. 두 수치가 다르면
+        그 사이에 <strong>데이터나 지표 정의가 바뀐 것</strong>이므로, 이 값을 현재
+        규칙의 성과로 읽으면 안 됩니다.
+      </p>
+      <ul class="sibling-list">
+        {% for sib in siblings %}
+        <li>
+          최신:
+          <a href="/backtest?run={{ sib.id }}"><code>{{ sib.strategy }}</code></a>
+          <span class="text-muted">{{ sib.start_d }} ~ {{ sib.end_d }} · 측정일 {{ sib.ts.strftime('%Y-%m-%d') }}</span>
+          <span class="{{ 'text-profit' if sib.summary.mean_pct >= 0 else 'text-loss' }}">
+            {{ "%+.2f"|format(sib.summary.mean_pct) }}%
+          </span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if superseded and not is_superseded %}
+    <div class="verdict-box">
+      <div class="verdict-head">
+        <span class="text-muted">같은 규칙·같은 구간의 이전 측정 (판정에서 제외됨)</span>
+      </div>
+      <ul class="sibling-list">
+        {% for old in superseded %}
+        <li>
+          <a href="/backtest?run={{ old.id }}"><code>{{ old.strategy }}</code></a>
+          <span class="text-muted">{{ old.start_d }} ~ {{ old.end_d }} · 측정일 {{ old.ts.strftime('%Y-%m-%d') }}</span>
+          <span class="text-muted">{{ "%+.2f"|format(old.summary.mean_pct) }}%</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
 <div class="stat-grid">
   <div class="stat-card">
     <div class="stat-label">거래 수</div>

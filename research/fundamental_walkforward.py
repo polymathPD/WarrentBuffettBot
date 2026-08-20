@@ -138,16 +138,20 @@ def main():
               f"승률 {s['win_rate']:.1f}%  t값 {s['t_val']:+.2f}")
         print(f"  평균 보유 {s['avg_held_days']:.1f}거래일  청산사유 {s['reasons']}")
 
-    for name, trades, strategy in (
-        ("v2", oos, "fundamental_v2_walkforward"),
-        ("base", baseline, "fundamental_v1_walkforward_base"),
+    # pbr_applied가 이 둘을 가르는 유일한 knob이다. 이게 빠져 있으면 두 실행의
+    # params가 완전히 같아져서, 대시보드가 "같은 규칙을 같은 구간에 두 번 잰 것"으로
+    # 읽고 한쪽을 이전 측정으로 치워 버린다.
+    for name, trades, strategy, pbr_applied in (
+        ("v2", oos, "fundamental_v2_walkforward", True),
+        ("base", baseline, "fundamental_v1_walkforward_base", False),
     ):
         s = stats(trades)
         if s["n"]:
             save_run(strategy, WINDOWS[0][2], WINDOWS[-1][3],
-                     {"slots": SLOTS, "pbr_limits": [str(x) for x in PBR_LIMITS],
+                     {"slots": SLOTS, "pbr_applied": pbr_applied,
+                      "pbr_limits": [str(x) for x in PBR_LIMITS],
                       "marcap_filter": MIN_MARCAP, "windows": len(WINDOWS),
-                      "selection": "학습 구간 거래당 평균 최대"},
+                      "selection": "학습 구간 거래당 평균 최대" if pbr_applied else "PBR 미적용 고정"},
                      s,
                      [{"code": t["code"],
                        "entry_d": pd.Timestamp(t["entry_d"]).date(),

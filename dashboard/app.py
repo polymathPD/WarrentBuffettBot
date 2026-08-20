@@ -6,6 +6,8 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 
+import json
+
 import db.connection as db
 import config
 from recorder.equity import cash_by_key
@@ -310,6 +312,107 @@ SUMMARY_LABELS = {
 }
 
 
+# 백테스트 실행 하나는 "어떤 knob 조합을 어느 구간에 돌렸나"다. 저장 이름만으로는
+# 그걸 알 수 없어서(credit_rank_no52w_exit 같은 이름이 무슨 뜻인지 화면에 없었다)
+# params JSONB를 읽을 수 있는 문장으로 풀어 준다.
+KNOB_ORDER = ["rank_col", "slots", "pos52w_filter", "marcap_filter", "stop_pct",
+              "max_hold_days", "min_hold_days", "exit_rank_pct", "exit_cols",
+              "pbr_applied", "pbr_limits", "selection", "windows"]
+KNOB_LABELS = {
+    "rank_col": "랭킹", "slots": "슬롯", "pos52w_filter": "52주 하위 30% 필터",
+    "marcap_filter": "시가총액 하한", "stop_pct": "손절", "max_hold_days": "최대 보유",
+    "min_hold_days": "최소 보유", "exit_rank_pct": "신호 청산", "exit_cols": "청산 감시 지표",
+    "pbr_limits": "PBR 후보", "selection": "창별 선택", "windows": "워크포워드 창",
+    "pbr_applied": "PBR 적용",
+}
+# 목록에서 조합을 한눈에 구분하는 데 실제로 쓰이는 knob (전부 늘어놓으면 못 읽는다)
+KNOB_KEY = ["rank_col", "slots", "pos52w_filter", "exit_rank_pct"]
+
+
+def _knob_value(key, value, params):
+    if key == "rank_col":
+        direction = "오름차순" if params.get("ascending", True) else "내림차순"
+        return f"{value} {direction}"
+    if key == "slots":
+        return f"{value}개"
+    if key in ("pos52w_filter", "marcap_filter", "pbr_applied"):
+        return "켬" if value else "끔"
+    if key == "stop_pct":
+        return f"-{float(value) * 100:.0f}%"
+    if key in ("max_hold_days", "min_hold_days"):
+        return f"{value}거래일"
+    if key == "exit_rank_pct":
+        if value is None:
+            return "없음"
+        return f"상위 {round((1 - float(value)) * 100)}% 진입 시"
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(v) for v in value) if value else "없음"
+    if isinstance(value, dict):
+        return ", ".join(f"{k}={v}" for k, v in value.items()) or "없음"
+    return str(value)
+
+
+def _knobs(params, keys=None):
+    """params를 [{label, value}] 로 푼다. keys를 주면 그 순서로 추린다."""
+    params = params or {}
+    order = keys or [k for k in KNOB_ORDER if k in params]
+    out = []
+    for k in order:
+        if k not in params:
+            continue
+        out.append({"label": KNOB_LABELS.get(k, k),
+                    "value": _knob_value(k, params[k], params)})
+    return out
+
+
+def _verdict(summary):
+    """
+    한 실행의 판정. 기준은 research/README.md의 방법론 그대로다 —
+    비용 반영 후 거래당 평균의 부호와 |t| >= 2.
+    한 구간만으로는 채택 근거가 못 되므로 문구를 단정적으로 쓰지 않는다.
+    """
+    summary = summary or {}
+    mean, t, n = summary.get("mean_pct"), summary.get("t_val"), summary.get("n")
+    if not n or mean is None or t is None:
+        return {"kind": "none", "text": "판정 불가", "note": "요약 값이 없습니다"}
+    if mean >= 0 and t >= 2:
+        return {"kind": "good", "text": "유의하게 양수",
+                "note": "이 구간에서는 우연으로 보기 어렵습니다. 다른 구간에서도 같은 부호여야 채택 근거가 됩니다."}
+    if mean >= 0:
+        return {"kind": "warn", "text": "양수, 유의하지 않음",
+                "note": "|t| < 2 라 0과 구분되지 않습니다. 표본이 작을수록 우연히 양수가 나오기 쉽습니다."}
+    if t <= -2:
+        return {"kind": "bad", "text": "유의하게 음수 — 해로움",
+                "note": "비용을 넘기기는커녕 규칙 자체가 손해를 냅니다."}
+    return {"kind": "bad", "text": "음수, 유의하지 않음",
+            "note": "손실 쪽이지만 0과 구분되지는 않습니다."}
+
+
+def _fingerprint(params):
+    """knob 조합의 동일성 판정용 키. 같은 규칙을 다른 구간에 돌린 실행을 묶는다."""
+    return json.dumps(params or {}, sort_keys=True, default=str)
+
+
+def _overlaps(a, b):
+    return a["start_d"] <= b["end_d"] and b["start_d"] <= a["end_d"]
+
+
+def _combined_verdict(group):
+    """같은 규칙을 여러 구간에 돌린 결과를 합쳐 읽는다."""
+    means = [g["summary"].get("mean_pct") for g in group
+             if g["summary"] and g["summary"].get("mean_pct") is not None]
+    if len(means) < 2:
+        return None
+    if all(m < 0 for m in means):
+        return {"kind": "bad", "text": "해로움 (전 구간 음수)",
+                "note": "구간을 바꿔도 부호가 유지됩니다. 이 저장소에서 가장 신뢰할 만한 형태의 결론입니다."}
+    if all(m >= 0 for m in means):
+        return {"kind": "good", "text": "전 구간 양수",
+                "note": "부호가 일관합니다. 다만 유의성과 다중비교를 따로 확인해야 합니다."}
+    return {"kind": "warn", "text": "부호 불안정",
+            "note": "구간에 따라 방향이 뒤집힙니다. 어느 쪽도 채택 근거가 아닙니다."}
+
+
 def _backtest_curve(rows):
     """청산일별 수익률 합을 누적한 곡선.
 
@@ -347,14 +450,40 @@ def _backtest_curve(rows):
 
 @app.get("/backtest")
 def backtest_page(request: Request, run: int = 0, reason: str = "", worst: str = ""):
-    runs = db.fetchall("""
+    runs = [dict(r) for r in db.fetchall("""
         SELECT id, ts, strategy, start_d, end_d, params, summary
         FROM backtest_runs ORDER BY strategy
-    """)
+    """)]
+    for r in runs:
+        r["knobs_key"] = _knobs(r["params"], KNOB_KEY)
+        r["verdict"] = _verdict(r["summary"])
 
     selected = next((r for r in runs if r["id"] == run), None)
     if selected is None and runs:
         selected = runs[0]
+
+    # 같은 knob 조합을 여러 구간에 돌린 실행을 묶어 훈련/검증 대조로 읽는다.
+    #
+    # 구간이 겹치는 실행은 대조가 아니라 '같은 구간 재측정'이다. 이 저장소에서는
+    # 지표 정의가 바뀔 때마다 그런 쌍이 생긴다(2026-08-20 heat_score 대칭화 전후).
+    # 옛 측정을 함께 세면 실제로는 전 구간 음수인 규칙이 '부호 불안정'으로 읽히므로,
+    # 겹치는 것끼리는 최신 측정만 남긴다.
+    siblings, superseded = [], []
+    combined = None
+    is_superseded = False
+    if selected:
+        fp = _fingerprint(selected["params"])
+        group = [r for r in runs if _fingerprint(r["params"]) == fp]
+        kept = []
+        for r in sorted(group, key=lambda x: x["ts"], reverse=True):
+            if not any(_overlaps(r, k) for k in kept):
+                kept.append(r)
+        kept_ids = {r["id"] for r in kept}
+        superseded = [r for r in group if r["id"] not in kept_ids]
+        is_superseded = selected["id"] not in kept_ids
+        siblings = [r for r in kept if r["id"] != selected["id"]]
+        if not is_superseded and len(kept) >= 2:
+            combined = _combined_verdict(kept)
 
     curve = mdd = reasons = quarters = None
     trades = []
@@ -412,6 +541,12 @@ def backtest_page(request: Request, run: int = 0, reason: str = "", worst: str =
         "reasons": reasons,
         "quarters": quarters,
         "labels": SUMMARY_LABELS,
+        "knobs": _knobs(selected["params"]) if selected else [],
+        "verdict": _verdict(selected["summary"]) if selected else None,
+        "siblings": siblings,
+        "superseded": superseded,
+        "combined": combined,
+        "is_superseded": is_superseded,
     })
 
 
