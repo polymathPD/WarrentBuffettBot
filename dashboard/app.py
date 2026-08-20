@@ -334,7 +334,7 @@ def _knob_value(key, value, params):
         direction = "오름차순" if params.get("ascending", True) else "내림차순"
         return f"{value} {direction}"
     if key == "slots":
-        return f"{value}개"
+        return "무제한" if value is not None and value >= 1000 else f"{value}개"
     if key in ("pos52w_filter", "marcap_filter", "pbr_applied"):
         return "켬" if value else "끔"
     if key == "stop_pct":
@@ -556,8 +556,13 @@ def _factor_label(params):
     extra = []
     if p.get("pos52w_filter") is False:
         extra.append("52주 필터 끔")
-    if p.get("slots") not in (None, 5):
-        extra.append(f"슬롯 {p['slots']}")
+    slots = p.get("slots")
+    if slots is not None and slots >= 1000:
+        # 슬롯을 사실상 무제한으로 두면 후보 전원이 진입해 정렬이 결과를 바꾸지
+        # 못한다. 랭킹을 뺀 '웅덩이 자체'의 기대수익을 재는 기준선이다.
+        extra.append("랭킹 없음 · 후보 전원")
+    elif slots not in (None, 5):
+        extra.append(f"슬롯 {slots}")
     if p.get("exit_rank_pct") is not None:
         extra.append("신호 청산 켬")
     return f"{name} {direction}" + (f" · {' · '.join(extra)}" if extra else "")
@@ -572,7 +577,8 @@ def _rank_factor_table(runs):
     """
     groups = {}
     for r in _current_runs(runs):
-        if "rank_col" not in (r["params"] or {}):
+        p = r["params"] or {}
+        if "rank_col" not in p or p.get("walkforward"):
             continue
         groups.setdefault(_fingerprint(r["params"]), []).append(r)
 
@@ -614,6 +620,51 @@ def _rank_factor_table(runs):
     order = {"good": 0, "warn": 1, "none": 2, "bad": 3}
     out.sort(key=lambda f: (order[f["verdict"]["kind"]], -f["best_mean"]))
     return out
+
+
+def _walkforward_rows(runs):
+    """
+    워크포워드 실행과 그 고정 대조군을 짝지어 보여준다.
+
+    훈련/검증 고정 분할은 홀드아웃을 한 번 쓰면 끝이다. 이 저장소는 2025~2026을
+    이미 여러 번 열었으므로, 그 구간 결과로 규칙을 고르면 정직한 점수가 남지 않는다.
+    워크포워드는 선택을 학습 구간 안에서 알고리즘이 하므로 시험 구간이 매번
+    진짜 미래다 — 여기 수치는 '규칙'이 아니라 '규칙을 고르는 절차'의 성적이다.
+
+    대조군보다 나아야 선택이 값어치를 한 것이다. 선택이 대조군에 못 미치면
+    팩터를 고르는 행위 자체가 잡음을 따라간 것이다.
+    """
+    wf = [r for r in _current_runs(runs) if (r["params"] or {}).get("walkforward")]
+    pairs = []
+    for r in wf:
+        p = r["params"] or {}
+        if p.get("selection") == "고정":
+            continue
+        base = next((b for b in wf
+                     if (b["params"] or {}).get("selection") == "고정"
+                     and b["start_d"] == r["start_d"] and b["end_d"] == r["end_d"]), None)
+        sel, bs = r["summary"] or {}, (base or {}).get("summary") or {}
+        edge = (sel.get("mean_pct") - bs["mean_pct"]) if bs.get("mean_pct") is not None             and sel.get("mean_pct") is not None else None
+        if edge is None:
+            verdict = {"kind": "none", "text": "대조군 없음",
+                       "note": "고정 규칙 실행이 함께 저장돼야 선택의 값어치를 잴 수 있습니다."}
+        elif edge > 0 and abs(sel.get("t_val") or 0) >= 2:
+            verdict = {"kind": "good", "text": "선택이 대조군을 이김 · 유의",
+                       "note": "시험 구간이 매번 미래였고, 고르는 절차가 고정 규칙보다 나았습니다."}
+        elif edge > 0:
+            verdict = {"kind": "warn", "text": "선택이 대조군을 이김, 유의하지 않음",
+                       "note": "방향은 낫지만 |t| < 2 라 절차의 값어치가 잡음과 구분되지 않습니다."}
+        else:
+            verdict = {"kind": "bad", "text": "선택이 대조군만 못함",
+                       "note": "학습 구간에서 좋아 보인 팩터를 고른 것이 오히려 손해였습니다 — 고르는 행위가 잡음을 따라갔다는 뜻입니다."}
+        pairs.append({
+            "run": r, "base": base, "edge": edge,
+            "picked": p.get("picked") or [],
+            "pool": p.get("factor_pool") or [],
+            "windows": p.get("windows"),
+            "verdict": verdict,
+        })
+    return pairs
 
 
 def _multiple_comparison_pct(k):
@@ -757,6 +808,7 @@ def backtest_page(request: Request, run: int = 0, reason: str = "", worst: str =
         "is_superseded": is_superseded,
         "factors": _factor_table(runs),
         "rank_factors": _rank_factor_table(runs),
+        "walkforward": _walkforward_rows(runs),
         "multiple_pct": _multiple_comparison_pct(len(runs)),
     })
 

@@ -272,3 +272,52 @@ def test_factor_rows_put_the_survivors_first():
     ]
     labels = [f["label"] for f in _rank_factor_table(runs)]
     assert labels[0].startswith("기관 순매수 배율")
+
+
+# ── 워크포워드 ───────────────────────────────────────────────────────────
+from dashboard.app import _walkforward_rows  # noqa: E402
+
+
+def _wf(rid, selection, mean, t=1.0, picked=None, strategy="wf"):
+    r = _fr(rid, {"walkforward": True, "windows": 4, "selection": selection,
+                  "factor_pool": ["a", "b"], "picked": picked or []},
+            start="2023-01-01", end="2026-08-19", mean=mean, strategy=strategy)
+    r["summary"]["t_val"] = t
+    r["summary"]["win_rate"] = 30.0
+    return r
+
+
+def test_walkforward_is_scored_against_its_fixed_control():
+    """선택이 고정 규칙을 못 이기면 고르는 행위가 잡음을 따라간 것이다."""
+    runs = [_wf(1, "학습 구간 거래당 평균 최대", +1.77, t=1.82),
+            _wf(2, "고정", -0.45, t=-0.53, strategy="wf_base")]
+    row = _walkforward_rows(runs)[0]
+
+    assert row["edge"] == pytest.approx(2.22)
+    assert row["verdict"]["kind"] == "warn"      # 이겼지만 |t| < 2
+
+
+def test_walkforward_losing_to_its_control_is_called_out():
+    runs = [_wf(1, "학습 구간 거래당 평균 최대", -1.81),
+            _wf(2, "고정", -0.46, strategy="wf_base")]
+    assert _walkforward_rows(runs)[0]["verdict"]["kind"] == "bad"
+
+
+def test_walkforward_beating_control_with_significance_is_the_top_reading():
+    runs = [_wf(1, "학습 구간 거래당 평균 최대", +1.77, t=2.4),
+            _wf(2, "고정", -0.45, strategy="wf_base")]
+    assert _walkforward_rows(runs)[0]["verdict"]["kind"] == "good"
+
+
+def test_walkforward_without_a_control_gets_no_verdict():
+    assert _walkforward_rows([_wf(1, "학습 구간 거래당 평균 최대", +1.77)])[0] \
+        ["verdict"]["kind"] == "none"
+
+
+def test_walkforward_runs_stay_out_of_the_ranking_factor_table():
+    """창마다 팩터가 바뀌므로 한 줄짜리 '정렬 기준'으로 쓸 수 없다."""
+    runs = [_wf(1, "학습 구간 거래당 평균 최대", +1.77),
+            _fr(9, {"rank_col": "heat_score", "ascending": True}, mean=-1.46)]
+    labels = [f["label"] for f in _rank_factor_table(runs)]
+
+    assert labels == ["과열 점수 낮은 순"]

@@ -77,15 +77,19 @@ def add_pos52w(px):
     return pd.concat(out, ignore_index=True)
 
 
-def simulate(px, sig, rank_col, ascending, slots, max_hold,
-             stop_pct=0.07, use_pos52w=True, exit_rank_pct=None,
-             exit_cols=(), label="", strategy=""):
+def run_sim(px, sig, rank_col, ascending, slots, max_hold,
+            stop_pct=0.07, use_pos52w=True, exit_rank_pct=None,
+            exit_cols=(), start=None, end=None):
     """
     매일: (1) 보유 종목 청산 판정  (2) 빈 슬롯을 랭킹 상위 후보로 채움
     진입은 신호일 다음 거래일 시가, 청산은 당일 종가(손절은 비관적 체결).
 
-    label은 콘솔 표시용, strategy는 backtest_runs 저장 키다. 규칙 변형마다
-    다른 strategy를 줘야 서로 덮어쓰지 않는다.
+    매매 목록만 돌려준다 — 출력도 저장도 하지 않는다. 워크포워드는 학습 구간마다
+    변형 수만큼 이 함수를 부르므로(한 번 돌 때 수십 회) 그때마다 결과를 저장하면
+    안 된다. simulate()가 이 위에서 통계·출력·저장을 얹는다.
+
+    start/end: 진입 판정을 이 구간의 신호로만 한다(청산은 그 뒤로 이어진다).
+    워크포워드가 같은 데이터로 학습 구간과 시험 구간을 나눠 돌리기 위한 것이다.
     """
     px = px.set_index(["code", "d"]).sort_index()
     dates = np.sort(sig["d"].unique())
@@ -97,6 +101,9 @@ def simulate(px, sig, rank_col, ascending, slots, max_hold,
     sig_by_date = {d: g for d, g in sig.groupby("d")}
     all_dates = np.sort(px.index.get_level_values("d").unique())
     date_pos = {d: i for i, d in enumerate(all_dates)}
+
+    entry_from = pd.Timestamp(start) if start else None
+    entry_to = pd.Timestamp(end) if end else None
 
     positions = {}   # code -> dict(entry_i, entry_px, stop_px)
     trades = []
@@ -140,6 +147,8 @@ def simulate(px, sig, rank_col, ascending, slots, max_hold,
         free = slots - len(positions)
         if free <= 0 or today is None:
             continue
+        if (entry_from is not None and d < entry_from) or            (entry_to is not None and d > entry_to):
+            continue
         cand = today.dropna(subset=[rank_col])
         if use_pos52w:
             p = px.loc[px.index.get_level_values("d") == d, "pos52w"]
@@ -157,6 +166,21 @@ def simulate(px, sig, rank_col, ascending, slots, max_hold,
             entry = buy_price(o)
             positions[code] = {"entry_i": i + 1, "entry_px": entry,
                                "stop_px": entry * (1 - stop_pct)}
+
+    return trades
+
+
+def simulate(px, sig, rank_col, ascending, slots, max_hold,
+             stop_pct=0.07, use_pos52w=True, exit_rank_pct=None,
+             exit_cols=(), label="", strategy=""):
+    """run_sim()을 돌리고 통계를 내 출력하고 backtest_runs에 저장한다.
+
+    label은 콘솔 표시용, strategy는 저장 키다. 규칙 변형마다 다른 strategy를
+    줘야 서로 덮어쓰지 않는다.
+    """
+    trades = run_sim(px, sig, rank_col, ascending, slots, max_hold,
+                     stop_pct=stop_pct, use_pos52w=use_pos52w,
+                     exit_rank_pct=exit_rank_pct, exit_cols=exit_cols)
 
     rets = np.array([t["ret"] for t in trades])
     if len(rets) == 0:

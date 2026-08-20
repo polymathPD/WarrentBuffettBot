@@ -18,6 +18,70 @@
 
 <div class="card">
   <div class="card-header">
+    워크포워드 — 규칙이 아니라 '고르는 절차'의 성적
+    <span class="card-header-meta">
+      각 시험 구간은 선택 시점에 미래입니다 · 홀드아웃을 다시 쓰지 않아도 되는 유일한 형태
+    </span>
+  </div>
+  {% if walkforward %}
+  <div class="card-body">
+    {% for w in walkforward %}
+    <div class="verdict-box verdict-{{ w.verdict.kind }}">
+      <div class="verdict-head">
+        <span class="verdict verdict-{{ w.verdict.kind }}">{{ w.verdict.text }}</span>
+        <span class="text-muted">
+          <a href="/backtest?run={{ w.run.id }}"><code>{{ w.run.strategy }}</code></a> ·
+          창 {{ w.windows }}개 · 후보 팩터 {{ w.pool|length }}개
+        </span>
+      </div>
+      <p>{{ w.verdict.note }}</p>
+      <div class="table-scroll">
+      <table class="table">
+        <thead><tr><th></th><th>거래</th><th>거래당 평균</th><th>t값</th><th>승률</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>워크포워드 선택</td>
+            <td>{{ "{:,}".format(w.run.summary.n) }}건</td>
+            <td class="{{ 'text-profit' if w.run.summary.mean_pct >= 0 else 'text-loss' }}">
+              {{ "%+.2f"|format(w.run.summary.mean_pct) }}%
+            </td>
+            <td>{{ "%+.2f"|format(w.run.summary.t_val) }}</td>
+            <td>{{ "%.1f"|format(w.run.summary.win_rate) }}%</td>
+          </tr>
+          {% if w.base %}
+          <tr>
+            <td class="text-muted">고정 대조군</td>
+            <td class="text-muted">{{ "{:,}".format(w.base.summary.n) }}건</td>
+            <td class="{{ 'text-profit' if w.base.summary.mean_pct >= 0 else 'text-loss' }}">
+              {{ "%+.2f"|format(w.base.summary.mean_pct) }}%
+            </td>
+            <td class="text-muted">{{ "%+.2f"|format(w.base.summary.t_val) }}</td>
+            <td class="text-muted">{{ "%.1f"|format(w.base.summary.win_rate) }}%</td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+      </div>
+      {% if w.picked %}
+      <p class="text-muted" style="margin-top: var(--sp-3);">
+        창별 선택: {% for f in w.picked %}<code>{{ f }}</code>{% if not loop.last %} → {% endif %}{% endfor %}
+        {% if w.picked|unique|list|length > 1 %}
+        — 창마다 다른 팩터가 뽑혔습니다. 학습 구간 노이즈를 따라간 신호입니다.
+        {% endif %}
+      </p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">
+    워크포워드 실행이 없습니다 — <code>python research/contrarian_walkforward.py</code>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-header">
     랭킹 팩터 — 구간을 넘어 작동하는가
     <span class="card-header-meta">
       같은 조건에서 정렬 기준만 바꿔 돌린 결과 · 훈련과 검증의 부호가 갈리면 팩터가 아닙니다
