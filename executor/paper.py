@@ -130,3 +130,88 @@ def sell(code: str, name: str, qty: float, entry_px: float,
     )
     pnl = "+" if realized_pct >= 0 else ""
     print(f"[모의 청산] {code} {name}  {pnl}{realized_pct*100:.2f}%  사유={reason}")
+
+
+def current_equity(strategy: str, prices: dict, mode: str = MODE) -> float:
+    """전략의 현재 총자산 = 현금 + 보유 평가액.
+
+    리밸런싱 목표 금액을 여기서 뽑는다. config의 CAPITAL로 계산하면 자산이 늘어도
+    투입액이 고정돼 현금 비중이 저절로 커진다(복리로 굴러가지 않는다).
+    """
+    from recorder.equity import cash_by_key
+
+    cash = cash_by_key().get((mode, strategy))
+    if cash is None:
+        from recorder.equity import capital_for
+        cash = capital_for(strategy)
+    held = db.fetchall(
+        "SELECT code, qty FROM positions WHERE strategy=%s AND mode=%s",
+        (strategy, mode),
+    )
+    value = sum(float(r["qty"]) * prices[r["code"]]
+                for r in held if r["code"] in prices)
+    return float(cash) + value
+
+
+def adjust(code: str, name: str, target_qty: int, fill_px: float,
+           strategy: str, agents_summary: dict | None = None,
+           mode: str = MODE) -> None:
+    """보유 수량을 target_qty로 맞춘다. 차이나는 만큼만 사고판다.
+
+    동일가중 리밸런싱에는 이게 필요하다. 전량 매도 후 재매수로 구현하면 계속
+    편입되는 종목까지 매달 왕복 비용을 내는데, 낮은 회전율이 이 전략의 근거다
+    (검증도 회전분에만 비용을 매겼다).
+
+    빠진 종목은 target_qty=0으로 부르면 된다.
+    """
+    pos = db.fetchone(
+        "SELECT qty, entry_px FROM positions WHERE code=%s AND strategy=%s AND mode=%s",
+        (code, strategy, mode),
+    )
+    cur = float(pos["qty"]) if pos else 0.0
+    entry_px = float(pos["entry_px"]) if pos else 0.0
+    delta = target_qty - cur
+    if delta == 0:
+        return
+
+    if delta > 0:
+        px = fill_px * (1 + config.SLIP_BPS / 10000) * (1 + config.FEE_BPS / 10000)
+        new_qty = cur + delta
+        # 진입가는 가중평균으로 갱신한다. 그래야 부분 청산의 실현손익이 맞는다.
+        new_entry = (cur * entry_px + delta * px) / new_qty if cur else px
+        if pos:
+            db.execute(
+                "UPDATE positions SET qty=%s, entry_px=%s WHERE code=%s AND strategy=%s AND mode=%s",
+                (new_qty, new_entry, code, strategy, mode))
+        else:
+            db.execute(
+                """INSERT INTO positions (code, strategy, name, entry_date, entry_px,
+                                          qty, stop_px, max_hold_days, mode)
+                   VALUES (%s,%s,%s,%s,%s,%s,0,99999,%s)
+                   ON CONFLICT (code, strategy) DO NOTHING""",
+                (code, strategy, name, date.today(), new_entry, new_qty, mode))
+        db.execute(
+            """INSERT INTO trades (mode, side, code, name, qty, price, amount, strategy, agents)
+               VALUES (%s,'buy',%s,%s,%s,%s,%s,%s,%s::jsonb)""",
+            (mode, code, name, delta, px, px * delta, strategy,
+             str(agents_summary or {}).replace("'", '"')))
+        print(f"[리밸런싱 매수] {code} {name}  +{delta:.0f}주 @ {px:,.0f}")
+        return
+
+    qty_out = -delta
+    px = fill_px * (1 - config.SLIP_BPS / 10000) * (
+        1 - config.FEE_BPS / 10000 - config.TAX_BPS / 10000)
+    realized = px / entry_px - 1 if entry_px else 0.0
+    db.execute(
+        """INSERT INTO trades (mode, side, code, name, qty, price, amount, strategy,
+                               exit_reason, realized_pct)
+           VALUES (%s,'sell',%s,%s,%s,%s,%s,%s,'rebalance',%s)""",
+        (mode, code, name, qty_out, px, px * qty_out, strategy, realized))
+    if target_qty <= 0:
+        db.execute("DELETE FROM positions WHERE code=%s AND strategy=%s AND mode=%s",
+                   (code, strategy, mode))
+    else:
+        db.execute("UPDATE positions SET qty=%s WHERE code=%s AND strategy=%s AND mode=%s",
+                   (target_qty, code, strategy, mode))
+    sign = "+" if realized >= 0 else ""
+    print(f"[리밸런싱 매도] {code} {name}  -{qty_out:.0f}주 @ {px:,.0f}  {sign}{realized*100:.2f}%")

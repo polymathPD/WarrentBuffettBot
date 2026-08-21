@@ -121,10 +121,14 @@ def daily_job():
              e["reason"], fundamental.STRATEGY)
 
     # 6. 퀄리티 전략 월별 리밸런싱
-    #    직전 거래일이 그 달 첫 거래일일 때만 돈다. 편입 목록이 바뀐 것만 교체하므로
-    #    계속 편입되는 종목은 사고팔지 않는다 — 낮은 회전율이 이 전략의 요점이다.
+    #    직전 거래일이 그 달 첫 거래일일 때만 돈다.
+    #
+    #    비중까지 동일가중으로 되돌린다. 이게 이 전략의 물타기다 — 빠진 종목은
+    #    비중이 줄어드니 다시 채우려면 더 사고, 오른 종목은 덜어낸다. 별도 현금
+    #    없이도 매달 자동으로 일어난다. 명단 교체만 하면 검증한 것과 달라진다
+    #    (백테스트는 매 구간 동일가중으로 되돌린 수익률을 쓴다).
     from strategy import quality
-    from executor.paper import buy, sell
+    from executor.paper import adjust, current_equity
     import db.connection as db
     import config
 
@@ -138,33 +142,38 @@ def daily_job():
     else:
         slots = config.get_setting("SLOTS")
         targets = quality.get_targets(rebal_d, slots)
-        tgt = {t["code"] for t in targets}
+        opens = {r["code"]: float(r["o"]) for r in db.fetchall(
+            "SELECT code, o FROM stock_daily WHERE d = %s::date AND o > 0", (today,))}
+        targets = [t for t in targets if t["code"] in opens]
+        tgt = {t["code"]: t for t in targets}
         print(f"퀄리티 리밸런싱({rebal_d} 기준 -> {today} 시가 체결): "
               f"목표 {len(tgt)}종목")
 
-        opens = {r["code"]: float(r["o"]) for r in db.fetchall(
-            "SELECT code, o FROM stock_daily WHERE d = %s::date", (today,))}
+        if not tgt:
+            print("  목표 종목 없음 - 건너뜀")
+        else:
+            # 목표 금액은 현재 자산 기준이다. CAPITAL 고정으로 잡으면 자산이 늘어도
+            # 투입액이 그대로여서 현금 비중이 저절로 커진다.
+            equity = current_equity(quality.STRATEGY, opens)
+            slot_value = equity / slots
+            print(f"  자산 {equity:,.0f}원 / {slots}슬롯 = 슬롯당 {slot_value:,.0f}원")
 
-        held = db.fetchall(
-            "SELECT code, name, qty, entry_px FROM positions "
-            "WHERE strategy=%s AND mode='paper'", (quality.STRATEGY,))
-        for h in held:
-            if h["code"] in tgt or h["code"] not in opens:
-                continue
-            sell(h["code"], h["name"], float(h["qty"]), float(h["entry_px"]),
-                 opens[h["code"]], "rebalance", quality.STRATEGY,
-                 raw_px=opens[h["code"]])
+            held = db.fetchall(
+                "SELECT code, name, qty FROM positions WHERE strategy=%s AND mode='paper'",
+                (quality.STRATEGY,))
+            for h in held:
+                if h["code"] in tgt or h["code"] not in opens:
+                    continue
+                adjust(h["code"], h["name"], 0, opens[h["code"]], quality.STRATEGY)
 
-        for t in targets:
-            if t["code"] not in opens:
-                print(f"  [보류] {t['code']} - 오늘 시가 없음")
-                continue
-            # 손절 없음(stop_pct=0), 보유기한 없음 - 청산은 리밸런싱만 한다
-            buy(t["code"], name_of(t["code"]), rebal_d, t["close"], 0.0,
-                {"rank": quality.RANK_KIND, "score": round(t["score"], 4),
-                 "per": round(t["per"], 1), "pbr": round(t["pbr"], 2)},
-                quality.STRATEGY, fill_px=opens[t["code"]],
-                stop_pct=0.0, max_hold_days=99999)
+            for code, t in tgt.items():
+                qty = int(slot_value // opens[code])
+                if qty < 1:
+                    print(f"  [보류] {code} - 1슬롯 금액으로 1주도 못 산다")
+                    continue
+                adjust(code, name_of(code), qty, opens[code], quality.STRATEGY,
+                       {"rank": quality.RANK_KIND, "score": round(t["score"], 4),
+                        "per": round(t["per"], 1), "pbr": round(t["pbr"], 2)})
 
     # 6-2. 펀더멘털 진입: 직전 거래일 공시를 오늘 시가로 체결
     prev_day = _prev_trading_day(today)
