@@ -229,10 +229,13 @@ def index(request: Request, mode: str = "paper"):
         LEFT JOIN stock_daily sd ON sd.code = p.code
           AND sd.d = (SELECT MAX(d) FROM stock_daily WHERE code = p.code)
         LEFT JOIN LATERAL (
+            -- 비중만 맞추는 추가 매수에는 판단이 없다. 그냥 '최근 매수'를 잡으면
+            -- 그 빈 기록이 진입 판단을 덮어 의견란이 비어 보인다(2026-08-21 대한해운).
+            -- 의견이 실린 기록을 먼저 고르고, 그중 최신을 쓴다.
             SELECT agents FROM trades
              WHERE code = p.code AND strategy = p.strategy AND mode = p.mode
-               AND side = 'buy'
-             ORDER BY ts DESC LIMIT 1
+               AND side = 'buy' AND agents IS NOT NULL AND agents <> '{}'::jsonb
+             ORDER BY (agents ? 'value_trap') DESC, ts DESC LIMIT 1
         ) t ON TRUE
         WHERE p.mode = %s
         ORDER BY p.entry_date DESC
