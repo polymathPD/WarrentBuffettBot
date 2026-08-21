@@ -528,6 +528,10 @@ svg.alloc-bar { width: 100%; height: 28px; display: block; }
 /* Responsive: collapse sidebar to a top bar below 640px */
 @media (max-width: 640px) {
   .layout { flex-direction: column; }
+  /* 로고와 메뉴를 한 줄에 몰면 좁은 화면에서 메뉴가 잘린다. 실측(393px 기준)으로
+     로고 187px + 링크 344px = 531px라 139px이 화면 밖으로 나갔고, 가로 스크롤이
+     있다는 표시가 없어 '설정'이 사라진 것처럼 보였다. 로고를 윗줄 전체로 올리고
+     부제를 빼면 링크 344px가 한 줄에 들어간다(넘침 0px). */
   .sidebar {
     width: 100%;
     min-width: 0;
@@ -536,9 +540,12 @@ svg.alloc-bar { width: 100%; height: 28px; display: block; }
     padding: var(--sp-3) 0;
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
+    row-gap: var(--sp-2);
     overflow-x: auto;
   }
-  .sidebar .logo { border-bottom: none; border-right: 1px solid var(--border); padding: 0 var(--sp-4); margin: 0; white-space: nowrap; }
+  .sidebar .logo { flex: 0 0 100%; border-bottom: none; border-right: none; padding: 0 var(--sp-4); margin: 0; white-space: nowrap; }
+  .sidebar .logo p { display: none; }
   .sidebar a { margin-top: 0; border-left: none; border-bottom: 2px solid transparent; white-space: nowrap; }
   .sidebar a.active { border-left-color: transparent; border-bottom-color: var(--accent); }
   .content { padding: var(--sp-4); }
