@@ -56,6 +56,28 @@ def _prev_trading_day(today: str):
     return row["d"].strftime("%Y-%m-%d") if row and row["d"] else None
 
 
+def _quality_rebalance_date(today: str):
+    """오늘 시가로 체결할 퀄리티 전략 리밸런싱 기준일.
+
+    체결 규칙은 '기준일 다음 거래일 시가'다(research/quality_backtest.py와 동일).
+    16:10 배치 시점에는 내일 봉이 없으므로, 오늘 체결할 대상은 '직전 거래일'이고
+    그 직전 거래일이 그 달의 첫 거래일일 때만 리밸런싱한다.
+    """
+    import db.connection as db
+
+    prev = _prev_trading_day(today)
+    if prev is None:
+        return None
+    row = db.fetchone(
+        """SELECT MIN(d) AS d FROM stock_daily
+            WHERE d >= date_trunc('month', %s::date) AND d <= %s::date""",
+        (prev, prev),
+    )
+    if not row or not row["d"] or row["d"].strftime("%Y-%m-%d") != prev:
+        return None
+    return prev
+
+
 def daily_job():
     today = date.today().strftime("%Y-%m-%d")
     print(f"\n{'='*50}")
@@ -86,54 +108,70 @@ def daily_job():
     compute_for_date(today)
 
     # 5. 청산 후보 처리 (전략별로 규칙이 다르다)
-    from strategy import contrarian, fundamental
+    #
+    # 역발상(contrarian)은 뺐다. 생존 편향을 제거한 워크포워드에서 거래당 -0.78%,
+    # 고정 대조군(-2.37%)은 이겼지만 부호가 음수였고, 랭킹 기준으로 쓰던 heat_score는
+    # 대조군 t -3.40으로 해롭다는 것이 확정됐다. research/README.md 참고.
+    # 퀄리티 전략은 손절도 보유기한도 없다 — 청산은 월별 리밸런싱이 결정한다.
+    from strategy import fundamental
     from executor.paper import sell
 
-    for strat in (contrarian, fundamental):
-        for e in strat.get_exit_candidates(today):
-            sell(e["code"], e["name"], e["qty"], e["entry_px"], e["close"],
-                 e["reason"], strat.STRATEGY)
+    for e in fundamental.get_exit_candidates(today):
+        sell(e["code"], e["name"], e["qty"], e["entry_px"], e["close"],
+             e["reason"], fundamental.STRATEGY)
 
-    # 6. 진입 후보 → 에이전트 판단 → 모의 매수
-    #    직전 거래일 신호를 오늘 시가로 체결한다 (_entry_signal_date 참고)
-    from agents.gate import decide, decide_fundamental
-    from executor.paper import buy, free_slots
+    # 6. 퀄리티 전략 월별 리밸런싱
+    #    직전 거래일이 그 달 첫 거래일일 때만 돈다. 편입 목록이 바뀐 것만 교체하므로
+    #    계속 편입되는 종목은 사고팔지 않는다 — 낮은 회전율이 이 전략의 요점이다.
+    from strategy import quality
+    from executor.paper import buy, sell
     import db.connection as db
+    import config
 
     def name_of(code):
         row = db.fetchone("SELECT name FROM instruments WHERE code=%s", (code,))
         return row["name"] if row else code
 
-    STRATEGY = contrarian.STRATEGY
-    signal_date = _entry_signal_date(today)
-    if signal_date is None:
-        print("진입 후보: 체결 가능한 직전 거래일 신호 없음 — 매수 단계 건너뜀")
-        candidates = []
+    rebal_d = _quality_rebalance_date(today)
+    if rebal_d is None:
+        print("퀄리티: 리밸런싱일 아님 - 건너뜀")
     else:
-        candidates = contrarian.get_entry_candidates(signal_date)
-        print(f"진입 후보({signal_date} 신호 → {today} 시가 체결): {len(candidates)}종목")
+        slots = config.get_setting("SLOTS")
+        targets = quality.get_targets(rebal_d, slots)
+        tgt = {t["code"] for t in targets}
+        print(f"퀄리티 리밸런싱({rebal_d} 기준 -> {today} 시가 체결): "
+              f"목표 {len(tgt)}종목")
 
-    # 슬롯이 차면 남은 후보는 게이트에 올리지 않는다. risk 에이전트가 '여유 슬롯
-    # 0개'로 반려해 주긴 하지만, 그건 산술 계산 하나를 LLM 호출로 대신하는 것이라
-    # 후보 수만큼 크레딧이 나간다 (2026-08-19: 38종목이 전부 이 사유로 반려됐다).
-    # 판단 결과는 달라지지 않는다 — 어차피 executor도 같은 조건으로 거부한다.
-    for i, c in enumerate(candidates):
-        if free_slots(STRATEGY) <= 0:
-            print(f"  슬롯 소진 — 남은 후보 {len(candidates) - i}종목 건너뜀")
-            break
-        code = c["code"]
-        gate = decide(code, signal_date, STRATEGY)
-        if gate["approved"]:
-            buy(code, name_of(code), signal_date, c["close"], c["heat_score"],
-                gate["agents"], STRATEGY)
-        else:
-            print(f"  [반려] {code}: {gate['reason']}")
+        opens = {r["code"]: float(r["o"]) for r in db.fetchall(
+            "SELECT code, o FROM stock_daily WHERE d = %s::date", (today,))}
+
+        held = db.fetchall(
+            "SELECT code, name, qty, entry_px FROM positions "
+            "WHERE strategy=%s AND mode='paper'", (quality.STRATEGY,))
+        for h in held:
+            if h["code"] in tgt or h["code"] not in opens:
+                continue
+            sell(h["code"], h["name"], float(h["qty"]), float(h["entry_px"]),
+                 opens[h["code"]], "rebalance", quality.STRATEGY,
+                 raw_px=opens[h["code"]])
+
+        for t in targets:
+            if t["code"] not in opens:
+                print(f"  [보류] {t['code']} - 오늘 시가 없음")
+                continue
+            # 손절 없음(stop_pct=0), 보유기한 없음 - 청산은 리밸런싱만 한다
+            buy(t["code"], name_of(t["code"]), rebal_d, t["close"], 0.0,
+                {"rank": quality.RANK_KIND, "score": round(t["score"], 4),
+                 "per": round(t["per"], 1), "pbr": round(t["pbr"], 2)},
+                quality.STRATEGY, fill_px=opens[t["code"]],
+                stop_pct=0.0, max_hold_days=99999)
 
     # 6-2. 펀더멘털 진입: 직전 거래일 공시를 오늘 시가로 체결
     prev_day = _prev_trading_day(today)
     if prev_day is None:
         print("펀더멘털 진입: 직전 거래일 없음 - 건너뜀")
     else:
+        from executor.paper import free_slots
         f_candidates = fundamental.get_entry_candidates(prev_day)
         print(f"펀더멘털 후보({prev_day} 공시 -> {today} 시가 체결): {len(f_candidates)}종목")
         for i, c in enumerate(f_candidates):

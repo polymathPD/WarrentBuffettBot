@@ -34,7 +34,8 @@ def _next_open(code: str, after_date: str) -> float | None:
 
 def buy(code: str, name: str, signal_date: str, close_px: float,
         heat_score: float, agents_summary: dict, strategy: str,
-        fill_px: float | None = None) -> bool:
+        fill_px: float | None = None, stop_pct: float | None = None,
+        max_hold_days: int | None = None) -> bool:
     """
     signal_date 기준 다음 거래일 시가로 매수.
     슬롯 여유 확인 후 positions에 등록. 슬롯은 전략별로 센다.
@@ -62,7 +63,13 @@ def buy(code: str, name: str, signal_date: str, close_px: float,
         return False
 
     entry_px = fill_px * (1 + config.SLIP_BPS / 10000) * (1 + config.FEE_BPS / 10000)
-    stop_px = entry_px * (1 - config.get_setting("STOP_PCT"))
+    # stop_pct=0은 '손절 없음'이다. 퀄리티 전략이 그렇다 — 검증도 손절 없이 했고,
+    # 7% 손절은 20거래일 안에 52.2%가 걸려 상승 꼬리를 잘라낸다.
+    if stop_pct is None:
+        stop_pct = config.get_setting("STOP_PCT")
+    # stop_pct=0은 '손절 없음'이다. entry_px * (1 - 0) = entry_px로 두면 손절선이
+    # 진입가와 같아져 첫 하락에 즉시 청산된다 — 정반대 동작이다.
+    stop_px = entry_px * (1 - stop_pct) if stop_pct > 0 else 0.0
 
     qty = position_qty(entry_px)
     if qty < 1:
@@ -76,7 +83,8 @@ def buy(code: str, name: str, signal_date: str, close_px: float,
            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
            ON CONFLICT (code, strategy) DO NOTHING""",
         (code, strategy, name, date.today(), entry_px, qty,
-         stop_px, config.get_setting("MAX_HOLD_DAYS"), MODE),
+         stop_px, max_hold_days if max_hold_days is not None
+         else config.get_setting("MAX_HOLD_DAYS"), MODE),
     )
     db.execute(
         """INSERT INTO trades (mode, side, code, name, qty, price, amount, strategy, agents)
@@ -89,9 +97,16 @@ def buy(code: str, name: str, signal_date: str, close_px: float,
 
 
 def sell(code: str, name: str, qty: float, entry_px: float,
-         close_px: float, reason: str, strategy: str) -> None:
-    """보유 포지션 청산"""
-    fill_px = close_px * (1 - config.SLIP_BPS / 10000) * (1 - config.FEE_BPS / 10000 - config.TAX_BPS / 10000)
+         close_px: float, reason: str, strategy: str,
+         raw_px: float | None = None) -> None:
+    """보유 포지션 청산.
+
+    raw_px: 체결 기준가를 직접 넘길 때만 쓴다. 기본은 close_px(당일 종가)인데,
+    퀄리티 전략은 백테스트가 리밸런싱일 '시가'로 팔므로 그 값을 넘겨야 한다.
+    검증한 규칙과 운용 규칙이 갈라지면 백테스트 수치가 운용을 설명하지 못한다.
+    """
+    base = raw_px if raw_px is not None else close_px
+    fill_px = base * (1 - config.SLIP_BPS / 10000) * (1 - config.FEE_BPS / 10000 - config.TAX_BPS / 10000)
     realized_pct = fill_px / entry_px - 1
 
     db.execute(
