@@ -78,6 +78,107 @@ def _quality_rebalance_date(today: str):
     return prev
 
 
+def open_job():
+    """개장 직후 리밸런싱 — 결정은 직전 거래일 데이터로, 체결은 오늘 시가 근처로.
+
+    16:10 배치에서 떼어낸 이유는 체결 시각 때문이다. 검증한 규칙이 '신호일 다음
+    거래일 시가'이고 모의투자 주문은 장중에만 체결된다. 마감 뒤에 주문을 낼 수는
+    없다.
+
+    KIS_MODE=live면 증권사에 실제 주문을 내고 잔고로 체결을 확인한다. paper면
+    DB 시뮬레이션이다. 지금까지 이 분기가 없어서 KIS_MODE는 읽히기만 하고
+    아무것도 결정하지 않았다.
+    """
+    today = date.today().strftime("%Y-%m-%d")
+    print(f"=== 개장 리밸런싱 {today} ({config.KIS_MODE}) ===")
+
+    import db.connection as db
+    from strategy import quality
+    from agents import value_trap, market_state, risk, disclosure, financials
+
+    rebal_d = _quality_rebalance_date(today)
+    if rebal_d is None:
+        print("리밸런싱일 아님 - 건너뜀")
+        return
+
+    def _op(v):
+        return {k: v.get(k) for k in ("decision", "score", "rationale", "error")}
+
+    def name_of(code):
+        row = db.fetchone("SELECT name FROM instruments WHERE code=%s", (code,))
+        return row["name"] if row else code
+
+    slots = config.get_setting("SLOTS")
+    ranked = quality.get_targets(rebal_d, slots, limit=slots * 3)
+    picked, rejected = [], []
+    for t in ranked:
+        if len(picked) >= slots:
+            break
+        v = value_trap.analyze(t["code"], rebal_d)
+        if v.get("error") or v["decision"] == "매수":
+            t["agents"] = {"value_trap": _op(v)}
+            t["metrics"] = {"랭킹": quality.RANK_KIND, "점수": round(t["score"], 4),
+                            "PER": round(t["per"], 1), "PBR": round(t["pbr"], 2)}
+            picked.append(t)
+        else:
+            rejected.append((t["code"], v["decision"], v.get("rationale", "")))
+    for code, dec, why in rejected:
+        print(f"  [반려] {code}: value_trap {dec} - {why[:60]}")
+
+    for t in picked:
+        for nm, fn in (("market_state", lambda c: market_state.analyze(c, rebal_d, quality.STRATEGY)),
+                       ("risk", lambda c: risk.analyze(c, rebal_d, quality.STRATEGY)),
+                       ("disclosure", lambda c: disclosure.analyze(c, rebal_d)),
+                       ("financials", lambda c: financials.analyze(c, rebal_d))):
+            try:
+                t["agents"][nm] = _op(fn(t["code"]))
+            except Exception as e:
+                t["agents"][nm] = {"decision": "오류", "error": str(e)[:120]}
+
+    tgt = {t["code"]: t for t in picked}
+    print(f"목표 {len(tgt)}종목 ({rebal_d} 기준)")
+
+    if config.KIS_MODE == "live":
+        from executor import live
+        snap = live.account_snapshot()
+        equity = snap["cash"] + sum(h["qty"] * h["cur_px"] for h in snap["holdings"].values())
+        print(f"  잔고: 예수금 {snap['cash']:,.0f} / 자산 {equity:,.0f}")
+        slot_value = equity / slots
+        for code, h in snap["holdings"].items():
+            if code not in tgt:
+                live.adjust(code, h["name"], 0, quality.STRATEGY, snap)
+        for code, t in tgt.items():
+            px = snap["holdings"].get(code, {}).get("cur_px") or t["close"]
+            qty = int(slot_value // px)
+            if qty < 1:
+                print(f"  [보류] {code} - 1슬롯 금액으로 1주도 못 산다")
+                continue
+            live.adjust(code, name_of(code), qty, quality.STRATEGY, snap,
+                        dict(t["agents"], _metrics=t["metrics"]))
+    else:
+        from executor.paper import adjust, current_equity
+        opens = {r["code"]: float(r["o"]) for r in db.fetchall(
+            "SELECT code, o FROM stock_daily WHERE d = %s::date AND o > 0", (today,))}
+        tgt = {c: t for c, t in tgt.items() if c in opens}
+        if not tgt:
+            print("  오늘 시가 없음 - 건너뜀")
+            return
+        equity = current_equity(quality.STRATEGY, opens)
+        slot_value = equity / slots
+        for h in db.fetchall("SELECT code, name, qty FROM positions "
+                             "WHERE strategy=%s AND mode='paper'", (quality.STRATEGY,)):
+            if h["code"] not in tgt and h["code"] in opens:
+                adjust(h["code"], h["name"], 0, opens[h["code"]], quality.STRATEGY)
+        for code, t in tgt.items():
+            qty = int(slot_value // opens[code])
+            if qty >= 1:
+                adjust(code, name_of(code), qty, opens[code], quality.STRATEGY,
+                       dict(t["agents"], _metrics=t["metrics"]))
+
+    from recorder.equity import snapshot as eq_snapshot
+    eq_snapshot(today)
+
+
 def daily_job():
     today = date.today().strftime("%Y-%m-%d")
     print(f"\n{'='*50}")
@@ -120,111 +221,9 @@ def daily_job():
         sell(e["code"], e["name"], e["qty"], e["entry_px"], e["close"],
              e["reason"], fundamental.STRATEGY)
 
-    # 6. 퀄리티 전략 월별 리밸런싱
-    #    직전 거래일이 그 달 첫 거래일일 때만 돈다.
-    #
-    #    비중까지 동일가중으로 되돌린다. 이게 이 전략의 물타기다 — 빠진 종목은
-    #    비중이 줄어드니 다시 채우려면 더 사고, 오른 종목은 덜어낸다. 별도 현금
-    #    없이도 매달 자동으로 일어난다. 명단 교체만 하면 검증한 것과 달라진다
-    #    (백테스트는 매 구간 동일가중으로 되돌린 수익률을 쓴다).
-    from strategy import quality
-    from agents import value_trap, market_state, risk, disclosure, financials
-    from executor.paper import adjust, current_equity
-
-    def _op(v):
-        return {k: v.get(k) for k in ("decision", "score", "rationale", "error")}
-
-    import db.connection as db
-    import config
-
-    def name_of(code):
-        row = db.fetchone("SELECT name FROM instruments WHERE code=%s", (code,))
-        return row["name"] if row else code
-
-    rebal_d = _quality_rebalance_date(today)
-    if rebal_d is None:
-        print("퀄리티: 리밸런싱일 아님 - 건너뜀")
-    else:
-        slots = config.get_setting("SLOTS")
-        opens = {r["code"]: float(r["o"]) for r in db.fetchall(
-            "SELECT code, o FROM stock_daily WHERE d = %s::date AND o > 0", (today,))}
-
-        # 랭킹 상위부터 가치 함정 판별을 거쳐 슬롯을 채운다. 반려되면 다음 순위로
-        # 넘어간다 — 검증은 항상 슬롯을 다 채운 상태로 쟀으므로 빈 슬롯을 두면
-        # 그것대로 검증한 것과 달라진다.
-        #
-        # 게이트는 반려만 할 수 있고 없던 종목을 넣지는 못한다. 순위(PER·PBR·ROE)는
-        # 에이전트에 넘기지 않는다 — 필터가 이미 쓴 지표를 되물으면 동어반복이다.
-        ranked = [t for t in quality.get_targets(rebal_d, slots, limit=slots * 3)
-                  if t["code"] in opens]
-        picked, rejected = [], []
-        for t in ranked:
-            if len(picked) >= slots:
-                break
-            v = value_trap.analyze(t["code"], rebal_d)
-            # 호출 실패는 '관망'이 아니라 '판단 없음'이다. 크레딧이 떨어진 날
-            # 포트폴리오가 통째로 비는 쪽이 더 나쁘므로 통과시키고 기록만 남긴다.
-            if v.get("error") or v["decision"] == "매수":
-                t["agents"] = {"value_trap": _op(v)}
-                t["metrics"] = {"랭킹": quality.RANK_KIND,
-                                "점수": round(t["score"], 4),
-                                "PER": round(t["per"], 1),
-                                "PBR": round(t["pbr"], 2)}
-                picked.append(t)
-            else:
-                rejected.append((t["code"], v["decision"], v.get("rationale", "")))
-
-        # 편입이 정해진 종목에만 나머지 에이전트 의견을 받는다. 후보 30개 전부에
-        # 물으면 호출이 150건이 된다.
-        #
-        # 이 넷은 자문이고 반려권이 없다. value_trap만 편입을 막는다.
-        #   risk        - 입력에 없는 사유로 관망을 내는 결함이 있다(UDD.html 참고).
-        #                 업종 집중 판정도 종목코드 앞 3자리를 업종으로 보는 근사다.
-        #   financials  - 이 전략의 랭킹이 이미 재무를 쓴다. 같은 숫자를 되물으면
-        #                 동어반복이라 판단이 아니라 동의만 돌아온다.
-        #   disclosure  - 공시를 읽지만 value_trap과 관점이 다르다(실적 개선 여부).
-        #   market_state- 종목이 아니라 시장 국면을 본다.
-        for t in picked:
-            for name, fn in (("market_state", lambda c: market_state.analyze(c, rebal_d, quality.STRATEGY)),
-                             ("risk", lambda c: risk.analyze(c, rebal_d, quality.STRATEGY)),
-                             ("disclosure", lambda c: disclosure.analyze(c, rebal_d)),
-                             ("financials", lambda c: financials.analyze(c, rebal_d))):
-                try:
-                    t["agents"][name] = _op(fn(t["code"]))
-                except Exception as e:
-                    t["agents"][name] = {"decision": "오류", "error": str(e)[:120]}
-
-        for code, dec, why in rejected:
-            print(f"  [반려] {code}: value_trap {dec} - {why[:60]}")
-        targets = picked
-        tgt = {t["code"]: t for t in targets}
-        print(f"퀄리티 리밸런싱({rebal_d} 기준 -> {today} 시가 체결): "
-              f"목표 {len(tgt)}종목")
-
-        if not tgt:
-            print("  목표 종목 없음 - 건너뜀")
-        else:
-            # 목표 금액은 현재 자산 기준이다. CAPITAL 고정으로 잡으면 자산이 늘어도
-            # 투입액이 그대로여서 현금 비중이 저절로 커진다.
-            equity = current_equity(quality.STRATEGY, opens)
-            slot_value = equity / slots
-            print(f"  자산 {equity:,.0f}원 / {slots}슬롯 = 슬롯당 {slot_value:,.0f}원")
-
-            held = db.fetchall(
-                "SELECT code, name, qty FROM positions WHERE strategy=%s AND mode='paper'",
-                (quality.STRATEGY,))
-            for h in held:
-                if h["code"] in tgt or h["code"] not in opens:
-                    continue
-                adjust(h["code"], h["name"], 0, opens[h["code"]], quality.STRATEGY)
-
-            for code, t in tgt.items():
-                qty = int(slot_value // opens[code])
-                if qty < 1:
-                    print(f"  [보류] {code} - 1슬롯 금액으로 1주도 못 산다")
-                    continue
-                adjust(code, name_of(code), qty, opens[code], quality.STRATEGY,
-                       dict(t["agents"], _metrics=t["metrics"]))
+    # 6. 퀄리티 리밸런싱은 여기서 하지 않는다.
+    #    체결 규칙이 '신호일 다음 거래일 시가'인데 이 배치는 16:10, 장 마감 뒤다.
+    #    open_job()이 다음 거래일 09:05에 직전 거래일 데이터로 결정하고 주문한다.
 
     # 6-2. 펀더멘털 진입: 직전 거래일 공시를 오늘 시가로 체결
     prev_day = _prev_trading_day(today)
@@ -259,13 +258,19 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--now":
         # 즉시 한 번 실행 (테스트용)
         daily_job()
+    elif len(sys.argv) > 1 and sys.argv[1] == "--open":
+        open_job()
     else:
         scheduler = BlockingScheduler(timezone="Asia/Seoul")
-        # 평일 16:10 실행
+        # 평일 16:10 — 수집·신호 계산 (장 마감 뒤)
         scheduler.add_job(daily_job, CronTrigger(
             day_of_week="mon-fri", hour=16, minute=10, timezone="Asia/Seoul"
         ))
-        print("스케줄러 시작 — 평일 16:10 자동 실행 (Ctrl+C로 종료)")
+        # 평일 09:05 — 리밸런싱 주문 (개장 직후, 장중에만 체결되므로)
+        scheduler.add_job(open_job, CronTrigger(
+            day_of_week="mon-fri", hour=9, minute=5, timezone="Asia/Seoul"
+        ))
+        print("스케줄러 시작 — 평일 09:05 리밸런싱 / 16:10 수집 (Ctrl+C로 종료)")
         try:
             scheduler.start()
         except KeyboardInterrupt:

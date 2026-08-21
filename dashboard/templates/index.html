@@ -3,8 +3,8 @@
 {% block content %}
 
 <div class="mode-tabs">
-  <a href="/?mode=paper" class="mode-tab {{ 'active' if mode == 'paper' else '' }}">모의</a>
-  <a href="/?mode=live" class="mode-tab mode-tab-live {{ 'active' if mode == 'live' else '' }}">실전</a>
+  <a href="/?mode=paper" class="mode-tab {{ 'active' if mode == 'paper' else '' }}">시뮬레이션<small>주문 없음</small></a>
+  <a href="/?mode=live" class="mode-tab mode-tab-live {{ 'active' if mode == 'live' else '' }}">계좌<small>{{ account_label }}</small></a>
 </div>
 
 <div class="stat-grid">

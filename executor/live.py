@@ -5,6 +5,7 @@ KIS_MOCK=true 이면 모의투자 서버, false 이면 실전 서버
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+import json
 import time
 from datetime import date
 import requests
@@ -205,7 +206,7 @@ def buy_and_record(code: str, name: str, strategy: str,
         """INSERT INTO trades (mode, side, code, name, qty, price, amount, strategy, agents)
            VALUES (%s,'buy',%s,%s,%s,%s,%s,%s,%s::jsonb)""",
         (MODE, code, name, qty, entry_px, entry_px * qty,
-         strategy, str(agents_summary or {}).replace("'", '"')),
+         strategy, json.dumps(agents_summary or {}, ensure_ascii=False)),
     )
     print(f"[실전 매수] {code} {name}  진입가={entry_px:,.0f}  손절={stop_px:,.0f}")
     return True
@@ -247,3 +248,103 @@ def sell_and_record(code: str, name: str, qty: float, entry_px: float,
     )
     pnl = "+" if realized_pct >= 0 else ""
     print(f"[실전 매도(근사)] {code} {name}  {pnl}{realized_pct*100:.2f}%  사유={reason}")
+
+
+# ── 안전장치 ────────────────────────────────────────────────────────────
+def guard() -> None:
+    """실계좌 주문을 막는다.
+
+    KIS_MOCK=false는 진짜 돈이다. 설정 하나가 잘못 켜져서 주문이 나가는 일이
+    없도록, 실전 서버로는 settings의 LIVE_ENABLED가 명시적으로 켜져 있을 때만
+    보낸다. 기본값은 꺼짐이다.
+    """
+    if _IS_MOCK:
+        return
+    row = db.fetchone("SELECT value FROM settings WHERE key='LIVE_ENABLED'")
+    if not row or str(row["value"]).lower() not in ("true", "1", "on"):
+        raise RuntimeError(
+            "실전 서버(KIS_MOCK=false)인데 LIVE_ENABLED가 꺼져 있습니다. "
+            "실계좌 주문을 보내지 않습니다."
+        )
+
+
+def account_snapshot() -> dict:
+    """증권사가 계산한 잔고. 우리가 더하고 빼지 않는다.
+
+    직접 장부를 굴리면 어긋난다 — 2026-08-21에 기록 없이 38주가 생기고 현금이
+    97만원 부풀려진 적이 있다. 잔고를 조회하면 그런 종류의 불일치가 없다.
+    """
+    b = get_balance()
+    if b.get("rt_cd") != "0":
+        raise RuntimeError(f"잔고 조회 실패: {b.get('msg1')}")
+    holdings = {}
+    for it in b.get("output1", []):
+        qty = float(_field(it, "hldg_qty", it.get("pdno", "?")))
+        if qty <= 0:
+            continue
+        holdings[it["pdno"]] = {
+            "name": it.get("prdt_name", it["pdno"]),
+            "qty": qty,
+            "avg_px": float(_field(it, "pchs_avg_pric", it["pdno"])),
+            "cur_px": float(_field(it, "prpr", it["pdno"])),
+        }
+    summary = (b.get("output2") or [{}])[0]
+    cash = float(summary.get("dnca_tot_amt") or 0)
+    return {"holdings": holdings, "cash": cash, "raw_summary": summary}
+
+
+def adjust(code: str, name: str, target_qty: int, strategy: str,
+           snapshot: dict, agents_summary: dict | None = None) -> None:
+    """보유 수량을 target_qty로 맞춘다. 차이만 주문한다.
+
+    체결가·수량은 주문 뒤 잔고에서 다시 읽는다. 주문을 넣었다고 체결된 것이
+    아니고, 부분 체결이면 우리가 계산한 수량과 실제가 달라진다.
+    """
+    guard()
+    cur = snapshot["holdings"].get(code, {}).get("qty", 0.0)
+    delta = int(target_qty - cur)
+    if delta == 0:
+        return
+
+    side = "buy" if delta > 0 else "sell"
+    result = (buy if delta > 0 else sell)(code, abs(delta))
+    if result.get("rt_cd") != "0":
+        print(f"[{MODE} {side} 실패] {code} {name} - {result.get('msg1')}")
+        return
+
+    time.sleep(2)  # 체결 반영 대기
+    after = _find_holding(code)
+    new_qty = float(_field(after, "hldg_qty", code)) if after else 0.0
+    filled = new_qty - cur
+    if filled == 0:
+        print(f"[{MODE} {side} 미체결] {code} {name} - 잔고 변화 없음")
+        return
+    px = (float(_field(after, "pchs_avg_pric", code)) if after
+          else snapshot["holdings"].get(code, {}).get("cur_px", 0.0))
+
+    if new_qty > 0:
+        db.execute(
+            """INSERT INTO positions (code, strategy, name, entry_date, entry_px, qty,
+                                      stop_px, max_hold_days, mode)
+               VALUES (%s,%s,%s,%s,%s,%s,0,99999,%s)
+               ON CONFLICT (code, strategy) DO UPDATE
+                 SET qty = EXCLUDED.qty, entry_px = EXCLUDED.entry_px""",
+            (code, strategy, name, date.today(), px, new_qty, MODE))
+    else:
+        db.execute("DELETE FROM positions WHERE code=%s AND strategy=%s AND mode=%s",
+                   (code, strategy, MODE))
+
+    if filled > 0:
+        db.execute(
+            """INSERT INTO trades (mode, side, code, name, qty, price, amount, strategy, agents)
+               VALUES (%s,'buy',%s,%s,%s,%s,%s,%s,%s::jsonb)""",
+            (MODE, code, name, filled, px, px * filled, strategy,
+             json.dumps(agents_summary or {}, ensure_ascii=False)))
+    else:
+        db.execute(
+            """INSERT INTO trades (mode, side, code, name, qty, price, amount, strategy,
+                                   exit_reason)
+               VALUES (%s,'sell',%s,%s,%s,%s,%s,%s,'rebalance')""",
+            (MODE, code, name, -filled, px, px * -filled, strategy))
+    print(f"[{MODE} {side}] {code} {name}  {filled:+.0f}주 @ {px:,.0f}"
+          + (f"  (주문 {delta:+d}주, 부분체결)" if filled != delta else ""))

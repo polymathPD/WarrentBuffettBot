@@ -26,6 +26,14 @@ app.mount(
 # CSS 주소에 파일 변경시각을 붙인다. 주소가 그대로면 브라우저가 재배포를 알아채지
 # 못한다 — 모바일 Safari가 옛 style.css를 계속 써서 상단 메뉴가 사라진 채로 남았고,
 # 화면만 보고는 배포가 안 된 것인지 CSS가 틀린 것인지 구분할 수 없었다.
+# 화면의 '모의/실전'이 무엇을 뜻하는지 라벨만으로는 알 수 없었다. paper는 우리 DB
+# 안의 가상 체결이고 주문이 아무 데도 나가지 않는데, 증권사 모의계좌로 오해하기 쉽다.
+# 실제로 그렇게 읽혔다(2026-08-21). 어느 쪽인지 화면에 적는다.
+templates.env.globals["account_label"] = (
+    "모의투자 계좌" if os.environ.get("KIS_MOCK", "true").lower() == "true"
+    else "실계좌 (실제 자금)"
+)
+
 _CSS = os.path.join(os.path.dirname(__file__), "static", "css", "style.css")
 try:
     templates.env.globals["css_version"] = int(os.path.getmtime(_CSS))

@@ -679,3 +679,7 @@ svg.alloc-bar { width: 100%; height: 28px; display: block; }
   display: inline-block; margin-right: var(--sp-2);
   color: var(--text-strong); font-variant-numeric: tabular-nums;
 }
+
+/* 모드 탭: 무엇을 보고 있는지 라벨만으로 알 수 있게 */
+.mode-tab small { display: block; font-size: .72em; color: var(--text-muted); font-weight: 400; margin-top: 1px; }
+.mode-tab.active small { color: inherit; opacity: .75; }
