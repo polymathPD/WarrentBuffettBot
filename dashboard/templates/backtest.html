@@ -10,9 +10,39 @@
 </div>
 {% else %}
 
-<div class="mode-tabs">
-  {% for r in runs %}
-  <a href="/backtest?run={{ r.id }}" class="mode-tab {{ 'active' if selected and r.id == selected.id else '' }}">{{ r.strategy }}</a>
+<div class="run-picker">
+  {% for sec in sections %}
+  <details class="run-group" {{ 'open' if sec.open else '' }}>
+    <summary>
+      {{ sec.label }}{% if sec.is_live %} <span class="badge-live">현재 운용</span>{% endif %}
+      <span class="run-count">{{ sec.n }}개</span>
+    </summary>
+    <div class="mode-tabs">
+      {% for r in sec.recent %}
+      <a href="/backtest?run={{ r.id }}" class="mode-tab {{ 'active' if selected and r.id == selected.id else '' }}">{{ r.strategy }}</a>
+      {% endfor %}
+    </div>
+    {% if sec.older %}
+    <details class="run-biased">
+      <summary>이전 측정 {{ sec.older|length }}개</summary>
+      <div class="mode-tabs">
+        {% for r in sec.older %}
+        <a href="/backtest?run={{ r.id }}" class="mode-tab {{ 'active' if selected and r.id == selected.id else '' }}">{{ r.strategy }}</a>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+    {% if sec.biased %}
+    <details class="run-biased">
+      <summary>생존 편향본 {{ sec.biased|length }}개 — 상장폐지 종목이 빠져 수치가 부풀려져 있습니다</summary>
+      <div class="mode-tabs">
+        {% for r in sec.biased %}
+        <a href="/backtest?run={{ r.id }}" class="mode-tab {{ 'active' if selected and r.id == selected.id else '' }}">{{ r.strategy }}</a>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+  </details>
   {% endfor %}
 </div>
 
@@ -192,7 +222,7 @@
       </tr>
     </thead>
     <tbody>
-      {% for r in runs %}
+      {% for sec in sections %}{% for r in sec.trusted + sec.biased %}
       <tr class="{{ 'is-selected-row' if selected and r.id == selected.id else '' }}">
         <td><a href="/backtest?run={{ r.id }}"><code>{{ r.strategy }}</code></a></td>
         <td class="text-muted">{{ r.start_d }} ~ {{ r.end_d }}</td>
@@ -205,7 +235,7 @@
         <td>{{ "%+.2f"|format(r.summary.t_val) }}</td>
         <td><span class="verdict verdict-{{ r.verdict.kind }}">{{ r.verdict.text }}</span></td>
       </tr>
-      {% endfor %}
+      {% endfor %}{% endfor %}
     </tbody>
   </table>
   </div>

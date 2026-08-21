@@ -23,6 +23,15 @@ app.mount(
     name="static",
 )
 
+# CSS 주소에 파일 변경시각을 붙인다. 주소가 그대로면 브라우저가 재배포를 알아채지
+# 못한다 — 모바일 Safari가 옛 style.css를 계속 써서 상단 메뉴가 사라진 채로 남았고,
+# 화면만 보고는 배포가 안 된 것인지 CSS가 틀린 것인지 구분할 수 없었다.
+_CSS = os.path.join(os.path.dirname(__file__), "static", "css", "style.css")
+try:
+    templates.env.globals["css_version"] = int(os.path.getmtime(_CSS))
+except OSError:
+    templates.env.globals["css_version"] = 0
+
 
 def agent_alerts() -> list[dict]:
     """최근 24시간의 에이전트 호출 실패를 사유별로 묶는다.
@@ -315,21 +324,43 @@ SUMMARY_LABELS = {
 # 백테스트 실행 하나는 "어떤 knob 조합을 어느 구간에 돌렸나"다. 저장 이름만으로는
 # 그걸 알 수 없어서(credit_rank_no52w_exit 같은 이름이 무슨 뜻인지 화면에 없었다)
 # params JSONB를 읽을 수 있는 문장으로 풀어 준다.
-KNOB_ORDER = ["rank_col", "slots", "pos52w_filter", "marcap_filter", "stop_pct",
-              "max_hold_days", "min_hold_days", "exit_rank_pct", "exit_cols",
-              "pbr_applied", "pbr_limits", "selection", "windows"]
+KNOB_ORDER = ["kind", "rank_col", "rebalance", "slots", "pos52w_filter",
+              "marcap_filter", "point_in_time_universe", "max_debt_ratio",
+              "stop_pct", "max_hold_days", "min_hold_days", "exit_rank_pct",
+              "exit_cols", "pbr_applied", "pbr_limits", "kind_pool",
+              "selection", "windows"]
 KNOB_LABELS = {
-    "rank_col": "랭킹", "slots": "슬롯", "pos52w_filter": "52주 하위 30% 필터",
-    "marcap_filter": "시가총액 하한", "stop_pct": "손절", "max_hold_days": "최대 보유",
+    "kind": "점수", "rank_col": "랭킹", "rebalance": "리밸런싱",
+    "slots": "슬롯", "pos52w_filter": "52주 하위 30% 필터",
+    "marcap_filter": "시가총액 하한", "point_in_time_universe": "시점별 유니버스",
+    "max_debt_ratio": "부채비율 상한",
+    "stop_pct": "손절", "max_hold_days": "최대 보유",
     "min_hold_days": "최소 보유", "exit_rank_pct": "신호 청산", "exit_cols": "청산 감시 지표",
-    "pbr_limits": "PBR 후보", "selection": "창별 선택", "windows": "워크포워드 창",
+    "pbr_limits": "PBR 후보", "kind_pool": "점수 후보",
+    "selection": "창별 선택", "windows": "워크포워드 창",
     "pbr_applied": "PBR 적용",
 }
+# 퀄리티 전략의 점수 이름. 화면에 quality/value로 뜨면 무슨 뜻인지 알 수 없다.
+KIND_LABELS = {
+    "all": "전 종목 (시장)", "filtered": "필터만 (랭킹 없음)",
+    "quality": "퀄리티 (ROE·이익률·부채)", "value": "가치 (PER·PBR)",
+    "combo": "퀄리티+가치 반반",
+}
 # 목록에서 조합을 한눈에 구분하는 데 실제로 쓰이는 knob (전부 늘어놓으면 못 읽는다)
-KNOB_KEY = ["rank_col", "slots", "pos52w_filter", "exit_rank_pct"]
+KNOB_KEY = ["kind", "rank_col", "rebalance", "slots", "pos52w_filter", "exit_rank_pct"]
 
 
 def _knob_value(key, value, params):
+    # None은 '그 규칙을 안 쓴다'는 뜻이다. 퀄리티 전략은 손절이 없어 stop_pct가
+    # null인데, 이걸 float()에 넣어 백테스트 탭 전체가 500으로 죽어 있었다.
+    if value is None:
+        return {"stop_pct": "없음", "slots": "전부", "exit_rank_pct": "없음"}.get(key, "없음")
+    if key == "kind":
+        return KIND_LABELS.get(value, value)
+    if key == "point_in_time_universe":
+        return "켬 (상장폐지 포함)" if value else "끔 (생존 편향)"
+    if key == "max_debt_ratio":
+        return f"{float(value) * 100:.0f}%"
     if key == "rank_col":
         direction = "오름차순" if params.get("ascending", True) else "내림차순"
         return f"{value} {direction}"
@@ -707,6 +738,63 @@ def _backtest_curve(rows):
     return chart, round(max_dd, 1)
 
 
+# 실행이 123개까지 늘면서 목록이 화면을 덮었다. 지금 굴리는 전략의 결과를 보려고
+# 한참 스크롤해야 했다. 전략 계열로 묶고, 운용 중인 계열을 맨 앞에 펼쳐 둔다.
+#
+# 생존 편향이 있던 실행(시점별 유니버지 이전)은 숫자가 부풀려져 있다. 지우지는
+# 않되 따로 접어 둔다 — research/README.md에 무엇이 어떻게 바뀌었는지 남아 있다.
+LIVE_FAMILY = "quality"
+RUNS_VISIBLE = 12     # 계열마다 이만큼만 펼치고 나머지는 접는다
+FAMILIES = [
+    ("quality", "퀄리티/가치", ("q2_", "q3_", "quality")),
+    ("contrarian", "역발상", ("pit_", "rerun_", "contrarian", "credit_rank",
+                              "factor_", "pool_")),
+    ("fundamental", "펀더멘털", ("fundamental",)),
+]
+
+
+def _family(strategy: str) -> tuple[str, str]:
+    for key, label, prefixes in FAMILIES:
+        if strategy.startswith(prefixes):
+            return key, label
+    return "other", "기타"
+
+
+def _trusted(params) -> bool:
+    """시점별 유니버스로 잰 실행인가. 아니면 상장폐지 종목이 빠져 수치가 부풀려져 있다."""
+    return bool((params or {}).get("point_in_time_universe"))
+
+
+def _run_sections(runs, selected):
+    """전략 계열 -> {신뢰, 편향} 으로 묶는다. 운용 중인 계열이 맨 앞."""
+    buckets = {}
+    for r in runs:
+        key, label = _family(r["strategy"])
+        b = buckets.setdefault(key, {"key": key, "label": label,
+                                     "trusted": [], "biased": []})
+        b["trusted" if _trusted(r["params"]) else "biased"].append(r)
+
+    sel_key = _family(selected["strategy"])[0] if selected else LIVE_FAMILY
+    order = {LIVE_FAMILY: 0, sel_key: 1}
+    out = sorted(buckets.values(), key=lambda b: (order.get(b["key"], 2), b["label"]))
+    for b in out:
+        # 최신순. 알파벳순이면 q2_가 q3_보다 앞에 와서 옛 측정이 먼저 보인다.
+        b["trusted"].sort(key=lambda r: r["ts"], reverse=True)
+        b["biased"].sort(key=lambda r: r["ts"], reverse=True)
+        b["n"] = len(b["trusted"]) + len(b["biased"])
+        # 최근 것만 펼치고 나머지는 접는다. 56개를 다 늘어놓으면 화면을 덮는다.
+        sel_id = selected["id"] if selected else None
+        recent, older = b["trusted"][:RUNS_VISIBLE], b["trusted"][RUNS_VISIBLE:]
+        if sel_id is not None and any(r["id"] == sel_id for r in older):
+            hit = next(r for r in older if r["id"] == sel_id)
+            older.remove(hit)
+            recent.append(hit)
+        b["recent"], b["older"] = recent, older
+        b["open"] = b["key"] in (sel_key, LIVE_FAMILY)
+        b["is_live"] = b["key"] == LIVE_FAMILY
+    return out
+
+
 @app.get("/backtest")
 def backtest_page(request: Request, run: int = 0, reason: str = "", worst: str = ""):
     runs = [dict(r) for r in db.fetchall("""
@@ -719,7 +807,11 @@ def backtest_page(request: Request, run: int = 0, reason: str = "", worst: str =
 
     selected = next((r for r in runs if r["id"] == run), None)
     if selected is None and runs:
-        selected = runs[0]
+        # 알파벳순 첫 실행(q2_all_all_검증)이 잡히던 자리다. 지금 굴리는 전략의
+        # 최신 측정을 먼저 보여준다.
+        live = [r for r in runs
+                if _family(r["strategy"])[0] == LIVE_FAMILY and _trusted(r["params"])]
+        selected = max(live or runs, key=lambda r: r["ts"])
 
     # 같은 knob 조합을 여러 구간에 돌린 실행을 묶어 훈련/검증 대조로 읽는다.
     #
@@ -810,6 +902,8 @@ def backtest_page(request: Request, run: int = 0, reason: str = "", worst: str =
         "rank_factors": _rank_factor_table(runs),
         "walkforward": _walkforward_rows(runs),
         "multiple_pct": _multiple_comparison_pct(len(runs)),
+        "sections": _run_sections(runs, selected),
+        "selected_family": _family(selected["strategy"])[1] if selected else "",
     })
 
 
