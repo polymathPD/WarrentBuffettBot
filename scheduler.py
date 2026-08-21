@@ -96,10 +96,33 @@ def open_job():
     from strategy import quality
     from agents import value_trap, market_state, risk, disclosure, financials
 
+    # 계좌가 비어 있으면 달력을 기다리지 않는다. 월 첫 거래일 규칙은 회전율을
+    # 낮추려는 것이지 빈 계좌를 놀리려는 게 아니다 — 전략을 새로 붙이거나 계좌를
+    # 옮긴 직후에는 다음 리밸런싱까지 몇 주가 빌 수 있다.
+    snap = None
+    if config.KIS_MODE == "live":
+        from executor import live
+        try:
+            snap = live.account_snapshot()
+        except Exception as e:
+            print(f"잔고 조회 실패 - 건너뜀: {type(e).__name__} {str(e)[:100]}")
+            return
+        empty = not snap["holdings"]
+    else:
+        empty = not db.fetchone(
+            "SELECT 1 FROM positions WHERE strategy=%s AND mode='paper' LIMIT 1",
+            (quality.STRATEGY,))
+
     rebal_d = _quality_rebalance_date(today)
     if rebal_d is None:
-        print("리밸런싱일 아님 - 건너뜀")
-        return
+        if not empty:
+            print("리밸런싱일 아님 - 건너뜀")
+            return
+        rebal_d = _prev_trading_day(today)
+        if rebal_d is None:
+            print("직전 거래일 없음 - 건너뜀")
+            return
+        print(f"리밸런싱일은 아니지만 보유가 없어 최초 편입을 진행한다 ({rebal_d} 기준)")
 
     def _op(v):
         return {k: v.get(k) for k in ("decision", "score", "rationale", "error")}
@@ -140,7 +163,6 @@ def open_job():
 
     if config.KIS_MODE == "live":
         from executor import live
-        snap = live.account_snapshot()
         equity = snap["cash"] + sum(h["qty"] * h["cur_px"] for h in snap["holdings"].values())
         print(f"  잔고: 예수금 {snap['cash']:,.0f} / 자산 {equity:,.0f}")
         slot_value = equity / slots
