@@ -128,6 +128,7 @@ def daily_job():
     #    없이도 매달 자동으로 일어난다. 명단 교체만 하면 검증한 것과 달라진다
     #    (백테스트는 매 구간 동일가중으로 되돌린 수익률을 쓴다).
     from strategy import quality
+    from agents import value_trap
     from executor.paper import adjust, current_equity
     import db.connection as db
     import config
@@ -141,10 +142,36 @@ def daily_job():
         print("퀄리티: 리밸런싱일 아님 - 건너뜀")
     else:
         slots = config.get_setting("SLOTS")
-        targets = quality.get_targets(rebal_d, slots)
         opens = {r["code"]: float(r["o"]) for r in db.fetchall(
             "SELECT code, o FROM stock_daily WHERE d = %s::date AND o > 0", (today,))}
-        targets = [t for t in targets if t["code"] in opens]
+
+        # 랭킹 상위부터 가치 함정 판별을 거쳐 슬롯을 채운다. 반려되면 다음 순위로
+        # 넘어간다 — 검증은 항상 슬롯을 다 채운 상태로 쟀으므로 빈 슬롯을 두면
+        # 그것대로 검증한 것과 달라진다.
+        #
+        # 게이트는 반려만 할 수 있고 없던 종목을 넣지는 못한다. 순위(PER·PBR·ROE)는
+        # 에이전트에 넘기지 않는다 — 필터가 이미 쓴 지표를 되물으면 동어반복이다.
+        ranked = [t for t in quality.get_targets(rebal_d, slots, limit=slots * 3)
+                  if t["code"] in opens]
+        picked, rejected = [], []
+        for t in ranked:
+            if len(picked) >= slots:
+                break
+            v = value_trap.analyze(t["code"], rebal_d)
+            # 호출 실패는 '관망'이 아니라 '판단 없음'이다. 크레딧이 떨어진 날
+            # 포트폴리오가 통째로 비는 쪽이 더 나쁘므로 통과시키고 기록만 남긴다.
+            if v.get("error") or v["decision"] == "매수":
+                t["agents"] = {"value_trap": {k: v.get(k) for k in
+                                              ("decision", "score", "rationale", "error")},
+                               "rank": quality.RANK_KIND, "score": round(t["score"], 4),
+                               "per": round(t["per"], 1), "pbr": round(t["pbr"], 2)}
+                picked.append(t)
+            else:
+                rejected.append((t["code"], v["decision"], v.get("rationale", "")))
+
+        for code, dec, why in rejected:
+            print(f"  [반려] {code}: value_trap {dec} - {why[:60]}")
+        targets = picked
         tgt = {t["code"]: t for t in targets}
         print(f"퀄리티 리밸런싱({rebal_d} 기준 -> {today} 시가 체결): "
               f"목표 {len(tgt)}종목")
@@ -172,8 +199,7 @@ def daily_job():
                     print(f"  [보류] {code} - 1슬롯 금액으로 1주도 못 산다")
                     continue
                 adjust(code, name_of(code), qty, opens[code], quality.STRATEGY,
-                       {"rank": quality.RANK_KIND, "score": round(t["score"], 4),
-                        "per": round(t["per"], 1), "pbr": round(t["pbr"], 2)})
+                       t["agents"])
 
     # 6-2. 펀더멘털 진입: 직전 거래일 공시를 오늘 시가로 체결
     prev_day = _prev_trading_day(today)

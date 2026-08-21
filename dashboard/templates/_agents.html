@@ -1,0 +1,27 @@
+{% macro agent_cell(agents) -%}
+{% if agents %}
+  {% set opinions = [] %}{% set metrics = [] %}
+  {% for name, a in agents.items() %}
+    {% if a is mapping and a.decision %}{% set _ = opinions.append((name, a)) %}
+    {% elif a is not mapping %}{% set _ = metrics.append((name, a)) %}{% endif %}
+  {% endfor %}
+  {% if opinions %}
+  <details class="agents">
+    <summary>{{ opinions|length }}개 에이전트</summary>
+    <dl class="agents-list">
+      {% for name, a in opinions %}
+      <dt>{{ name }}</dt>
+      <dd>
+        <span class="badge {% if a.decision == '매수' %}badge-buy{% else %}badge-sell{% endif %}">{{ a.decision }}</span>
+        <span class="text-muted">확신 {{ a.score }}</span>
+        {% if metrics %}<span class="text-muted"> · {% for k, v in metrics %}{{ k }} {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</span>{% endif %}
+        <div>{{ a.rationale or a.error }}</div>
+      </dd>
+      {% endfor %}
+    </dl>
+  </details>
+  {% elif metrics %}
+  <small class="text-muted">{% for k, v in metrics %}{{ k }} {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</small>
+  {% else %}<small class="text-muted">-</small>{% endif %}
+{% else %}<small class="text-muted">-</small>{% endif %}
+{%- endmacro %}

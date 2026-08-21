@@ -217,14 +217,23 @@ def _allocation_data(positions, cash):
 @app.get("/")
 def index(request: Request, mode: str = "paper"):
     mode = mode if mode in ("paper", "live") else "paper"
+    # 진입할 때 에이전트가 무슨 판단을 했는지 함께 본다. 지금까지는 거래내역에만
+    # 있어서 '왜 이걸 들고 있는지'를 보려면 다른 화면으로 가야 했다.
     positions = db.fetchall("""
         SELECT p.code, p.name, p.entry_date, p.entry_px, p.qty, p.stop_px,
                sd.c AS current_px,
                ROUND((sd.c / p.entry_px - 1) * 100, 2) AS pct,
-               ROUND((sd.c - p.entry_px) * p.qty, 0) AS unrealized
+               ROUND((sd.c - p.entry_px) * p.qty, 0) AS unrealized,
+               t.agents
         FROM positions p
         LEFT JOIN stock_daily sd ON sd.code = p.code
           AND sd.d = (SELECT MAX(d) FROM stock_daily WHERE code = p.code)
+        LEFT JOIN LATERAL (
+            SELECT agents FROM trades
+             WHERE code = p.code AND strategy = p.strategy AND mode = p.mode
+               AND side = 'buy'
+             ORDER BY ts DESC LIMIT 1
+        ) t ON TRUE
         WHERE p.mode = %s
         ORDER BY p.entry_date DESC
     """, (mode,))

@@ -136,7 +136,8 @@ def marcap_on(d: str) -> pd.Series:
     return pd.Series({r["code"]: float(r["marcap"]) for r in rows})
 
 
-def get_targets(target_date: str, slots: int, kind: str = RANK_KIND) -> list[dict]:
+def get_targets(target_date: str, slots: int, kind: str = RANK_KIND,
+                limit: int | None = None) -> list[dict]:
     """리밸런싱 목표 편입 종목. 점수 높은 순 slots개.
 
     백테스트(research/quality_backtest.py)와 같은 함수를 쓴다. 다만 보통주·거래대금
@@ -158,7 +159,9 @@ def get_targets(target_date: str, slots: int, kind: str = RANK_KIND) -> list[dic
     if pool.empty:
         return []
 
-    pool = pool.assign(sc=score(pool, kind)).nlargest(slots, "sc")
+    # limit을 주면 슬롯보다 많이 돌려준다. 게이트가 일부를 반려해도 다음 순위로
+    # 슬롯을 채우기 위해서다 — 검증은 항상 슬롯을 다 채운 상태로 쟀다.
+    pool = pool.assign(sc=score(pool, kind)).nlargest(limit or slots, "sc")
     px = {r["code"]: float(r["c"]) for r in db.fetchall(
         "SELECT code, c FROM stock_daily WHERE code = ANY(%s) AND d = %s::date",
         (list(pool["code"]), target_date))}

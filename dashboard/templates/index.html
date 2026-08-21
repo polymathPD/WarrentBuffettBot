@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_agents.html" import agent_cell %}
 {% block content %}
 
 <div class="mode-tabs">
@@ -94,7 +95,7 @@
       <tr>
         <th>종목코드</th><th>종목명</th><th>진입가</th>
         <th>현재가</th><th>수익률</th><th>평가손익</th>
-        <th>진입일</th><th>손절가</th>
+        <th>진입일</th><th>손절가</th><th>진입 판단</th>
       </tr>
     </thead>
     <tbody>
@@ -111,7 +112,8 @@
           {% if p.unrealized %}{% if p.unrealized >= 0 %}+{% endif %}{{ "{:,.0f}".format(p.unrealized) }}{% else %}-{% endif %}
         </td>
         <td>{{ p.entry_date }}</td>
-        <td class="text-loss">{{ "{:,.0f}".format(p.stop_px) }}</td>
+        <td class="text-loss">{{ "{:,.0f}".format(p.stop_px) if p.stop_px else "없음" }}</td>
+        <td>{{ agent_cell(p.agents) }}</td>
       </tr>
       {% endfor %}
     </tbody>

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_agents.html" import agent_cell %}
 {% block content %}
 
 <div class="mode-tabs">
@@ -72,23 +73,7 @@
         </td>
         <td><small>{{ t.exit_reason or "-" }}</small></td>
         <td>
-          {% if t.agents %}
-          <details class="agents">
-            <summary>{{ t.agents | length }}개 에이전트</summary>
-            <dl class="agents-list">
-              {% for name, a in t.agents.items() %}
-              <dt>{{ name }}</dt>
-              <dd>
-                <span class="badge {% if a.decision == '매수' %}badge-buy{% else %}badge-sell{% endif %}">{{ a.decision }}</span>
-                <span class="text-muted">확신 {{ a.score }}</span>
-                <div>{{ a.rationale }}</div>
-              </dd>
-              {% endfor %}
-            </dl>
-          </details>
-          {% else %}
-          <small class="text-muted">-</small>
-          {% endif %}
+          {{ agent_cell(t.agents) }}
         </td>
       </tr>
       {% endfor %}
