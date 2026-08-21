@@ -14,7 +14,9 @@ import config
 from executor.sizing import position_qty
 from executor.guard import already_entered
 
-MODE = "live"
+# 모의투자 계좌와 실계좌를 같은 모드로 적으면 나중에 KIS_MOCK을 끄는 순간
+# 두 계좌의 거래가 한 줄에 섞인다. 수익률도 자산곡선도 의미를 잃는다.
+MODE = "live" if os.environ.get("KIS_MOCK", "true").lower() == "true" else "real"
 
 _MOCK_BASE = "https://openapivts.koreainvestment.com:29443"
 _LIVE_BASE = "https://openapi.koreainvestment.com:9443"

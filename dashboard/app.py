@@ -29,6 +29,8 @@ app.mount(
 # 화면의 '모의/실전'이 무엇을 뜻하는지 라벨만으로는 알 수 없었다. paper는 우리 DB
 # 안의 가상 체결이고 주문이 아무 데도 나가지 않는데, 증권사 모의계좌로 오해하기 쉽다.
 # 실제로 그렇게 읽혔다(2026-08-21). 어느 쪽인지 화면에 적는다.
+MODES = ("paper", "live", "real")
+
 templates.env.globals["account_label"] = (
     "모의투자 계좌" if os.environ.get("KIS_MOCK", "true").lower() == "true"
     else "실계좌 (실제 자금)"
@@ -224,7 +226,7 @@ def _allocation_data(positions, cash):
 
 @app.get("/")
 def index(request: Request, mode: str = "paper"):
-    mode = mode if mode in ("paper", "live") else "paper"
+    mode = mode if mode in MODES else "paper"
     # 진입할 때 에이전트가 무슨 판단을 했는지 함께 본다. 지금까지는 거래내역에만
     # 있어서 '왜 이걸 들고 있는지'를 보려면 다른 화면으로 가야 했다.
     positions = db.fetchall("""
@@ -284,7 +286,7 @@ TRADE_LIMIT = 200
 @app.get("/trades")
 def trades_page(request: Request, mode: str = "paper", days: str = "30",
                 side: str = "", reason: str = ""):
-    mode = mode if mode in ("paper", "live") else "paper"
+    mode = mode if mode in MODES else "paper"
     days = days if days in TRADE_DAYS else "30"
     side = side if side in ("buy", "sell") else ""
 

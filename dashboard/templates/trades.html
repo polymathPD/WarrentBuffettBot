@@ -4,7 +4,8 @@
 
 <div class="mode-tabs">
   <a href="/trades?mode=paper" class="mode-tab {{ 'active' if mode == 'paper' else '' }}">시뮬레이션<small>주문 없음</small></a>
-  <a href="/trades?mode=live" class="mode-tab mode-tab-live {{ 'active' if mode == 'live' else '' }}">계좌<small>{{ account_label }}</small></a>
+  <a href="/trades?mode=live" class="mode-tab {{ 'active' if mode == 'live' else '' }}">계좌<small>모의투자</small></a>
+  <a href="/trades?mode=real" class="mode-tab mode-tab-live {{ 'active' if mode == 'real' else '' }}">계좌<small>실전계좌</small></a>
 </div>
 
 <form class="filter-row" method="get" action="/trades">
