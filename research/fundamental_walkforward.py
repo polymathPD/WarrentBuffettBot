@@ -150,7 +150,9 @@ def main():
             save_run(strategy, WINDOWS[0][2], WINDOWS[-1][3],
                      {"slots": SLOTS, "pbr_applied": pbr_applied,
                       "pbr_limits": [str(x) for x in PBR_LIMITS],
-                      "marcap_filter": MIN_MARCAP, "windows": len(WINDOWS),
+                      # 시총 하한은 끄고 돌린다(get_entry_candidates(apply_marcap=False)). FDR은 현재
+                      # 시총만 주므로 과거 시점에 적용하면 상장폐지 종목이 통째로 빠진다.
+                      "marcap_filter": False, "windows": len(WINDOWS),
                       "selection": "학습 구간 거래당 평균 최대" if pbr_applied else "PBR 미적용 고정"},
                      s,
                      [{"code": t["code"],

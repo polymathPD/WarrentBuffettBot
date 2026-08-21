@@ -761,8 +761,14 @@ def _family(strategy: str) -> tuple[str, str]:
 
 
 def _trusted(params) -> bool:
-    """시점별 유니버스로 잰 실행인가. 아니면 상장폐지 종목이 빠져 수치가 부풀려져 있다."""
-    return bool((params or {}).get("point_in_time_universe"))
+    """상장폐지 종목이 빠지지 않은 실행인가.
+
+    두 경로가 안전하다 — 시점별 시가총액으로 거르거나(point_in_time_universe),
+    시총 하한을 아예 끄거나(marcap_filter=false). 위험한 것은 FDR의 '현재' 시총으로
+    과거를 거르는 경우뿐이다. 펀더멘털 백테스트는 처음부터 하한을 꺼두고 돌렸다.
+    """
+    p = params or {}
+    return bool(p.get("point_in_time_universe")) or p.get("marcap_filter") is False
 
 
 def _run_sections(runs, selected):
