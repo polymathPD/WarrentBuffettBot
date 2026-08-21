@@ -30,10 +30,60 @@ METRICS = ["heat_score", "individual_flow_ratio", "credit_surge_ratio",
 
 
 def universe():
-    lst = fdr.StockListing("KRX")
-    big = {c for c, m in zip(lst["Code"], lst["Marcap"]) if m and m >= MIN_MARCAP}
+    """백테스트 대상 종목.
+
+    FDR의 현재 시총으로 거르면 안 된다. FDR StockListing은 '오늘 상장된' 종목만
+    주므로, 2022~2026 백테스트에 그대로 쓰면 그 사이 상장폐지된 종목이 통째로
+    빠진다 — 생존 편향이다. 실측으로 272종목 / 신호 122,819행이 빠졌고 그중
+    81%가 heat < 0, 즉 이 전략이 사는 구간이었다. 52주 신저가에서 헤매다 상장
+    폐지된 종목은 이 전략의 최악의 결과인데 그걸 한 건도 세지 않고 있었다.
+    (strategy/filters.py의 apply_marcap 주석이 같은 함정을 이미 경고한다.)
+
+    또 현재 시총은 실행할 때마다 달라진다. 3,000억 경계 ±10%에 97종목이 걸쳐
+    있어서 같은 설정을 아침과 밤에 돌리면 다른 답이 나왔다.
+
+    그래서 여기서는 '한 번이라도 하한을 넘었을 수 있는 종목'만 추려 로딩 비용을
+    줄이고(최대 종가 x 최대 주식수), 실제 하한 판정은 run_sim이 날짜별 시가총액
+    으로 한다. 상장폐지 종목도 상폐 시점까지는 정상적으로 후보에 오른다.
+    """
+    rows = db.fetchall(
+        """SELECT p.code
+             FROM (SELECT code, MAX(c) AS mc FROM stock_daily
+                    WHERE d >= %s::date AND d <= %s::date GROUP BY code) p
+             JOIN (SELECT code, MAX(issued) AS mi FROM shares GROUP BY code) s
+               ON s.code = p.code
+            WHERE p.mc * s.mi >= %s""",
+        (WARMUP, END, MIN_MARCAP),
+    )
+    big = {r["code"] for r in rows}
     have = {r["code"] for r in db.fetchall("SELECT DISTINCT code FROM contrarian_signals")}
     return sorted(big & have)
+
+
+def add_marcap(px):
+    """시점별 시가총액 = 그 시점에 공시돼 있던 발행주식수 x 종가.
+
+    shares는 연 1회(Q4)뿐이라 그 해 사업보고서가 나온 뒤부터 쓸 수 있다.
+    2022Q4 주식수는 2023년 3월경 공시되므로 2023년 날짜에 쓴다 (연도 - 1).
+    이렇게 해야 미래 정보가 새지 않는다.
+    """
+    sh = pd.DataFrame(db.fetchall("SELECT code, period, issued FROM shares"))
+    sh["y"] = sh["period"].str.slice(0, 4).astype(int)
+    sh["issued"] = pd.to_numeric(sh["issued"], errors="coerce")
+    sh = sh.dropna(subset=["issued"])
+
+    # 종목 x 연도 격자로 펴고 과거 값을 앞으로 끌어온다(그 해 값이 없으면 직전 해).
+    years = range(int(sh["y"].min()), int(pd.Timestamp(END).year) + 1)
+    wide = (sh.pivot_table(index="code", columns="y", values="issued", aggfunc="max")
+              .reindex(columns=years).ffill(axis=1))
+    long = wide.stack().rename("issued").reset_index()
+    long.columns = ["code", "sh_y", "issued"]
+
+    px = px.copy()
+    px["sh_y"] = px["d"].dt.year - 1
+    px = px.merge(long, left_on=["code", "sh_y"], right_on=["code", "sh_y"], how="left")
+    px["marcap"] = px["issued"] * px["c"]
+    return px.drop(columns=["sh_y", "issued"])
 
 
 def load(codes):
@@ -79,7 +129,7 @@ def add_pos52w(px):
 
 def run_sim(px, sig, rank_col, ascending, slots, max_hold,
             stop_pct=0.07, use_pos52w=True, exit_rank_pct=None,
-            exit_cols=(), start=None, end=None):
+            exit_cols=(), start=None, end=None, min_marcap=MIN_MARCAP):
     """
     매일: (1) 보유 종목 청산 판정  (2) 빈 슬롯을 랭킹 상위 후보로 채움
     진입은 신호일 다음 거래일 시가, 청산은 당일 종가(손절은 비관적 체결).
@@ -99,6 +149,9 @@ def run_sim(px, sig, rank_col, ascending, slots, max_hold,
         sig[f"{c}_pct"] = sig.groupby("d")[c].rank(pct=True)
 
     sig_by_date = {d: g for d, g in sig.groupby("d")}
+    # 날짜별 종목 스냅샷을 미리 만든다. 매일 전체 인덱스를 훑으면 (행수 x 날짜수)라
+    # 유니버스가 상장폐지 종목까지 포함해 커진 뒤로는 이 조회만으로 수 분이 든다.
+    px_by_date = {d: g.droplevel("d") for d, g in px.groupby(level="d")}
     all_dates = np.sort(px.index.get_level_values("d").unique())
     date_pos = {d: i for i, d in enumerate(all_dates)}
 
@@ -150,10 +203,15 @@ def run_sim(px, sig, rank_col, ascending, slots, max_hold,
         if (entry_from is not None and d < entry_from) or            (entry_to is not None and d > entry_to):
             continue
         cand = today.dropna(subset=[rank_col])
+        snap = px_by_date.get(d)
+        if snap is None:
+            continue
+        if min_marcap:
+            # 시총 하한은 '그날의' 시총으로 판정한다. 현재 시총으로 거르면
+            # 상장폐지 종목이 통째로 빠지고 실행할 때마다 답이 달라진다.
+            cand = cand[cand["code"].map(snap["marcap"]).ge(min_marcap)]
         if use_pos52w:
-            p = px.loc[px.index.get_level_values("d") == d, "pos52w"]
-            p = p.reset_index().set_index("code")["pos52w"]
-            cand = cand[cand["code"].map(p).le(0.30)]
+            cand = cand[cand["code"].map(snap["pos52w"]).le(0.30)]
         cand = cand[~cand["code"].isin(positions)]
         cand = cand.sort_values(rank_col, ascending=ascending).head(free)
 
@@ -225,6 +283,7 @@ def main():
     print(f"유니버스 {len(codes):,}종목\n로딩 중...")
     px, sig = load(codes)
     px = add_pos52w(px)
+    px = add_marcap(px)
     print(f"  일봉 {len(px):,}행 / 신호 {len(sig):,}행\n")
 
     print("=" * 74)

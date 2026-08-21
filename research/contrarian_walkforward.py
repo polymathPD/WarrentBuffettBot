@@ -59,6 +59,7 @@ def main():
     print(f"유니버스 {len(codes):,}종목  로딩 중...", flush=True)
     px, sig = pb.load(codes)
     px = pb.add_pos52w(px)
+    px = pb.add_marcap(px)   # 시총 하한을 날짜별로 판정 (생존 편향 제거)
     print(f"  일봉 {len(px):,}행 / 신호 {len(sig):,}행 ({time.time()-t0:.0f}s)\n", flush=True)
 
     def sim(factor, start, end):
@@ -105,6 +106,7 @@ def main():
             strategy, WINDOWS[0][2], WINDOWS[-1][3],
             {"slots": SLOTS, "max_hold_days": MAX_HOLD, "pos52w_filter": True,
              "stop_pct": 0.07, "walkforward": True, "windows": len(WINDOWS),
+             "point_in_time_universe": True,
              "factor_pool": FACTORS if selected else [DEFAULT_FACTOR],
              "selection": "학습 구간 거래당 평균 최대" if selected else "고정",
              "picked": [p["factor"] for p in picked] if selected else []},
