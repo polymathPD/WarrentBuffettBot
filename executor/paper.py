@@ -5,6 +5,7 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+import json
 from datetime import date, timedelta
 import db.connection as db
 import config
@@ -90,7 +91,7 @@ def buy(code: str, name: str, signal_date: str, close_px: float,
         """INSERT INTO trades (mode, side, code, name, qty, price, amount, strategy, agents)
            VALUES (%s,'buy',%s,%s,%s,%s,%s,%s,%s::jsonb)""",
         (MODE, code, name, qty, entry_px, amount,
-         strategy, str(agents_summary).replace("'", '"')),
+         strategy, json.dumps(agents_summary or {}, ensure_ascii=False)),
     )
     print(f"[모의 매수] {code} {name}  진입가={entry_px:,.0f}  손절={stop_px:,.0f}")
     return True
@@ -194,7 +195,7 @@ def adjust(code: str, name: str, target_qty: int, fill_px: float,
             """INSERT INTO trades (mode, side, code, name, qty, price, amount, strategy, agents)
                VALUES (%s,'buy',%s,%s,%s,%s,%s,%s,%s::jsonb)""",
             (mode, code, name, delta, px, px * delta, strategy,
-             str(agents_summary or {}).replace("'", '"')))
+             json.dumps(agents_summary or {}, ensure_ascii=False)))
         print(f"[리밸런싱 매수] {code} {name}  +{delta:.0f}주 @ {px:,.0f}")
         return
 

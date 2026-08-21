@@ -663,3 +663,19 @@ svg.alloc-bar { width: 100%; height: 28px; display: block; }
   cursor: pointer; color: var(--text-muted); font-size: .85em; padding: var(--sp-2) 0;
 }
 .run-biased .mode-tabs { padding: 0; margin-bottom: 0; opacity: .65; }
+
+/* ── 에이전트 의견 vs 랭킹 근거 ─────────────────────────────────────── */
+.agent-tally { display: inline-flex; gap: 3px; margin-left: var(--sp-2); vertical-align: middle; }
+.dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.dot-buy { background: var(--profit); }
+.dot-hold { background: var(--text-muted); }
+.dot-err { background: var(--loss); }
+.rank-basis {
+  margin-top: var(--sp-2); padding-top: var(--sp-2);
+  border-top: 1px dashed var(--border); font-size: .85em;
+}
+.rank-basis-label { color: var(--text-muted); margin-right: var(--sp-2); }
+.rank-metric {
+  display: inline-block; margin-right: var(--sp-2);
+  color: var(--text-strong); font-variant-numeric: tabular-nums;
+}

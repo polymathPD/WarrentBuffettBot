@@ -128,8 +128,12 @@ def daily_job():
     #    없이도 매달 자동으로 일어난다. 명단 교체만 하면 검증한 것과 달라진다
     #    (백테스트는 매 구간 동일가중으로 되돌린 수익률을 쓴다).
     from strategy import quality
-    from agents import value_trap
+    from agents import value_trap, market_state, risk, disclosure, financials
     from executor.paper import adjust, current_equity
+
+    def _op(v):
+        return {k: v.get(k) for k in ("decision", "score", "rationale", "error")}
+
     import db.connection as db
     import config
 
@@ -161,13 +165,34 @@ def daily_job():
             # 호출 실패는 '관망'이 아니라 '판단 없음'이다. 크레딧이 떨어진 날
             # 포트폴리오가 통째로 비는 쪽이 더 나쁘므로 통과시키고 기록만 남긴다.
             if v.get("error") or v["decision"] == "매수":
-                t["agents"] = {"value_trap": {k: v.get(k) for k in
-                                              ("decision", "score", "rationale", "error")},
-                               "rank": quality.RANK_KIND, "score": round(t["score"], 4),
-                               "per": round(t["per"], 1), "pbr": round(t["pbr"], 2)}
+                t["agents"] = {"value_trap": _op(v)}
+                t["metrics"] = {"랭킹": quality.RANK_KIND,
+                                "점수": round(t["score"], 4),
+                                "PER": round(t["per"], 1),
+                                "PBR": round(t["pbr"], 2)}
                 picked.append(t)
             else:
                 rejected.append((t["code"], v["decision"], v.get("rationale", "")))
+
+        # 편입이 정해진 종목에만 나머지 에이전트 의견을 받는다. 후보 30개 전부에
+        # 물으면 호출이 150건이 된다.
+        #
+        # 이 넷은 자문이고 반려권이 없다. value_trap만 편입을 막는다.
+        #   risk        - 입력에 없는 사유로 관망을 내는 결함이 있다(UDD.html 참고).
+        #                 업종 집중 판정도 종목코드 앞 3자리를 업종으로 보는 근사다.
+        #   financials  - 이 전략의 랭킹이 이미 재무를 쓴다. 같은 숫자를 되물으면
+        #                 동어반복이라 판단이 아니라 동의만 돌아온다.
+        #   disclosure  - 공시를 읽지만 value_trap과 관점이 다르다(실적 개선 여부).
+        #   market_state- 종목이 아니라 시장 국면을 본다.
+        for t in picked:
+            for name, fn in (("market_state", lambda c: market_state.analyze(c, rebal_d, quality.STRATEGY)),
+                             ("risk", lambda c: risk.analyze(c, rebal_d, quality.STRATEGY)),
+                             ("disclosure", lambda c: disclosure.analyze(c, rebal_d)),
+                             ("financials", lambda c: financials.analyze(c, rebal_d))):
+                try:
+                    t["agents"][name] = _op(fn(t["code"]))
+                except Exception as e:
+                    t["agents"][name] = {"decision": "오류", "error": str(e)[:120]}
 
         for code, dec, why in rejected:
             print(f"  [반려] {code}: value_trap {dec} - {why[:60]}")
@@ -199,7 +224,7 @@ def daily_job():
                     print(f"  [보류] {code} - 1슬롯 금액으로 1주도 못 산다")
                     continue
                 adjust(code, name_of(code), qty, opens[code], quality.STRATEGY,
-                       t["agents"])
+                       dict(t["agents"], _metrics=t["metrics"]))
 
     # 6-2. 펀더멘털 진입: 직전 거래일 공시를 오늘 시가로 체결
     prev_day = _prev_trading_day(today)

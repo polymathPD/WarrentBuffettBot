@@ -1,24 +1,46 @@
+{# 에이전트 의견과 랭킹 근거를 갈라서 그린다.
+
+   trades.agents JSON에 둘이 섞여 있어 'pbr 0.18'이 에이전트 확신처럼 그려지고
+   있었다. 랭킹 지표는 에이전트에 넘기지 않는다 — 필터가 이미 쓴 숫자를 되물으면
+   판단이 아니라 동어반복이라, 화면에서도 같은 줄에 두면 안 된다.
+
+   _metrics 키에 담긴 것이 랭킹 근거다. 옛 기록은 스칼라가 최상위에 흩어져 있어
+   그것도 함께 걷어낸다. #}
 {% macro agent_cell(agents) -%}
 {% if agents %}
   {% set opinions = [] %}{% set metrics = [] %}
   {% for name, a in agents.items() %}
-    {% if a is mapping and a.decision %}{% set _ = opinions.append((name, a)) %}
+    {% if name == '_metrics' and a is mapping %}
+      {% for k, v in a.items() %}{% set _ = metrics.append((k, v)) %}{% endfor %}
+    {% elif a is mapping and a.decision %}{% set _ = opinions.append((name, a)) %}
     {% elif a is not mapping %}{% set _ = metrics.append((name, a)) %}{% endif %}
   {% endfor %}
   {% if opinions %}
   <details class="agents">
-    <summary>{{ opinions|length }}개 에이전트</summary>
+    <summary>
+      에이전트 {{ opinions|length }}개
+      <span class="agent-tally">
+        {%- for name, a in opinions -%}
+        <span class="dot dot-{{ 'buy' if a.decision == '매수' else ('err' if a.decision == '오류' else 'hold') }}" title="{{ name }} {{ a.decision }}"></span>
+        {%- endfor -%}
+      </span>
+    </summary>
     <dl class="agents-list">
       {% for name, a in opinions %}
       <dt>{{ name }}</dt>
       <dd>
         <span class="badge {% if a.decision == '매수' %}badge-buy{% else %}badge-sell{% endif %}">{{ a.decision }}</span>
-        <span class="text-muted">확신 {{ a.score }}</span>
-        {% if metrics %}<span class="text-muted"> · {% for k, v in metrics %}{{ k }} {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</span>{% endif %}
+        {% if a.score is not none %}<span class="text-muted">확신 {{ a.score }}</span>{% endif %}
         <div>{{ a.rationale or a.error }}</div>
       </dd>
       {% endfor %}
     </dl>
+    {% if metrics %}
+    <div class="rank-basis">
+      <span class="rank-basis-label">랭킹 근거 (에이전트에 넘기지 않음)</span>
+      {% for k, v in metrics %}<span class="rank-metric">{{ k }} {{ v }}</span>{% endfor %}
+    </div>
+    {% endif %}
   </details>
   {% elif metrics %}
   <small class="text-muted">{% for k, v in metrics %}{{ k }} {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</small>
