@@ -315,32 +315,49 @@ def account_snapshot() -> dict:
     return {"holdings": holdings, "cash": cash, "raw_summary": summary}
 
 
+MAX_FILL_ATTEMPTS = 3
+
+
 def adjust(code: str, name: str, target_qty: int, strategy: str,
            snapshot: dict, agents_summary: dict | None = None) -> None:
     """보유 수량을 target_qty로 맞춘다. 차이만 주문한다.
 
     체결가·수량은 주문 뒤 잔고에서 다시 읽는다. 주문을 넣었다고 체결된 것이
-    아니고, 부분 체결이면 우리가 계산한 수량과 실제가 달라진다.
+    아니고, 부분 체결이면 남는 수량만큼 다시 주문한다 — 시장가 한 번으로 목표에
+    못 미치면 슬롯 크기가 계속 어긋난 채로 다음 달까지 방치된다.
     """
     guard()
     cur = snapshot["holdings"].get(code, {}).get("qty", 0.0)
-    delta = int(target_qty - cur)
-    if delta == 0:
+    if int(target_qty - cur) == 0:
         return
 
-    side = "buy" if delta > 0 else "sell"
-    result = (buy if delta > 0 else sell)(code, abs(delta))
-    if result.get("rt_cd") != "0":
-        print(f"[{MODE} {side} 실패] {code} {name} - {result.get('msg1')}")
-        return
+    side = "buy" if target_qty > cur else "sell"
+    after = None
+    cur_qty = cur
+    for attempt in range(1, MAX_FILL_ATTEMPTS + 1):
+        remaining = int(target_qty - cur_qty)
+        if remaining == 0:
+            break
+        result = (buy if remaining > 0 else sell)(code, abs(remaining))
+        if result.get("rt_cd") != "0":
+            print(f"[{MODE} {side} 실패] {code} {name} - {result.get('msg1')}")
+            break
+        after, new_qty = _wait_for_qty_change(code, cur_qty)
+        if new_qty == cur_qty:
+            # 이번 라운드에 한 주도 안 붙었다. 응답 지연이거나 시장가로 잡히지
+            # 않는 상황이라 재시도해도 같을 것이니 그만.
+            print(f"[{MODE} {side} 미체결] {code} {name} - 잔고 변화 없음 "
+                  f"(시도 {attempt}/{MAX_FILL_ATTEMPTS})")
+            break
+        cur_qty = new_qty
 
-    after, new_qty = _wait_for_qty_change(code, cur)
-    filled = new_qty - cur
+    filled = cur_qty - cur
     if filled == 0:
-        print(f"[{MODE} {side} 미체결] {code} {name} - 잔고 변화 없음")
         return
     px = (float(_field(after, "pchs_avg_pric", code)) if after
           else snapshot["holdings"].get(code, {}).get("cur_px", 0.0))
+    new_qty = cur_qty
+    delta = int(target_qty - cur)
 
     if new_qty > 0:
         db.execute(
