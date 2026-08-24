@@ -220,7 +220,7 @@ def buy_and_record(code: str, name: str, strategy: str,
         """INSERT INTO positions (code, strategy, name, entry_date, entry_px, qty,
                                   stop_px, max_hold_days, mode)
            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-           ON CONFLICT (code, strategy) DO NOTHING""",
+           ON CONFLICT (code, strategy, mode) DO NOTHING""",
         (code, strategy, name, date.today(), entry_px, qty,
          stop_px, config.get_setting("MAX_HOLD_DAYS"), MODE),
     )
@@ -364,7 +364,7 @@ def adjust(code: str, name: str, target_qty: int, strategy: str,
             """INSERT INTO positions (code, strategy, name, entry_date, entry_px, qty,
                                       stop_px, max_hold_days, mode)
                VALUES (%s,%s,%s,%s,%s,%s,0,99999,%s)
-               ON CONFLICT (code, strategy) DO UPDATE
+               ON CONFLICT (code, strategy, mode) DO UPDATE
                  SET qty = EXCLUDED.qty, entry_px = EXCLUDED.entry_px""",
             (code, strategy, name, date.today(), px, new_qty, MODE))
     else:

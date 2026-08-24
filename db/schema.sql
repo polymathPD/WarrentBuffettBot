@@ -99,7 +99,10 @@ CREATE TABLE IF NOT EXISTS trades (
 );
 
 -- 보유 포지션
--- 전략마다 슬롯과 청산 규칙이 다르므로 같은 종목을 두 전략이 각각 보유할 수 있다.
+-- 전략마다 슬롯과 청산 규칙이 다르고, 같은 전략도 paper 시뮬레이션과 live 실계좌
+-- 두 벌을 나란히 굴린다. PK에 mode가 빠져 있으면 live INSERT가 ON CONFLICT에서
+-- paper 행을 만나 qty만 덮어쓰고 mode는 'paper'로 남는다 — 대시보드의 live 탭이
+-- 비어 보이는 원인이었다.
 CREATE TABLE IF NOT EXISTS positions (
     code          TEXT,
     strategy      TEXT NOT NULL DEFAULT 'contrarian_v1',
@@ -109,20 +112,30 @@ CREATE TABLE IF NOT EXISTS positions (
     qty           NUMERIC,
     stop_px       NUMERIC,
     max_hold_days INTEGER,
-    mode          TEXT,
-    CONSTRAINT positions_code_strategy_pkey PRIMARY KEY (code, strategy)
+    mode          TEXT NOT NULL,
+    CONSTRAINT positions_code_strategy_mode_pkey PRIMARY KEY (code, strategy, mode)
 );
 
--- 기존 DB의 positions를 (code) → (code, strategy) 키로 전환 (멱등)
+-- 기존 DB의 positions를 (code) → (code, strategy) → (code, strategy, mode)로
+-- 점진 전환 (멱등). 현재 PK 컬럼 조합을 읽어 부족하면 재설치한다.
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS strategy TEXT NOT NULL DEFAULT 'contrarian_v1';
 DO $$
+DECLARE
+    pk_cols TEXT;
 BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'positions_code_strategy_pkey'
-    ) THEN
+    SELECT string_agg(a.attname, ',' ORDER BY array_position(c.conkey, a.attnum))
+    INTO pk_cols
+    FROM pg_constraint c
+    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+    WHERE c.conrelid = 'positions'::regclass AND c.contype = 'p';
+
+    IF pk_cols IS DISTINCT FROM 'code,strategy,mode' THEN
+        UPDATE positions SET mode = 'paper' WHERE mode IS NULL;
         ALTER TABLE positions DROP CONSTRAINT IF EXISTS positions_pkey;
-        ALTER TABLE positions ADD CONSTRAINT positions_code_strategy_pkey
-            PRIMARY KEY (code, strategy);
+        ALTER TABLE positions DROP CONSTRAINT IF EXISTS positions_code_strategy_pkey;
+        ALTER TABLE positions ALTER COLUMN mode SET NOT NULL;
+        ALTER TABLE positions ADD CONSTRAINT positions_code_strategy_mode_pkey
+            PRIMARY KEY (code, strategy, mode);
     END IF;
 END $$;
 

@@ -82,7 +82,7 @@ def buy(code: str, name: str, signal_date: str, close_px: float,
         """INSERT INTO positions (code, strategy, name, entry_date, entry_px, qty,
                                   stop_px, max_hold_days, mode)
            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-           ON CONFLICT (code, strategy) DO NOTHING""",
+           ON CONFLICT (code, strategy, mode) DO NOTHING""",
         (code, strategy, name, date.today(), entry_px, qty,
          stop_px, max_hold_days if max_hold_days is not None
          else config.get_setting("MAX_HOLD_DAYS"), MODE),
@@ -189,7 +189,7 @@ def adjust(code: str, name: str, target_qty: int, fill_px: float,
                 """INSERT INTO positions (code, strategy, name, entry_date, entry_px,
                                           qty, stop_px, max_hold_days, mode)
                    VALUES (%s,%s,%s,%s,%s,%s,0,99999,%s)
-                   ON CONFLICT (code, strategy) DO NOTHING""",
+                   ON CONFLICT (code, strategy, mode) DO NOTHING""",
                 (code, strategy, name, date.today(), new_entry, new_qty, mode))
         db.execute(
             """INSERT INTO trades (mode, side, code, name, qty, price, amount, strategy, agents)
