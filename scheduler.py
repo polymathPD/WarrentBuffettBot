@@ -11,6 +11,8 @@ from apscheduler.triggers.cron import CronTrigger
 from datetime import date
 import logging
 
+import config
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
 
