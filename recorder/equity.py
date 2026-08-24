@@ -105,14 +105,20 @@ def snapshot(target_date: str = None) -> int:
         rows.append((d, mode, strategy, c, v, c + v))
 
     # live 모드는 KIS 스냅샷으로 별도 처리. 조회 실패 시 그 전략만 건너뛴다.
+    #
+    # cash는 dnca_tot_amt(예수금)이 아니라 nass_amt - scts_evlu_amt(실질 현금)이다.
+    # KIS 모의는 매수해도 dnca가 안 줄어들어 화면상 예수금이 그대로 남는데, 이걸
+    # '쓸 수 있는 현금'으로 보여 주면 미수 상태를 못 알아본다 — 오늘 대시보드에
+    # 현금 10M로 찍혀 있어서 -16.4M 미수가 숨겨졌다. 음수라도 실체를 그대로 낸다.
     live_strategies = {s for (m, s) in cash.keys() if m == "live" and s not in retired}
     if live_strategies:
         try:
             from executor.live import account_snapshot
             snap = account_snapshot()
+            settled_cash = snap["total_equity"] - snap["positions_value"]
             for strategy in live_strategies:
                 rows.append((d, "live", strategy,
-                             snap["cash"], snap["positions_value"], snap["total_equity"]))
+                             settled_cash, snap["positions_value"], snap["total_equity"]))
         except Exception as e:
             print(f"[자산] live 스냅샷 실패 - 건너뜀: {type(e).__name__} {str(e)[:120]}")
 

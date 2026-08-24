@@ -152,6 +152,20 @@ def _find_holding(code: str) -> dict | None:
     return None
 
 
+def _settled_cash_after(order_amount: float) -> float:
+    """이 매수 주문 뒤 T+2 결제 예정 예수금. 음수면 미수(외상매수)가 된다.
+
+    KIS 모의는 기본 위탁증거금율(대개 40%)까지 미수를 허용한다 — 10M 계좌로
+    26.7M어치를 사서 -16.4M 미수가 나기 전에 여기서 막는다. output2의
+    prvs_rcdl_excc_amt는 오늘까지 접수된 모든 매수를 반영한 뒤의 예상 예수금이라,
+    이 값에서 새 주문 대금을 빼 보면 이 주문이 미수를 만드는지 알 수 있다.
+    """
+    b = get_balance()
+    summary = (b.get("output2") or [{}])[0]
+    settled = float(summary.get("prvs_rcdl_excc_amt") or 0)
+    return settled - order_amount
+
+
 def _wait_for_qty_change(code: str, prev_qty: float,
                          timeout_s: float = 15.0,
                          poll_s: float = 2.0) -> tuple[dict | None, float]:
@@ -348,6 +362,21 @@ def adjust(code: str, name: str, target_qty: int, strategy: str,
         remaining = int(target_qty - cur_qty)
         if remaining == 0:
             break
+        if remaining > 0:
+            # 미수 방지: 이 매수 대금이 결제 예정 예수금을 음수로 만들면 넘긴다.
+            # 시장가라 정확한 체결가는 알 수 없어 현재가 + 슬리피지·수수료 여유로 잡는다.
+            est_px = snapshot["holdings"].get(code, {}).get("cur_px", 0.0)
+            if est_px <= 0:
+                last = db.fetchone(
+                    "SELECT c FROM stock_daily WHERE code=%s ORDER BY d DESC LIMIT 1", (code,))
+                est_px = float(last["c"]) if last else 0.0
+            est_cost = remaining * est_px * 1.005
+            after_settled = _settled_cash_after(est_cost)
+            if after_settled < 0:
+                print(f"[{MODE} 미수 방지] {code} {name} - "
+                      f"이 주문({est_cost:,.0f})이 T+2 결제 예수금을 "
+                      f"{after_settled:,.0f}로 떨어뜨림 - 넘김")
+                break
         result = (buy if remaining > 0 else sell)(code, abs(remaining))
         if result.get("rt_cd") != "0":
             print(f"[{MODE} {side} 실패] {code} {name} - {result.get('msg1')}")

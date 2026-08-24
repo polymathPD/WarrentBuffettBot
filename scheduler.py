@@ -165,8 +165,12 @@ def open_job():
 
     if config.KIS_MODE == "live":
         from executor import live
-        equity = snap["cash"] + sum(h["qty"] * h["cur_px"] for h in snap["holdings"].values())
-        print(f"  잔고: 예수금 {snap['cash']:,.0f} / 자산 {equity:,.0f}")
+        # KIS 모의는 매수해도 dnca_tot_amt(예수금)가 안 줄어든다. 이걸 그대로 쓰면
+        # 재실행마다 잔고가 부풀어 slot_value가 커지고, 새 매수가 미수(외상)로 뚫린다.
+        # 2026-08-24에 실제로 벌어진 일이다 — 10M 계좌로 26.7M어치를 사서 미수
+        # -16.4M이 났다. 브로커가 계산한 nass_amt(순자산)이 유일한 정답이다.
+        equity = snap["total_equity"]
+        print(f"  잔고: 예수금 {snap['cash']:,.0f} / 평가 {snap['positions_value']:,.0f} / 순자산 {equity:,.0f}")
         slot_value = equity / slots
         for code, h in snap["holdings"].items():
             if code not in tgt:
