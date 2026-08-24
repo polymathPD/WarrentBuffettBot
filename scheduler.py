@@ -182,17 +182,31 @@ def open_job():
         equity = snap["total_equity"]
         print(f"  잔고: 예수금 {snap['cash']:,.0f} / 평가 {snap['positions_value']:,.0f} / 순자산 {equity:,.0f}")
         slot_value = equity / slots
+        # 매도를 먼저 전부 낸 뒤 매수로 넘어간다. 랭킹 순서대로 섞어 내면 매도 대금이
+        # 아직 안 잡힌 상태에서 매수가 미수 가드에 걸려 그대로 건너뛰어진다 —
+        # 2026-08-25 리밸런싱을 미리 돌려 보니 결제예정이 +88만인 시점에 100만원짜리
+        # 매수가 걸려 슬롯 하나가 빈 채로 끝났다. 큰 매도부터 내면 여유가 먼저 생긴다.
+        plan = []
         for code, h in snap["holdings"].items():
             if code not in tgt:
-                live.adjust(code, h["name"], 0, quality.STRATEGY, snap)
+                plan.append((code, h["name"], 0, None))
         for code, t in tgt.items():
             px = snap["holdings"].get(code, {}).get("cur_px") or t["close"]
             qty = int(slot_value // px)
             if qty < 1:
                 print(f"  [보류] {code} - 1슬롯 금액으로 1주도 못 산다")
                 continue
-            live.adjust(code, name_of(code), qty, quality.STRATEGY, snap,
-                        dict(t["agents"], _metrics=t["metrics"]))
+            plan.append((code, name_of(code), qty,
+                         dict(t["agents"], _metrics=t["metrics"])))
+
+        def _delta_amount(p):
+            code, _, qty, _agents = p
+            h = snap["holdings"].get(code, {})
+            px = h.get("cur_px") or (tgt[code]["close"] if code in tgt else 0.0)
+            return (qty - h.get("qty", 0.0)) * px
+
+        for code, nm, qty, agents in sorted(plan, key=_delta_amount):
+            live.adjust(code, nm, qty, quality.STRATEGY, snap, agents)
     else:
         from executor.paper import adjust, current_equity
         opens = {r["code"]: float(r["o"]) for r in db.fetchall(

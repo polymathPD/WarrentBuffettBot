@@ -119,3 +119,30 @@ def test_non_rebalance_day_is_skipped_when_the_account_is_healthy(live_run, caps
 
     assert "건너뜀" in capsys.readouterr().out
     assert live_run.orders == []
+
+
+def test_sells_are_all_placed_before_buys(live_run, mocker):
+    """매도 대금이 잡히기 전에 매수를 내면 미수 가드에 걸려 슬롯이 빈 채로 끝난다.
+
+    2026-08-25 리밸런싱을 미리 돌려 보니, 편출 5종목을 판 뒤에도 결제예정이 +88만인
+    시점에 랭킹 3위의 100만원짜리 매수가 나가 가드에 막혔다. 매도를 전부 먼저 내면
+    +519만이 확보된 뒤 매수가 시작된다.
+    """
+    from strategy import quality
+
+    # 후보 절반은 이미 목표보다 많이 들고 있고(매도), 절반은 신규(매수)다.
+    mocker.patch.object(quality, "get_targets", return_value=[
+        {"code": f"00{i:04d}", "score": 1.0, "per": 5.0, "pbr": 0.5, "close": 10_000.0}
+        for i in range(SLOTS)])
+    holdings = {f"00{i:04d}": {"name": f"종목{i}", "qty": 500.0, "cur_px": 10_000.0}
+                for i in range(0, SLOTS, 2)}          # 짝수 번호만 보유, 전부 초과
+    holdings["999999"] = {"name": "편출", "qty": 100.0, "cur_px": 10_000.0}
+    snap = _snapshot(holdings, 0, 6_000_000, 10_000_000, settled_cash=-5_000_000)
+
+    live_run(snap, rebal_d=None)
+
+    deltas = [target - holdings.get(code, {}).get("qty", 0.0)
+              for code, target in live_run.orders]
+    last_sell = max(i for i, d in enumerate(deltas) if d < 0)
+    first_buy = min(i for i, d in enumerate(deltas) if d > 0)
+    assert last_sell < first_buy, f"매도/매수가 섞였다: {deltas}"
