@@ -1,73 +1,153 @@
 # WarrenBuffettBot
 
-한국 주식 역발상(Contrarian) 자동매매 시스템.
-개인투자자 과열 신호를 감지하고, Claude AI 에이전트 합의를 거쳐 모의/실전 매매를 실행합니다.
+한국 주식 자동매매 시스템.
+분기 재무로 종목을 고르고, Claude 에이전트가 공시 텍스트로 가치 함정을 걸러낸 뒤,
+월별 리밸런싱으로 시뮬레이션 · 모의투자 계좌 · 실계좌 중 한 곳에 주문을 냅니다.
+
+운용 전략은 **`quality_v1`** (퀄리티/가치, 월별 리밸런싱, 손절 없음) 하나입니다.
+역발상(`contrarian_v1`)과 실적개선(`fundamental_v1`)은 검증에서 기각됐습니다 —
+판단 근거는 [`research/README.md`](research/README.md)에 있습니다.
 
 ---
 
-## 전체 프로세스 흐름
+## 두 개의 배치
+
+주문과 수집을 같은 시각에 돌릴 수 없습니다. 검증한 체결 규칙이 **"기준일 다음 거래일 시가"**인데
+모의투자·실전 주문은 장중에만 체결되므로, 결정은 직전 거래일 데이터로 하고 주문은 개장 직후에 냅니다.
 
 ```mermaid
 flowchart TD
-    CRON["⏰ APScheduler\n평일 16:10 자동 실행"]
+    OPEN["⏰ 평일 09:05\nopen_job()"]
+    CLOSE["⏰ 평일 16:10\ndaily_job()"]
 
-    subgraph COLLECT["1. 데이터 수집"]
-        C1["pykrx\n일봉 OHLCV"]
-        C2["KIS OpenAPI\n투자자별 매매동향\n(개인/외국인/기관)"]
-        C3["KIS OpenAPI\n신용융자 잔고"]
+    subgraph REBAL["개장 직후 — 퀄리티 리밸런싱"]
+        R1["리밸런싱일 판정\n직전 거래일이 그 달 첫 거래일인가\n(계좌가 비었거나 미수면 달력 무시)"]
+        R2["quality.get_targets()\n재무 스냅샷 → 필터 → value 랭킹\n슬롯의 3배까지 후보"]
+        R3["🤖 value_trap\n공시 텍스트로 가치 함정 판별\n⚡ 반려하면 다음 순위로 대체"]
+        R4["🤖 market_state / risk\n🤖 disclosure / financials\n판단을 기록만 (편입은 막지 않음)"]
+        R5{"KIS_MODE"}
+        R6["executor.live.adjust()\n매도를 전부 낸 뒤 매수\n잔고로 체결 확인 · 부분 체결이면 재주문"]
+        R7["executor.paper.adjust()\n오늘 시가로 DB 시뮬레이션"]
+        R8["equity_daily 스냅샷"]
     end
 
-    subgraph SIGNAL["2. 신호 계산"]
-        S1["heat_score 산출\n(개인 순매수 + 신용급증 + 거래대금)"]
-        S2["역발상 필터\nheat < 7.0\n52주 하위 30%\n3개 지표 모두 존재"]
+    subgraph COLLECT["장 마감 후 — 수집 및 기록"]
+        C1["pykrx 일봉"]
+        C2["KIS 투자자별 수급"]
+        C3["KIS 신용잔고"]
+        C4["DART 공시 목록"]
+        C5["DART 주요계정 재무"]
+        C6["heat_score 계산\ncontrarian_signals"]
+        C7["fundamental_v1 청산·진입\n(시뮬레이션 전용)"]
+        C8["equity_daily 스냅샷\n성과 요약 출력"]
     end
 
-    subgraph AGENT["3. Claude AI 에이전트 게이트 ← Claude 동작 지점"]
-        A1["🤖 market_state\n시장 전체 상태 분석\n⚡ 거부권 보유"]
-        A2["🤖 risk\n포트폴리오 리스크 분석\n⚡ 거부권 보유"]
-        A3["🤖 retail_flow\n개인 수급 패턴 분석"]
-        A4["🤖 credit_heat\n신용 과열 분석"]
-        GATE{"4개 에이전트\n전원 통과?"}
-    end
+    OPEN --> R1 --> R2 --> R3 --> R4 --> R5
+    R5 -->|live| R6 --> R8
+    R5 -->|paper| R7 --> R8
 
-    subgraph EXEC["4. 실행 및 기록"]
-        E1["모의 매수 체결\n직전 거래일 신호를\n당일 시가로 체결"]
-        E2["Railway PostgreSQL\n거래 기록 저장"]
-        E3["🌐 웹 대시보드\n포지션 / 수익률 / 설정"]
-    end
-
-    subgraph EXIT["5. 청산 조건 (매일 체크)"]
-        X1["heat_score ≥ 8.5"]
-        X2["보유 20일 초과"]
-        X3["손절 -7%"]
-    end
-
-    CRON --> COLLECT
-    C1 & C2 & C3 --> SIGNAL
-    S1 --> S2
-    S2 -->|후보 종목| AGENT
-    A1 & A2 & A3 & A4 --> GATE
-    GATE -->|승인| E1
-    GATE -->|반려| REJECT["매수 반려 로그"]
-    E1 --> E2 --> E3
-    S2 -->|보유 종목| EXIT
-    X1 & X2 & X3 --> E1
+    CLOSE --> C1 --> C2 --> C3 --> C4 --> C5 --> C6 --> C7 --> C8
 ```
 
 ---
 
-## Claude AI 에이전트 역할
+## 운용 전략 — quality_v1
 
-| 에이전트 | 분석 내용 | 거부권 |
-|---------|----------|--------|
-| `market_state` | 시장 전체 하락 종목 비율 — 70% 이상이면 전체 청산 강제 | ✅ |
-| `risk` | 슬롯 부족 또는 동일 업종 3개 이상 보유 시 관망 강제 | ✅ |
-| `retail_flow` | 개인 순매수 급증 패턴 → 과열 여부 판단 | ❌ |
-| `credit_heat` | 신용잔고 급증 → 추가 과열 신호 판단 | ❌ |
+분기 재무를 근거로, 손절 없이, 월 1회만 갈아탑니다. 회전율을 낮추는 것이 설계의 핵심입니다.
+역발상 계열은 실측 평균 보유가 11.7거래일이라 연 21회 회전하며 비용만 연 13.2%를 냈습니다.
 
-- `market_state` 또는 `risk`가 거부하면 즉시 반려
-- 나머지 2개는 **2/2 합의** 필요
-- 결과는 `agent_decisions` 테이블에 기록 (캐싱으로 동일 입력 재호출 방지)
+| | 역발상 (은퇴) | quality_v1 (운용) |
+|---|---|---|
+| 보유 | 11.7거래일 | 리밸런싱까지 (월 단위) |
+| 손절 | −7% | 없음 |
+| 연 회전 | 21회 | 12회 이하 (편입 유지 종목은 거래하지 않음) |
+| 연 비용 | 13.2% | 약 2.5% |
+| 근거 | 수급·과열 | ROE·부채비율·PBR·PER |
+
+### 규칙
+
+**1단계 — 살 수 있는 상태인가** (`strategy/quality.py`의 `eligible()`)
+
+- 시가총액 3,000억 이상 (**그 시점에 공시돼 있던 발행주식수** × 그날 종가)
+- TTM 순이익 > 0, TTM 매출 > 0, 자본총계 > 0
+- 부채비율 ≤ 200%
+- 보통주만 · 최근 20거래일 평균 거래대금 10억원 이상 (`strategy/filters.py`)
+
+**2단계 — 백분위 순위로 점수** (`score()`)
+
+| 종류 | 구성 | 채택 |
+|---|---|---|
+| `quality` | ROE + 영업이익률 + (−부채비율) | 워크포워드 5개 창 중 1회 |
+| `value` | 이익수익률(1/PER) + 순자산수익률(1/PBR) | **5개 창 중 4회 → `RANK_KIND`** |
+| `combo` | 둘의 반반 | 훈련·검증 양쪽에서 각각보다 나빴음 |
+
+**3단계 — 리밸런싱**: 매월 첫 거래일 기준, 점수 상위 `SLOTS`개를 동일가중으로 편입.
+목표에 없는 보유는 전량 매도, 이미 있는 종목은 수량 차이만 주문합니다.
+
+### 미래 정보 차단
+
+- 재무는 **기간종료 + 90일**이 지나야 씁니다 (분기보고서 45일 · 사업보고서 90일이 법정기한).
+- **Q4는 분기가 아니라 연간 누적**입니다. Q4 단독 = 연간 − (Q1+Q2+Q3)로 환원한 뒤
+  TTM을 4분기 합으로 만듭니다. 그대로 넣으면 4분기 실적이 7분기치가 됩니다.
+- 시가총액에 쓰는 발행주식수는 **연도 − 1의 Q4**입니다 (사업보고서가 이듬해 3월에 나오므로).
+
+수식은 `strategy/quality.py` 한 곳에만 두고 `research/quality_backtest.py`가 가져다 씁니다.
+검증 경로에 수식을 복제하면 한쪽만 고쳤을 때 운용과 백테스트가 조용히 갈라집니다.
+
+---
+
+## Claude 에이전트
+
+| 에이전트 | 분석 내용 | 리밸런싱에서 하는 일 |
+|---------|----------|--------------------|
+| `value_trap` | 최근 90일 공시 제목 + 60·250거래일 수익률 → 사이클 하단인지 구조적 훼손인지 | **편입 반려 가능** |
+| `market_state` | 전체 종목 하락 비율, KODEX 200 20일 수익률 | 기록만 |
+| `risk` | 남은 슬롯, 같은 업종군 보유 수 | 기록만 |
+| `disclosure` | 최근 90일 공시 이력 (증자·관리종목·횡령·감사의견 등) | 기록만 |
+| `financials` | 최근 5개 보고서의 매출·영업이익·ROE·부채비율 추이 | 기록만 |
+
+퀄리티 리밸런싱에서 편입을 실제로 막는 것은 `value_trap` 하나입니다. 반려되면 다음 순위 종목으로
+슬롯을 채웁니다 — 검증은 항상 슬롯을 다 채운 상태로 쟀기 때문에, 반려가 슬롯을 비우면 측정한 것과
+다른 것을 굴리게 됩니다. 나머지 넷은 판단을 `trades.agents`에 JSON으로 남겨 대시보드에 표시합니다.
+
+`agents/gate.py`의 거부권/합의 게이트(`market_state`·`risk`가 거부권, 나머지는 전원 합의)는
+`fundamental_v1` 진입 경로에서 씁니다.
+
+> **필터가 이미 쓴 지표는 프롬프트에 넣지 않습니다.** 퀄리티에서는 PER·PBR·ROE를,
+> 역발상에서는 heat_score와 그 구성 지표를 넘기지 않습니다. 후보를 고른 기준을 다시 물으면
+> 판단이 아니라 동어반복이 됩니다 — 필터가 쓴 지표를 그대로 넘긴 에이전트는 100건 중 100건
+> "매수"로 측정됐습니다. 숫자 판정은 룰이 하고, LLM에는 룰로 표현할 수 없는 공시 텍스트만
+> 줍니다.
+
+호출이 실패하면 `'관망'`으로 떨어뜨리지 않고 `decision='오류'`로 남깁니다. 게이트는 이를
+거부권과 분리해 "판단 불가"로 반려하고, 대시보드가 최근 24시간분을 사유별로 묶어 배너로 띄웁니다.
+
+---
+
+## 실행 모드
+
+`trades`·`positions`·`equity_daily`가 모두 `mode`로 갈라집니다. 세 계좌를 나란히 굴려도 섞이지 않습니다.
+
+| mode | 무엇 | 설정 |
+|------|------|------|
+| `paper` | 우리 DB 안의 가상 체결. 주문이 아무 데도 나가지 않음 | `KIS_MODE=paper` |
+| `live` | KIS **모의투자 서버** 실제 주문 | `KIS_MODE=live` + `KIS_MOCK=true` |
+| `real` | KIS **실전 서버** 실제 주문 (진짜 돈) | `KIS_MODE=live` + `KIS_MOCK=false` |
+
+> **실계좌는 이중 잠금입니다.** `KIS_MOCK=false`여도 `settings` 테이블의 `LIVE_ENABLED`가
+> 명시적으로 켜져 있지 않으면 `executor/live.guard()`가 주문을 막습니다. 기본값은 꺼짐입니다.
+
+> **잔고는 증권사가 계산한 값을 그대로 씁니다.** 슬롯 금액도 자산곡선도 KIS의 순자산(`nass_amt`)
+> 기준입니다. KIS 모의는 매수해도 예수금(`dnca_tot_amt`)이 줄지 않아, 그 값으로 총자산을 구하면
+> 재실행마다 잔고가 부풀고 새 매수가 미수(외상)로 뚫립니다.
+
+> **미수가 나면 달력을 기다리지 않습니다.** 미수는 T+2에 반대매매로 끝나므로, 결제 예정 예수금
+> (`prvs_rcdl_excc_amt` → `account_snapshot()`의 `settled_cash`)이 음수면 리밸런싱일이 아니어도
+> 그 자리에서 정리합니다.
+
+> **매도를 전부 낸 뒤에 매수로 넘어갑니다.** 랭킹 순서대로 섞어 내면 매도 대금이 아직 잡히지 않은
+> 상태에서 매수가 미수 가드에 걸려 슬롯이 빈 채로 끝납니다. 주문은 체결 금액 차이 오름차순으로
+> 정렬해 큰 매도부터 나갑니다.
 
 ---
 
@@ -77,33 +157,48 @@ flowchart TD
 |------|------|
 | 주가 데이터 | pykrx, FinanceDataReader |
 | 수급·신용잔고 | 한국투자증권 KIS OpenAPI |
+| 공시·재무·발행주식수 | DART OpenAPI |
 | 주문 실행 | 한국투자증권 KIS OpenAPI |
 | AI 판단 | Anthropic Claude API (claude-sonnet-4-6) |
-| DB | Railway PostgreSQL |
-| 스케줄러 | APScheduler (평일 16:10) |
+| DB | Railway PostgreSQL (16개 테이블, Raw SQL) |
+| 스케줄러 | APScheduler (평일 09:05 / 16:10 KST) |
 | 웹 대시보드 | FastAPI + Jinja2 |
 | 배포 | Railway (web + worker) |
 
 ---
 
+## 웹 대시보드
+
+| 경로 | 내용 |
+|------|------|
+| `/` | 모드 탭(시뮬레이션 / 모의계좌 / 실계좌), 보유 포지션과 진입 시 에이전트 의견, 자산 곡선, 자산 배분 |
+| `/trades` | 기간·매수매도·청산사유 필터가 붙은 거래 내역 |
+| `/backtest` | `backtest_runs` 실행별 파라미터·판정·자산곡선·개별 매매, 팩터/워크포워드 대조표 |
+| `/settings` | 런타임 파라미터. 값마다 **언제부터 듣는지**(즉시 / 신규 진입분만)를 함께 표시 |
+
+에이전트 호출 실패는 전 페이지 상단 배너로 사유별 묶음 표시됩니다.
+
+---
+
 ## 단위 테스트
 
-DB/Claude API/KIS API를 전부 mock으로 격리한 순수 단위 테스트입니다 (실제 네트워크·DB 연결 없이 1~2초 내 완료).
+DB / Claude API / KIS API / DART API를 전부 mock으로 격리한 순수 단위 테스트입니다
+(실제 네트워크·DB 연결 없이 수 초 내 완료). **27개 파일 259건.**
 
 ```bash
 pip install -r requirements-dev.txt
 pytest tests/ -v
 ```
 
-- `test_cost_model.py`, `test_signals.py` — 비용모델/heat_score 계산 (순수 함수)
-- `test_agents_base.py`, `test_gate.py` — Claude API 캐싱/파싱, 4-에이전트 veto·합의 로직
-- `test_contrarian.py` — 진입/청산 후보 필터링, 청산 사유 우선순위
-- `test_paper.py` — 모의 매수/매도 비용모델 및 DB 기록
-- `test_scheduler.py` — 진입 신호일 선택 (직전 거래일 신호 → 당일 시가 체결)
-- `test_universe.py` — 시가총액 기준 수집 대상 선정, 기수집·상장폐지 종목 유지
-- `test_investor_flow.py`, `test_credit_balance.py` — KIS 페이지네이션 종료 조건, 커서 기록 조건, 응답 파싱, 종목별 실패 격리
-- `test_connection.py` — DB 커넥션 롤백/재연결
-- `test_engine.py` — 백테스터 중복 포지션 방지
+| 영역 | 파일 |
+|------|------|
+| 전략 | `test_quality.py`, `test_fundamental.py`, `test_contrarian.py` |
+| 에이전트 | `test_agents_base.py`, `test_gate.py`, `test_value_trap.py`, `test_market_state.py`, `test_fundamental_agents.py` |
+| 수집 | `test_universe.py`, `test_investor_flow.py`, `test_credit_balance.py`, `test_disclosure.py`, `test_financials.py`, `test_shares.py`, `test_dart_corp_code.py` |
+| 계산 | `test_signals.py`, `test_valuation.py`, `test_cost_model.py` |
+| 실행·기록 | `test_paper.py`, `test_scheduler.py`, `test_open_job.py`, `test_connection.py`, `test_engine.py` |
+| 정적 검사 | `test_no_undefined_names.py` — pyflakes로 트리 전체의 미정의 이름을 잡는다 |
+| 대시보드 | `test_backtest_view.py`, `test_settings_view.py`, `test_dashboard_alerts.py` |
 
 ---
 
@@ -120,6 +215,10 @@ python setup_db.py
 python collector/stock_daily.py      # 일봉 (pykrx)
 python collector/investor_flow.py    # 투자자별 수급 (KIS)
 python collector/credit_balance.py   # 신용잔고 (KIS)
+python collector/dart_corp_code.py   # DART 고유번호 매핑 (신규 상장 시 재실행)
+python collector/disclosure.py       # 공시 목록 (DART)
+python collector/financials.py       # 주요계정 재무 (DART)
+python collector/shares.py           # 발행주식수 (DART)
 
 # 신호 계산
 python processor/signals.py
@@ -127,8 +226,9 @@ python processor/signals.py
 # 대시보드 실행
 uvicorn dashboard.app:app --reload --port 8000
 
-# 스케줄러 즉시 실행 (테스트)
-python scheduler.py --now
+# 배치 즉시 실행 (테스트)
+python scheduler.py --open   # 리밸런싱 (09:05 배치)
+python scheduler.py --now    # 수집·기록 (16:10 배치)
 ```
 
 ---
@@ -142,17 +242,26 @@ KIS_APP_KEY=...
 KIS_APP_SECRET=...
 KIS_ACCOUNT=계좌번호
 KIS_ACCOUNT_SUFFIX=01
-KIS_MOCK=true        # 모의투자 서버 사용 여부
-KIS_MODE=paper
+KIS_MOCK=true        # true=모의투자 서버, false=실전 서버
+KIS_MODE=paper       # paper=DB 시뮬레이션, live=증권사 주문
+DART_API_KEY=...     # opendart.fss.or.kr 무료 발급
 ```
+
+런타임 파라미터(`SLOTS`, `CAPITAL`, `HEAT_AVOID`, `HEAT_SELL`, `STOP_PCT`, `MAX_HOLD_DAYS`)는
+`settings` 테이블에서 60초 캐시로 읽습니다. 대시보드에서 바꾸면 즉시 반영됩니다.
+`settings`에는 폼에 없는 키도 둡니다 — `CAPITAL_<전략명>`(전략별 자본금),
+`RETIRED_STRATEGIES`(자산 집계에서 제외할 전략, 쉼표 구분), `LIVE_ENABLED`(실계좌 주문 허용).
+
+> 전략을 갈아탈 때는 이전 전략의 최종 자산을 새 전략의 `CAPITAL_<전략명>`으로 넘기고
+> 이전 전략을 `RETIRED_STRATEGIES`에 넣으세요. 그러지 않으면 새 전략이 전역 `CAPITAL`을
+> 새로 받아 총자산이 두 배로 찍힙니다.
 
 > 수급·신용잔고 수집 대상은 **시가총액 3,000억 이상**(`collector/universe.py`의 `MIN_MARCAP`)으로
 > 제한됩니다. 편도 0.2% 슬리피지 가정으로는 체결할 수 없는 종목을 배제하기 위함이며,
 > 이미 수집한 종목은 시총과 무관하게 계속 갱신해 시계열에 구멍이 생기지 않도록 합니다.
 
-> 일봉은 pykrx(인증 불필요), 투자자별 수급과 신용잔고는 KIS OpenAPI로 수집합니다.
-> `KIS_APP_KEY`/`KIS_APP_SECRET`이 없으면 수급·신용잔고가 수집되지 않아
-> heat_score의 3개 지표 중 거래대금 한 축만 남고, 진입 후보가 나오지 않습니다.
+> DART 주요계정은 한 번에 100종목까지 조회돼 전 종목이 40여 회 호출로 끝납니다.
+> 그래서 재무는 시가총액으로 걸러 호출을 아끼지 않고, 고유번호가 매핑된 종목을 모두 받습니다.
 
 > `KIS_MOCK=true`(모의투자 계정)는 **초당 2건** 요청 한도가 있습니다. 전 종목
 > 백필처럼 대량 수집을 할 때는 수집기를 하나씩 순차로 돌리세요.
@@ -161,21 +270,30 @@ KIS_MODE=paper
 
 ## 백테스트 & 검증 스크립트
 
-과거 데이터로 전략을 검증하거나, heat_score 신호가 실제로 수익률과 관계가 있는지 확인할 때 사용합니다.
-
 ```bash
-# 1. contrarian_signals 사전 계산 (백테스트 대상 기간)
-python backfill_signals.py 2022-01-01 2024-12-31
+# 퀄리티/가치 — 훈련/검증 분리, 리밸런싱 주기·슬롯·랭킹 종류 비교
+python research/quality_backtest.py
+WF_SLOTS=10 python research/quality_walkforward.py
 
-# 2. 로컬 백테스트 (진입/청산 시뮬레이션 + 기간분리·부트스트랩·무작위대조군 검증)
-python run_backtest_local.py 2022-01-01 2024-12-31
+# 역발상 계열
+python backfill_signals.py 2022-01-01 2024-12-31              # contrarian_signals 사전 계산
+python run_backtest_local.py 2022-01-01 2024-12-31            # 진입/청산 시뮬레이션 + 검증
+python research/portfolio_backtest.py 2022-01-01 2024-12-31   # 슬롯 제약 백테스트
+python research/contrarian_walkforward.py
+python research/rerun_hypotheses.py                           # 기각된 다섯 가설 재산정
 
-# 3. 분위수(decile) 분석 — 문턱값 없이 heat_score/개인수급/거래대금과
-#    향후 수익률의 관계 확인, KOSPI 벤치마크 대비 초과수익 비교
+# 펀더멘털 계열
+python research/fundamental_backtest.py 2022-01-01 2024-12-31 _train
+python research/fundamental_walkforward.py
+
+# 팩터 관찰 (문턱값 없이 분위수로)
+python research/rank_study.py 2022-01-01 2026-08-12
+python research/factor_deciles.py
 python decile_analysis.py 2022-01-01 2024-12-31
 ```
 
-`backtester/engine.py`(원본 서버사이드 백테스터)도 동일 기능을 제공하지만, DB 디스크 여유가 부족한 환경에서는 `run_backtest_local.py`를 대신 사용하세요 (동일 비용모델 `backtester/cost_model.py`를 그대로 재사용해 결과가 일치합니다).
+결과는 `backtest_runs` / `backtest_trades`에 저장돼 `/backtest` 화면에서 조회됩니다.
+전략당 최신 한 건만 유지하므로, 비교하려는 규칙 변형에는 각각 다른 `strategy` 이름을 주세요.
 
 ---
 
@@ -183,15 +301,13 @@ python decile_analysis.py 2022-01-01 2024-12-31
 
 전략 검증 과정과 결과는 **[`research/README.md`](research/README.md)** 에 있습니다.
 
-> **현재 전략은 실전 투입 가능한 수준이 아닙니다.** 훈련(2022–2024) / 검증(2025–2026)
-> 분리로 다섯 가지 가설을 시험했고 전부 기각됐습니다. 검증 기간 t값이 −1.1 ~ +1.6으로
-> 0과 구분되지 않습니다. 판단 근거와 방법론, 실패 사례가 위 문서에 정리돼 있습니다.
-
-```bash
-python research/rank_study.py 2022-01-01 2026-08-12   # 랭킹에 신호가 있는가
-python research/portfolio_backtest.py 2022-01-01 2024-12-31   # 슬롯 제약 백테스트
-python research/factor_deciles.py                     # 팩터 분위수 분석
-```
+> **`quality_v1`은 워크포워드 5개 창 전부에서 대조군을 이겼지만, t +1.19로 유의하지 않습니다.**
+> 승률 41%이고 5개 창 중 3개가 음수이며, 같은 기간 KOSPI를 이기지 못합니다.
+> "돈 버는 전략을 찾았다"가 아니라 "랭킹이 랭킹 안 하는 것보다 낫다는 게 5개 창에서 일관됐다"가
+> 정확한 표현입니다. 진짜 시험은 2026-08-21 이후 데이터입니다.
+>
+> 역발상 다섯 가설과 펀더멘털 두 변형은 모두 기각됐습니다. 생존 편향(현재 상장 목록으로 과거를
+> 백테스트)을 제거한 뒤 남은 양수가 하나도 없습니다.
 
 새 가설을 시험할 때는 문서 마지막의 **절차**를 따르세요. 검증 구간을 여러 번 쓰면
 사실상 훈련 데이터가 됩니다.
@@ -200,8 +316,7 @@ python research/factor_deciles.py                     # 팩터 분위수 분석
 
 ## 작업 목록
 
-앞으로 할 작업은 **[`TODO.md`](TODO.md)** 에 있습니다 (대시보드 시각화, 공시·재무 기반
-펀더멘털 전략).
+앞으로 할 작업은 **[`TODO.md`](TODO.md)** 에 있습니다.
 
 ---
 
@@ -211,4 +326,5 @@ python research/factor_deciles.py                     # 팩터 분위수 분석
 - 슬리피지 실측 ≤ 0.2%
 - MDD ≤ 백테스트 대비 150%
 
-`.env`에서 `KIS_MOCK=false`, `KIS_MODE=live` 로 변경하면 실전 전환됩니다.
+`.env`에서 `KIS_MOCK=false`로 바꾸고, `settings` 테이블에 `LIVE_ENABLED=true`를 넣어야
+실계좌 주문이 나갑니다. 둘 중 하나라도 빠지면 `executor/live.guard()`가 막습니다.

@@ -100,6 +100,7 @@
   <a href="#overview">프로젝트 개요</a>
   <a href="#structure">디렉터리 구조</a>
   <a href="#flow">실행 흐름</a>
+  <a href="#modes">실행 모드</a>
   <div class="section-label">모듈</div>
   <a href="#config">Config</a>
   <a href="#db">DB</a>
@@ -110,68 +111,80 @@
   <a href="#executor">Executor</a>
   <a href="#recorder">Recorder</a>
   <a href="#backtester">Backtester</a>
-  <a href="#analysis-tools">검증 보조 스크립트</a>
+  <a href="#research">연구 스크립트</a>
   <a href="#dashboard">Dashboard</a>
   <a href="#tests">테스트</a>
   <div class="section-label">설계</div>
   <a href="#schema">DB 스키마</a>
   <a href="#external">외부 API</a>
   <a href="#business">비즈니스 로직</a>
-  <a href="#deploy">배포 & 운영</a>
-  <a href="#todo">TODO & 미완성</a>
+  <a href="#deploy">배포 &amp; 운영</a>
+  <a href="#limits">알려진 제약</a>
 </nav>
 
 <!-- MAIN CONTENT -->
 <main>
 
   <h1>Unit Design Document</h1>
-  <p class="subtitle">한국 주식 역발상 자동매매 시스템 &nbsp;·&nbsp; 작성일 2026-08-09</p>
+  <p class="subtitle">한국 주식 퀄리티/가치 자동매매 시스템 &nbsp;·&nbsp; 2026-08-25 기준</p>
 
   <!-- ───── OVERVIEW ───── -->
   <section id="overview">
     <h2>1. 프로젝트 개요</h2>
     <p>
-      <strong>WarrenBuffett Bot</strong>은 개인 투자자(개미) 과열 신호를 역이용하는 역발상(Contrarian) 자동매매 시스템입니다.
-      매일 16:10 KST에 pykrx(일봉)와 KIS OpenAPI(투자자별 수급·신용잔고)로 당일 데이터를 수집하고, Claude API 기반 3개 에이전트 게이트를 통과한 종목만 매수합니다.
-      Railway PostgreSQL에 모든 상태를 저장하며 FastAPI 웹 대시보드로 포지션·거래내역을 관리합니다.
+      <strong>WarrenBuffett Bot</strong>은 DART 분기 재무로 종목을 고르고 Claude 에이전트가 공시 텍스트로
+      가치 함정을 걸러내는 자동매매 시스템입니다. 운용 전략은 <code>quality_v1</code>(퀄리티/가치, 월별
+      리밸런싱, 손절 없음) 하나이며, 평일 09:05에 리밸런싱 주문을 내고 16:10에 데이터를 수집·기록합니다.
+      Railway PostgreSQL에 모든 상태를 저장하고 FastAPI 대시보드로 포지션·거래·백테스트를 확인합니다.
     </p>
 
     <div class="card-grid">
       <div class="card">
-        <h4>최대 포지션 수</h4>
-        <div class="value">12</div>
-        <div class="note">SLOTS — DB 설정으로 런타임 변경 가능</div>
+        <h4>운용 전략</h4>
+        <div class="value" style="font-size:15px">quality_v1</div>
+        <div class="note">value 랭킹 · 월별 리밸런싱 · 손절 없음</div>
       </div>
       <div class="card">
-        <h4>진입 Heat 임계값</h4>
-        <div class="value">&lt; 7.0</div>
-        <div class="note">HEAT_AVOID — 낮을수록 보수적 진입</div>
+        <h4>편입 종목 수</h4>
+        <div class="value">10</div>
+        <div class="note">SLOTS — DB 설정으로 런타임 변경</div>
       </div>
       <div class="card">
-        <h4>청산 Heat 임계값</h4>
-        <div class="value">≥ 8.5</div>
-        <div class="note">HEAT_SELL — 과열 구간 도달 시 청산</div>
+        <h4>전략 자본금</h4>
+        <div class="value" style="font-size:16px">10,000,000</div>
+        <div class="note">CAPITAL — 1슬롯 = CAPITAL / SLOTS</div>
       </div>
       <div class="card">
-        <h4>최대 보유 기간</h4>
-        <div class="value">20일</div>
-        <div class="note">MAX_HOLD_DAYS</div>
+        <h4>시가총액 하한</h4>
+        <div class="value" style="font-size:16px">3,000억</div>
+        <div class="note">시점별 발행주식수 × 그날 종가</div>
       </div>
       <div class="card">
-        <h4>손절 기준</h4>
-        <div class="value">-7%</div>
-        <div class="note">STOP_PCT</div>
+        <h4>재무 사용 지연</h4>
+        <div class="value">90일</div>
+        <div class="note">AVAIL_LAG_DAYS — 법정기한보다 보수적</div>
       </div>
       <div class="card">
         <h4>AI 모델</h4>
         <div class="value" style="font-size:14px">Sonnet 4.6</div>
-        <div class="note">에이전트당 최대 256 토큰 응답</div>
+        <div class="note">에이전트당 max_tokens 1024</div>
       </div>
     </div>
 
     <div class="callout callout-info">
-      <strong>핵심 혁신</strong>
-      3개 에이전트 게이트: <code>market_state</code>·<code>risk</code>는 거부권(veto)을 보유하고, <code>value_trap</code>이 합의 투표를 담당합니다. 어느 한 veto 에이전트가 "관망" 또는 "청산"을 리턴하면 즉시 매수 거부됩니다.
+      <strong>전략 상태</strong>
+      <code>quality_v1</code>이 운용 중입니다. <code>contrarian_v1</code>(역발상)과
+      <code>fundamental_v1</code>(실적개선 공시)은 훈련/검증 분리와 워크포워드에서 기각됐습니다.
+      코드는 백테스트 재현과 대조군을 위해 남아 있고, <code>fundamental_v1</code>은 16:10 배치에서
+      <strong>시뮬레이션(paper) 경로로만</strong> 계속 돌아 실측치를 쌓습니다.
+      판정 근거는 <code>research/README.md</code>를 보세요.
+    </div>
+
+    <div class="callout callout-warn">
+      <strong>quality_v1도 통계적으로 유의하지는 않습니다</strong>
+      워크포워드 5개 창 전부에서 대조군(랭킹 없음)을 이겼지만 t +1.19, 승률 41%이고 5개 창 중 3개가
+      음수입니다. 같은 기간 KOSPI도 이기지 못합니다. "랭킹이 랭킹 안 하는 것보다 낫다는 것이 5개
+      창에서 일관됐다"까지가 측정된 사실입니다.
     </div>
   </section>
 
@@ -182,188 +195,305 @@
     <h2>2. 디렉터리 구조</h2>
     <pre><code>WarrenBuffett/
 ├── config.py               # 전역 설정, DB 기반 런타임 파라미터
-├── scheduler.py            # APScheduler 메인 엔트리 (평일 16:10)
+├── scheduler.py            # APScheduler 엔트리 (09:05 open_job / 16:10 daily_job)
 ├── setup_db.py             # DB 초기화 스크립트
-├── requirements.txt
-├── requirements-dev.txt    # pytest, pytest-mock (운영 의존성과 분리)
-├── pytest.ini
+├── requirements.txt / requirements-dev.txt / pytest.ini
 ├── runtime.txt             # Python 3.11
 ├── Procfile                # Railway web + worker 선언
 │
 ├── db/
-│   ├── connection.py       # PostgreSQL 커넥션 풀 & CRUD
-│   └── schema.sql          # 9개 테이블 DDL
+│   ├── connection.py       # PostgreSQL 커넥션 & CRUD (Raw SQL)
+│   └── schema.sql          # 16개 테이블 DDL (멱등 마이그레이션 포함)
 │
 ├── collector/
 │   ├── universe.py         # 수집 대상 종목 선정 (시가총액 필터)
-│   ├── stock_daily.py      # pykrx OHLCV 수집 (증분)
+│   ├── stock_daily.py      # pykrx OHLCV (증분)
 │   ├── investor_flow.py    # KIS 투자자별 매매동향 (증분)
-│   └── credit_balance.py   # KIS 신용잔고 일별추이 (증분)
+│   ├── credit_balance.py   # KIS 신용잔고 일별추이 (증분)
+│   ├── dart_corp_code.py   # DART 고유번호 → instruments.dart_corp_code
+│   ├── disclosure.py       # DART 공시 목록 (기간 단위)
+│   ├── financials.py       # DART 주요계정 재무 (100종목 배치)
+│   └── shares.py           # DART 발행주식수 (종목당 1콜, 재개 가능)
 │
 ├── processor/
-│   ├── signals.py          # heat_score 계산 (-10~+10)
-│   └── indicators.py       # SMA, 변동성, 52주 위치 등
+│   ├── signals.py          # heat_score 계산
+│   ├── indicators.py       # SMA, 변동성, 52주 위치 등
+│   └── valuation.py        # 시점 정합 시가총액·PBR (단위 오류 배제)
 │
 ├── strategy/
-│   └── contrarian.py       # 진입·청산 후보 필터
+│   ├── quality.py          # ★ 운용 전략 — 재무 스냅샷 · 필터 · 랭킹
+│   ├── filters.py          # 공용 종목 필터 (보통주 · 거래대금 · 시총)
+│   ├── fundamental.py      # 실적개선 공시 전략 (시뮬레이션 전용)
+│   └── contrarian.py       # 역발상 전략 (은퇴, 백테스트 대조군)
 │
 ├── agents/
-│   ├── base.py             # Claude API 래퍼 + DB 캐시
-│   ├── gate.py             # 합의 게이트 (veto + vote)
-│   ├── market_state.py     # 시장 전반 상태 분석 (veto)
-│   ├── risk.py             # 포트폴리오 리스크 (veto)
-│   └── value_trap.py       # 공시 텍스트로 가치 함정 판별 (vote)
+│   ├── base.py             # Claude API 래퍼 + DB 캐시 + 실패 분류
+│   ├── gate.py             # 거부권 + 합의 게이트
+│   ├── market_state.py     # 시장 전반 상태 (거부권, 전략별 규칙)
+│   ├── risk.py             # 포트폴리오 리스크 (거부권)
+│   ├── value_trap.py       # 공시 텍스트로 가치 함정 판별
+│   ├── disclosure.py       # 공시 이력 해석
+│   └── financials.py       # 재무 추이 해석
 │
 ├── executor/
-│   ├── paper.py            # 모의 매매 실행
-│   └── live.py             # KIS OpenAPI 실전 매매 (stub)
+│   ├── paper.py            # DB 시뮬레이션 (buy / sell / adjust)
+│   ├── live.py             # KIS OpenAPI 주문 (adjust / account_snapshot / guard)
+│   ├── sizing.py           # 1슬롯 수량 계산 (공용)
+│   └── guard.py            # 중복 진입 방지 (공용)
 │
 ├── recorder/
 │   ├── trade_log.py        # 기본 성과 요약
-│   └── evaluator.py        # MDD, 부트스트랩, t-test
+│   ├── evaluator.py        # MDD, 부트스트랩, t-test
+│   └── equity.py           # equity_daily 스냅샷, 전략별 자본금·은퇴 처리
 │
 ├── backtester/
-│   ├── engine.py           # 이벤트 기반 백테스트
+│   ├── engine.py           # 이벤트 기반 백테스트 (역발상)
+│   ├── fundamental_sim.py  # 펀더멘털 시뮬레이션 코어 (단일구간·워크포워드 공용)
 │   ├── cost_model.py       # 슬리피지·수수료·세금 모델
-│   └── validator.py        # 아웃오브샘플 검증
+│   ├── validator.py        # 아웃오브샘플 검증
+│   └── store.py            # backtest_runs / backtest_trades 저장
+│
+├── research/               # 전략 검증 기록과 스크립트 (README.md 필독)
+│   ├── quality_backtest.py / quality_walkforward.py
+│   ├── portfolio_backtest.py / contrarian_walkforward.py / rerun_hypotheses.py
+│   ├── fundamental_backtest.py / fundamental_walkforward.py
+│   └── rank_study.py / factor_deciles.py
 │
 ├── dashboard/
-│   ├── app.py              # FastAPI 앱
-│   └── templates/          # Bootstrap 5 Jinja2 템플릿
-│       ├── base.html
-│       ├── index.html      # 포지션 + 오늘의 거래
-│       ├── trades.html     # 거래 내역 50건
-│       └── settings.html   # 파라미터 설정 폼
+│   ├── app.py              # FastAPI 앱 (/, /trades, /backtest, /settings)
+│   ├── static/css/         # 자체 CSS (배포 시 mtime으로 캐시 무효화)
+│   └── templates/          # base / index / trades / backtest / settings / _agents / _line_chart
 │
-└── tests/                  # pytest 단위 테스트 (DB·API 전부 mock)
-    ├── conftest.py         # mock_db / mock_settings / mock_claude 픽스처
-    ├── test_investor_flow.py
-    ├── test_credit_balance.py
-    ├── test_signals.py
-    ├── test_contrarian.py
-    ├── test_scheduler.py
-    ├── test_paper.py
-    ├── test_agents_base.py
-    ├── test_gate.py
-    ├── test_cost_model.py
-    ├── test_connection.py
-    └── test_engine.py</code></pre>
+├── backfill_signals.py     # contrarian_signals 벡터화 백필
+├── run_backtest_local.py   # 로컬 백테스트 + 검증
+├── decile_analysis.py      # 분위수 분석
+├── migrate_from_ref.py     # 외부 참조 DB 이관 (1회성)
+└── tests/                  # pytest 26개 파일 253건 (DB·API 전부 mock)</code></pre>
   </section>
 
   <hr class="divider" />
 
   <!-- ───── FLOW ───── -->
   <section id="flow">
-    <h2>3. 일일 실행 흐름</h2>
-    <p>APScheduler가 평일 16:10 KST에 <code>daily_job()</code>을 트리거합니다.</p>
+    <h2>3. 실행 흐름</h2>
+    <p>APScheduler가 평일 두 번 돕니다. 주문과 수집을 한 시각에 몰 수 없기 때문입니다.</p>
 
+    <div class="callout callout-info">
+      <strong>배치를 둘로 나눈 이유</strong>
+      검증한 체결 규칙은 <strong>"기준일 다음 거래일 시가"</strong>입니다. 16:10은 장 마감 뒤라
+      그 시점에 오늘 결정을 체결하려면 아직 없는 내일 시가가 필요하고, 증권사 주문은 장중에만
+      체결됩니다. 그래서 <strong>결정은 직전 거래일 데이터로, 주문은 다음 날 개장 직후</strong>에 냅니다.
+    </div>
+
+    <h3>09:05 <code>open_job()</code> — 퀄리티 리밸런싱</h3>
     <div class="flow">
       <div class="flow-step">
         <div class="num">1</div>
-        <div class="body"><strong>collect_daily()</strong> — pykrx → <code>stock_daily</code> 테이블 증분 upsert</div>
+        <div class="body"><strong>리밸런싱일 판정</strong> — <code>_quality_rebalance_date()</code>가 직전 거래일이
+        그 달의 첫 거래일일 때만 기준일을 돌려줍니다. 다만 <strong>보유가 하나도 없거나 계좌가 미수 상태이면</strong>
+        달력을 무시하고 직전 거래일 기준으로 진행합니다</div>
       </div>
       <div class="flow-connector"></div>
       <div class="flow-step">
         <div class="num">2</div>
-        <div class="body"><strong>collect_flow()</strong> — KIS OpenAPI 종목별 투자자매매동향 → <code>investor_flow</code></div>
+        <div class="body"><strong>quality.get_targets(기준일, slots, limit=slots×3)</strong> — 재무 스냅샷 →
+        <code>eligible()</code> 필터 → 보통주·거래대금 필터 → <code>value</code> 점수 상위 추출.
+        슬롯의 3배를 뽑는 것은 에이전트가 일부를 반려해도 슬롯을 채우기 위함입니다</div>
       </div>
       <div class="flow-connector"></div>
       <div class="flow-step">
         <div class="num">3</div>
-        <div class="body"><strong>collect_kis()</strong> — KIS OpenAPI 신용잔고 일별추이 수집 → <code>credit_balance</code></div>
+        <div class="body"><strong>value_trap.analyze()</strong> — 후보를 순위대로 훑으며 '매수'(또는 호출 오류)만
+        편입 목록에 넣습니다. 반려된 종목은 건너뛰고 다음 순위로 슬롯을 채웁니다</div>
       </div>
       <div class="flow-connector"></div>
       <div class="flow-step">
         <div class="num">4</div>
-        <div class="body"><strong>compute_for_date()</strong> — 전 종목 heat_score 계산 → <code>contrarian_signals</code></div>
+        <div class="body"><strong>나머지 네 에이전트 폴링</strong> — <code>market_state</code>·<code>risk</code>·
+        <code>disclosure</code>·<code>financials</code>의 판단을 받아 <code>trades.agents</code> JSON에 기록합니다.
+        <strong>편입 여부는 바꾸지 않습니다</strong></div>
       </div>
       <div class="flow-connector"></div>
       <div class="flow-step">
         <div class="num">5</div>
-        <div class="body"><strong>get_exit_candidates() → sell()</strong> — stop / expiry / heat_signal 해당 포지션 청산</div>
+        <div class="body"><strong>수량 산정 후 주문</strong> — <code>slot_value = 총자산 / SLOTS</code>.
+        <code>KIS_MODE=live</code>면 <code>live.adjust()</code>(증권사 주문 + 잔고 확인),
+        <code>paper</code>면 <code>paper.adjust()</code>(오늘 시가로 DB 시뮬레이션).
+        목표에 없는 보유는 <code>target_qty=0</code>으로 전량 청산.
+        live 주문은 <strong>체결 금액 차이 오름차순</strong>으로 정렬해 매도가 전부 먼저 나갑니다</div>
       </div>
       <div class="flow-connector"></div>
       <div class="flow-step">
         <div class="num">6</div>
-        <div class="body">
-          <strong>_entry_signal_date() → get_entry_candidates() → gate.decide() → buy()</strong><br/>
-          <strong>직전 거래일</strong> 신호에서 heat &lt; 7.0 &amp; 52주 하위 30% 종목을 필터 →
-          4에이전트 합의 통과 시 <strong>당일 시가</strong>로 모의 매수
-        </div>
+        <div class="body"><strong>recorder.equity.snapshot()</strong> — <code>equity_daily</code> 기록</div>
+      </div>
+    </div>
+
+    <h3>16:10 <code>daily_job()</code> — 수집 · 신호 · 기록</h3>
+    <div class="flow">
+      <div class="flow-step">
+        <div class="num">1</div>
+        <div class="body"><strong>collect_daily()</strong> — pykrx → <code>stock_daily</code> 증분 upsert</div>
+      </div>
+      <div class="flow-connector"></div>
+      <div class="flow-step">
+        <div class="num">2</div>
+        <div class="body"><strong>collect_flow() / collect_kis()</strong> — KIS 투자자별 수급 · 신용잔고</div>
+      </div>
+      <div class="flow-connector"></div>
+      <div class="flow-step">
+        <div class="num">3</div>
+        <div class="body"><strong>collect_disclosure() / collect_financials()</strong> — DART 공시 목록(마지막
+        수집일부터 이어받음)과 주요계정 재무(전 종목 40여 회 호출이라 매일 확인)</div>
+      </div>
+      <div class="flow-connector"></div>
+      <div class="flow-step">
+        <div class="num">4</div>
+        <div class="body"><strong>compute_for_date()</strong> — 전 종목 heat_score → <code>contrarian_signals</code></div>
+      </div>
+      <div class="flow-connector"></div>
+      <div class="flow-step">
+        <div class="num">5</div>
+        <div class="body"><strong>fundamental 청산</strong> — 손절 → 만기 순으로 <code>paper.sell()</code>.
+        퀄리티는 손절도 보유기한도 없어 청산이 리밸런싱에서만 일어납니다</div>
+      </div>
+      <div class="flow-connector"></div>
+      <div class="flow-step">
+        <div class="num">6</div>
+        <div class="body"><strong>fundamental 진입</strong> — 직전 거래일 공시 후보 →
+        <code>gate.decide_fundamental()</code>(거부권 + 합의) → 통과 시 <code>paper.buy()</code>.
+        슬롯이 소진되면 남은 후보는 게이트 호출 없이 건너뜁니다</div>
       </div>
       <div class="flow-connector"></div>
       <div class="flow-step">
         <div class="num">7</div>
-        <div class="body"><strong>summary()</strong> — 거래 통계 로그 출력</div>
+        <div class="body"><strong>equity.snapshot() → trade_log.summary()</strong> — 자산 기록과 성과 출력</div>
       </div>
     </div>
 
-    <div class="callout callout-info">
-      <strong>진입 신호일과 체결일이 다른 이유</strong>
-      체결 규칙은 <strong>"신호일 다음 거래일 시가"</strong>입니다(<code>backtester/engine.py</code>와 동일).
-      스케줄러는 장 마감 후 16:10에 도는데, 이 시점에 오늘 신호를 체결하려면 아직 존재하지 않는
-      내일 시가가 필요합니다. 그래서 6단계는 <strong>직전 거래일 신호</strong>를 대상으로 삼아
-      오늘 시가로 체결합니다. <code>scheduler._entry_signal_date()</code>가 이 날짜를 고르며,
-      신호 계산이 밀려 체결일이 오늘이 아니면(=지나간 날 시가로 체결하게 되면) 매수 단계를 건너뜁니다.
+    <h3>게이트 내부 흐름 (<code>fundamental_v1</code>)</h3>
+    <pre><code>gate.decide_fundamental(code, date, strategy)
+  │
+  ├─ disclosure.analyze()    → 매수 | 관망 | 청산   (합의)
+  ├─ financials.analyze()    → 매수 | 관망 | 청산   (합의)
+  ├─ market_state.analyze()  → 매수 | 관망 | 청산   (거부권)
+  └─ risk.analyze()          → 매수 | 관망 | 청산   (거부권)
+
+판정 순서:
+  1. decision='오류'가 하나라도 있으면  → 판단 불가로 반려 (거부권과 구분)
+  2. market_state 또는 risk 가 관망/청산 → 거부권 반려
+  3. 합의 에이전트가 전원 '매수'가 아니면 → 합의 미달 반려
+  4. 전부 통과 → approved = True, 평균 확신 기록</code></pre>
+    <p><code>gate.decide()</code>는 역발상용으로 <code>value_trap</code>을 합의 에이전트로 씁니다.
+    퀄리티 리밸런싱은 이 게이트를 쓰지 않고 <code>open_job()</code>이 직접 <code>value_trap</code>만
+    관문으로 세웁니다 — 나머지는 기록용입니다.</p>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── MODES ───── -->
+  <section id="modes">
+    <h2>4. 실행 모드</h2>
+    <p><code>trades</code>·<code>positions</code>·<code>equity_daily</code>가 전부 <code>mode</code>로 갈라져
+    세 계좌를 나란히 굴려도 섞이지 않습니다. <code>positions</code>의 PK가
+    <code>(code, strategy, mode)</code>인 이유이기도 합니다.</p>
+    <table>
+      <tr><th>mode</th><th>무엇</th><th>설정</th><th>기록 주체</th></tr>
+      <tr><td><code>paper</code></td><td>우리 DB 안의 가상 체결. 주문이 아무 데도 나가지 않음</td><td><code>KIS_MODE=paper</code></td><td><code>executor/paper.py</code></td></tr>
+      <tr><td><code>live</code></td><td>KIS <strong>모의투자 서버</strong> 실제 주문</td><td><code>KIS_MODE=live</code> + <code>KIS_MOCK=true</code></td><td><code>executor/live.py</code></td></tr>
+      <tr><td><code>real</code></td><td>KIS <strong>실전 서버</strong> 실제 주문 (실제 자금)</td><td><code>KIS_MODE=live</code> + <code>KIS_MOCK=false</code></td><td><code>executor/live.py</code></td></tr>
+    </table>
+
+    <div class="callout callout-danger">
+      <strong>실계좌는 이중 잠금입니다</strong>
+      <code>KIS_MOCK=false</code>여도 <code>settings</code> 테이블의 <code>LIVE_ENABLED</code>가
+      <code>true|1|on</code> 중 하나로 켜져 있지 않으면 <code>executor/live.guard()</code>가
+      <code>RuntimeError</code>를 던져 주문을 막습니다. 기본값은 꺼짐입니다.
     </div>
 
-    <h3>에이전트 게이트 내부 흐름</h3>
-    <pre><code>gate.decide(code, date)
-  │
-  ├─ market_state.analyze()  → decision: 매수 | 관망 | 청산
-  │     ↳ fall_pct ≥ 70% 이면 하드코딩 "청산" (VETO)
-  │
-  ├─ risk.analyze()          → decision: 매수 | 관망
-  │     ↳ free_slots = 0    → 하드코딩 "관망" (VETO)
-  │     ↳ same_sector ≥ 3  → 하드코딩 "관망" (VETO)
-  │
-  └─ value_trap.analyze()    → decision: 매수 | 관망  (vote)
+    <div class="callout callout-warn">
+      <strong>잔고는 우리가 계산하지 않습니다</strong>
+      슬롯 금액도 자산곡선도 KIS가 계산한 순자산(<code>nass_amt</code>)을 씁니다.
+      KIS 모의는 매수해도 예수금(<code>dnca_tot_amt</code>)이 줄지 않아 <code>dnca + scts</code>로
+      총자산을 구하면 T+2 결제 대기분이 빠져 부풀려집니다 — 재실행마다 잔고가 커지고 새 매수가
+      미수(외상)로 뚫립니다. <code>live.adjust()</code>는 매수 전
+      <code>_settled_cash_after()</code>로 결제 예정 예수금이 음수가 되는지 확인하고 넘깁니다.
+    </div>
 
-결과:
-  veto 에이전트 중 하나라도 관망/청산 → approved = False
-  value_trap 이 "매수"가 아니면 → approved = False
-  모두 통과 → approved = True → paper.buy() 호출</code></pre>
+    <div class="callout callout-danger">
+      <strong>미수가 나면 달력을 기다리지 않습니다</strong>
+      미수는 T+2에 <strong>반대매매</strong>로 끝납니다. <code>account_snapshot()</code>이 KIS의
+      결제 예정 예수금(<code>prvs_rcdl_excc_amt</code>)을 <code>settled_cash</code>로 내주고,
+      그 값이 음수면 <code>open_job()</code>이 리밸런싱일이 아니어도 그 자리에서 정리합니다.
+      달력을 기다리면 다음 리밸런싱일까지 몇 주가 남을 수 있고, 그 전에 반대매매가 먼저 옵니다.
+    </div>
+
+    <div class="callout callout-warn">
+      <strong>매도를 전부 낸 뒤에 매수로 넘어갑니다</strong>
+      랭킹 순서대로 섞어 내면 매도 대금이 아직 잡히지 않은 상태에서 매수가 미수 가드에 걸려
+      그대로 건너뛰어지고, 그 슬롯이 빈 채로 끝납니다. 주문을
+      <strong>체결 금액 차이 오름차순</strong>으로 정렬하면 큰 매도부터 나가 여유가 먼저 생깁니다.
+    </div>
   </section>
 
   <hr class="divider" />
 
   <!-- ───── CONFIG ───── -->
   <section id="config">
-    <h2>4. Config 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">config.py</small></h2>
+    <h2>5. Config 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">config.py</small></h2>
 
-    <h3>하드코딩 상수</h3>
+    <h3>하드코딩 상수 / 기본값</h3>
     <table>
-      <tr><th>상수</th><th>값</th><th>설명</th></tr>
-      <tr><td><code>SLIP_BPS</code></td><td>20</td><td>슬리피지 0.20% (편도)</td></tr>
-      <tr><td><code>FEE_BPS</code></td><td>1.5</td><td>수수료 0.015%</td></tr>
-      <tr><td><code>TAX_BPS</code></td><td>20</td><td>증권거래세 0.20% (매도 시)</td></tr>
-      <tr><td><code>SLOTS</code></td><td>5</td><td>최대 동시 보유 종목 수 (전략별로 셈)</td></tr>
-      <tr><td><code>HEAT_AVOID</code></td><td>7.0</td><td>진입 불가 임계값</td></tr>
-      <tr><td><code>HEAT_SELL</code></td><td>8.5</td><td>청산 신호 임계값</td></tr>
-      <tr><td><code>MAX_HOLD_DAYS</code></td><td>20</td><td>최대 보유 기간(일)</td></tr>
-      <tr><td><code>STOP_PCT</code></td><td>0.07</td><td>손절 비율 7%</td></tr>
+      <tr><th>상수</th><th>값</th><th>설명</th><th>런타임 변경</th></tr>
+      <tr><td><code>SLIP_BPS</code></td><td>20</td><td>슬리피지 0.20% (편도)</td><td>—</td></tr>
+      <tr><td><code>FEE_BPS</code></td><td>1.5</td><td>수수료 0.015%</td><td>—</td></tr>
+      <tr><td><code>TAX_BPS</code></td><td>20</td><td>증권거래세 0.20% (매도 시)</td><td>—</td></tr>
+      <tr><td><code>SLOTS</code></td><td>10</td><td>전략별 최대 편입 종목 수</td><td>✅</td></tr>
+      <tr><td><code>CAPITAL</code></td><td>10,000,000</td><td>전략 하나가 굴리는 자금</td><td>✅</td></tr>
+      <tr><td><code>HEAT_AVOID</code></td><td>7.0</td><td>역발상 진입 불가 임계값</td><td>✅</td></tr>
+      <tr><td><code>HEAT_SELL</code></td><td>8.5</td><td>역발상 청산 신호 임계값</td><td>✅</td></tr>
+      <tr><td><code>MAX_HOLD_DAYS</code></td><td>20</td><td>최대 보유 기간(거래일)</td><td>✅</td></tr>
+      <tr><td><code>STOP_PCT</code></td><td>0.07</td><td>손절 비율 7%</td><td>✅</td></tr>
     </table>
+    <p><code>HEAT_*</code>·<code>STOP_PCT</code>·<code>MAX_HOLD_DAYS</code>는 <code>contrarian_v1</code>과
+    <code>fundamental_v1</code>이 쓰는 값입니다. <code>quality_v1</code>은 손절도 보유기한도 없어
+    <code>SLOTS</code>와 <code>CAPITAL</code>만 참조합니다.</p>
 
     <h3>DB 기반 런타임 설정</h3>
-    <p><code>get_setting(key)</code>는 <code>settings</code> 테이블을 조회하고 (60초 캐시), 없으면 위 하드코딩 상수를 폴백으로 사용합니다. 웹 대시보드에서 값 변경 시 <code>invalidate_settings_cache()</code>로 즉시 반영됩니다.</p>
+    <p><code>get_setting(key)</code>가 <code>settings</code> 테이블을 60초 캐시로 조회하고, 없으면
+    <code>_DEFAULTS</code>를 폴백으로 씁니다. 대시보드에서 저장하면
+    <code>invalidate_settings_cache()</code>로 즉시 반영됩니다.</p>
+    <p>설정 폼에 없지만 코드가 읽는 키가 셋 더 있습니다:</p>
+    <table>
+      <tr><th>키</th><th>읽는 곳</th><th>용도</th></tr>
+      <tr><td><code>CAPITAL_&lt;전략명&gt;</code></td><td><code>recorder/equity.py</code></td><td>전략별 자본금. 전략을 갈아탈 때 이전 전략의 최종 자산을 넘긴다</td></tr>
+      <tr><td><code>RETIRED_STRATEGIES</code></td><td><code>recorder/equity.py</code></td><td>자산 집계에서 제외할 전략(쉼표 구분). 과거 기록은 남는다</td></tr>
+      <tr><td><code>LIVE_ENABLED</code></td><td><code>executor/live.guard()</code></td><td>실전 서버 주문 허용 스위치</td></tr>
+    </table>
+    <div class="callout callout-warn">
+      <strong>전략 전환 시 자본금을 넘기지 않으면 자산이 두 배로 찍힙니다</strong>
+      새 전략이 전역 <code>CAPITAL</code>을 새로 받으면 이전 전략의 손익이 기록에서 사라집니다.
+      전환할 때는 이전 전략의 최종 자산을 <code>CAPITAL_&lt;새 전략&gt;</code>에 넣고,
+      이전 전략을 <code>RETIRED_STRATEGIES</code>에 추가합니다.
+    </div>
 
     <h3>환경변수 (.env)</h3>
     <table>
       <tr><th>키</th><th>용도</th></tr>
       <tr><td><code>DB_URL</code></td><td>Railway PostgreSQL 연결 문자열</td></tr>
       <tr><td><code>CLAUDE_API_KEY</code></td><td>Anthropic API 인증</td></tr>
-      <tr><td><code>KIS_APP_KEY / SECRET</code></td><td>KIS OpenAPI 앱 인증</td></tr>
+      <tr><td><code>KIS_APP_KEY</code> / <code>KIS_APP_SECRET</code></td><td>KIS OpenAPI 앱 인증</td></tr>
       <tr><td><code>KIS_ACCOUNT</code> / <code>KIS_ACCOUNT_SUFFIX</code></td><td>매매 계좌번호 및 상품코드</td></tr>
-      <tr><td><code>KIS_MOCK</code></td><td><code>true</code>면 모의투자 서버(<code>openapivts</code>), <code>false</code>면 실전 서버. <code>executor/live.py</code>에서 직접 읽습니다</td></tr>
-      <tr><td><code>KIS_MODE</code></td><td><code>paper</code> 또는 <code>live</code></td></tr>
-      <tr><td><code>DART_API_KEY</code></td><td>미사용 (예약)</td></tr>
+      <tr><td><code>KIS_MOCK</code></td><td><code>true</code>면 모의투자 서버(<code>openapivts</code>), <code>false</code>면 실전 서버. <code>executor/live.py</code>가 직접 읽어 <code>MODE</code>(live/real)를 정한다</td></tr>
+      <tr><td><code>KIS_MODE</code></td><td><code>paper</code>(DB 시뮬레이션) 또는 <code>live</code>(증권사 주문). <code>open_job()</code>의 분기 조건</td></tr>
+      <tr><td><code>DART_API_KEY</code></td><td>DART OpenAPI 인증 — 공시·재무·발행주식수 수집에 필수</td></tr>
       <tr><td><code>KRX_OPEN_API_KEY</code></td><td>미사용 (예약)</td></tr>
     </table>
 
     <div class="callout callout-warn">
       <strong>KIS 모의투자 계정의 요청 한도</strong>
       <code>KIS_MOCK=true</code>인 모의투자 계정은 <strong>초당 2건</strong> 제한이 있습니다.
-      수집기들은 요청 간 <code>SLEEP_SEC = 0.3</code>초를 두지만, 전 종목 백필처럼 대량 수집을
+      수집기들은 요청 간 <code>SLEEP_SEC = 0.6</code>초를 두지만, 전 종목 백필처럼 대량 수집을
       할 때 <code>investor_flow</code>와 <code>credit_balance</code>를 동시에 돌리면 한도를 넘겨
       양쪽 모두 실패합니다. 순차로 실행해야 합니다.
     </div>
@@ -373,10 +503,11 @@
 
   <!-- ───── DB ───── -->
   <section id="db">
-    <h2>5. DB 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">db/</small></h2>
+    <h2>6. DB 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">db/</small></h2>
 
     <h3>connection.py — 연결 관리</h3>
-    <p>스레드-로컬 psycopg2 커넥션 풀. ORM 없이 Raw SQL로 성능과 제어권을 확보합니다.</p>
+    <p>스레드-로컬 psycopg2 커넥션. ORM 없이 Raw SQL로 성능과 제어권을 확보합니다.
+    쿼리가 실패하면 롤백하고, 롤백조차 실패하면 커넥션을 폐기한 뒤 재연결합니다(원본 예외는 보존).</p>
     <table>
       <tr><th>함수</th><th>반환</th><th>설명</th></tr>
       <tr><td><code>get_conn()</code></td><td>connection</td><td>스레드당 커넥션 재사용 또는 신규 생성</td></tr>
@@ -384,7 +515,7 @@
       <tr><td><code>executemany(sql, rows)</code></td><td>None</td><td>execute_values 배치 삽입</td></tr>
       <tr><td><code>fetchall(sql, params)</code></td><td>list[dict]</td><td>RealDictCursor 전체 조회</td></tr>
       <tr><td><code>fetchone(sql, params)</code></td><td>dict | None</td><td>단건 조회</td></tr>
-      <tr><td><code>init_schema()</code></td><td>None</td><td>schema.sql 실행 (최초 1회)</td></tr>
+      <tr><td><code>init_schema()</code></td><td>None</td><td>schema.sql 실행 (멱등)</td></tr>
     </table>
   </section>
 
@@ -392,23 +523,65 @@
 
   <!-- ───── SCHEMA ───── -->
   <section id="schema">
-    <h2>6. DB 스키마 (9개 테이블)</h2>
+    <h2>7. DB 스키마 (16개 테이블)</h2>
+
+    <h4>시세 · 수급</h4>
     <table>
       <tr><th>테이블</th><th>PK</th><th>주요 컬럼</th><th>용도</th></tr>
-      <tr><td><code>stock_daily</code></td><td>(code, d)</td><td>o, h, l, c, v</td><td>OHLCV 캔들스틱</td></tr>
-      <tr><td><code>investor_flow</code></td><td>(code, d)</td><td>individual_net, foreign_net, institution_net</td><td>투자자별 순매수</td></tr>
+      <tr><td><code>instruments</code></td><td>code</td><td>name, dart_corp_code</td><td>종목코드-종목명, DART 고유번호 매핑</td></tr>
+      <tr><td><code>stock_daily</code></td><td>(code, d)</td><td>o, h, l, c, v</td><td>일봉 OHLCV</td></tr>
+      <tr><td><code>investor_flow</code></td><td>(code, d)</td><td>individual_net, foreign_net, institution_net</td><td>투자자별 순매수 <strong>(단위: 원)</strong></td></tr>
       <tr><td><code>credit_balance</code></td><td>(code, d)</td><td>credit_amt, credit_ratio</td><td>신용융자 잔고</td></tr>
-      <tr><td><code>instruments</code></td><td>code</td><td>name</td><td>종목코드-종목명 매핑</td></tr>
-      <tr><td><code>contrarian_signals</code></td><td>(code, d)</td><td>individual_flow_ratio, credit_surge_ratio, volume_ratio, heat_score, signal</td><td>전처리된 시그널</td></tr>
-      <tr><td><code>agent_decisions</code></td><td>id (auto)</td><td>agent, code, decision, score, rationale, input_hash</td><td>Claude API 캐시 + 호출 실패 기록(decision='오류', input_hash NULL)</td></tr>
-      <tr><td><code>trades</code></td><td>id (auto)</td><td>mode, side, code, qty, price, amount, exit_reason, realized_pct, agents JSONB</td><td>주문 로그</td></tr>
-      <tr><td><code>positions</code></td><td>code</td><td>entry_date, entry_px, qty, stop_px, max_hold_days, mode</td><td>현재 보유 포지션</td></tr>
-      <tr><td><code>collect_cursor</code></td><td>(source, code)</td><td>last_seen</td><td>증분 수집 체크포인트</td></tr>
-      <tr><td><code>settings</code></td><td>key</td><td>value, updated_at</td><td>런타임 파라미터 저장</td></tr>
+      <tr><td><code>contrarian_signals</code></td><td>(code, d)</td><td>individual_flow_ratio, credit_surge_ratio, volume_ratio, heat_score, signal</td><td>전처리된 과열 신호 (+ 관측용 3컬럼)</td></tr>
     </table>
+
+    <h4>공시 · 재무</h4>
+    <table>
+      <tr><th>테이블</th><th>PK</th><th>주요 컬럼</th><th>용도</th></tr>
+      <tr><td><code>disclosures</code></td><td>rcept_no</td><td>code, d, report_nm, url</td><td>DART 공시 목록 (<code>(code, d)</code> 인덱스)</td></tr>
+      <tr><td><code>financials</code></td><td>(code, period)</td><td>fs_div, revenue, op_income, net_income, assets, liabilities, equity</td><td>DART 주요계정 <strong>(손익은 사업연도 누적)</strong></td></tr>
+      <tr><td><code>shares</code></td><td>(code, period)</td><td>issued, treasury, floating</td><td>발행주식수 — 시가총액·PBR의 전제</td></tr>
+    </table>
+
+    <h4>운용 기록</h4>
+    <table>
+      <tr><th>테이블</th><th>PK</th><th>주요 컬럼</th><th>용도</th></tr>
+      <tr><td><code>positions</code></td><td>(code, strategy, mode)</td><td>name, entry_date, entry_px, qty, stop_px, max_hold_days</td><td>현재 보유 포지션</td></tr>
+      <tr><td><code>trades</code></td><td>id (auto)</td><td>mode, side, code, qty, price, amount, strategy, agents JSONB, exit_reason, realized_pct</td><td>주문 로그</td></tr>
+      <tr><td><code>equity_daily</code></td><td>(d, mode, strategy)</td><td>cash, positions_value, total_equity</td><td>일별 자산 스냅샷 — 자산곡선의 원천</td></tr>
+      <tr><td><code>agent_decisions</code></td><td>id (auto)</td><td>agent, code, decision, score, rationale, model, input_hash</td><td>Claude 캐시 + 호출 실패 기록(<code>decision='오류'</code>, <code>input_hash</code> NULL)</td></tr>
+      <tr><td><code>collect_cursor</code></td><td>(source, code)</td><td>last_seen</td><td>증분 수집 체크포인트</td></tr>
+      <tr><td><code>settings</code></td><td>key</td><td>value, updated_at</td><td>런타임 파라미터</td></tr>
+    </table>
+
+    <h4>백테스트</h4>
+    <table>
+      <tr><th>테이블</th><th>PK</th><th>주요 컬럼</th><th>용도</th></tr>
+      <tr><td><code>backtest_runs</code></td><td>id (auto), strategy UNIQUE</td><td>ts, start_d, end_d, params JSONB, summary JSONB</td><td>실행 단위. <strong>전략당 최신 한 건만 유지</strong></td></tr>
+      <tr><td><code>backtest_trades</code></td><td>run_id 참조 (CASCADE)</td><td>code, entry_d, exit_d, entry_px, exit_px, ret_pct, exit_reason</td><td>개별 매매</td></tr>
+    </table>
+
+    <div class="callout callout-warn">
+      <strong><code>positions</code>의 PK에 mode가 들어가는 이유</strong>
+      같은 전략을 paper 시뮬레이션과 live 실계좌 두 벌로 나란히 굴립니다. PK에 <code>mode</code>가
+      없으면 live INSERT가 <code>ON CONFLICT</code>에서 paper 행을 만나 수량만 덮어쓰고
+      <code>mode</code>는 <code>'paper'</code>로 남아, 대시보드의 live 탭이 비어 보입니다.
+      <code>schema.sql</code>은 현재 PK 컬럼 조합을 읽어 부족하면 재설치하는 멱등 마이그레이션을
+      포함합니다.
+    </div>
+
+    <div class="callout callout-danger">
+      <strong><code>investor_flow</code>는 반드시 원(KRW) 단위</strong>
+      KIS의 <code>*_ntby_tr_pbmn</code> 필드는 <strong>백만원</strong>입니다. 수집기가
+      <code>PBMN_TO_WON</code>으로 환산해 넣습니다. 원 단위 행과 백만원 단위 행이 섞이면
+      <code>flow_ratio</code>(오늘/30일 평균)가 창 하나에 두 단위를 물어 heat_score가 전 종목 0이
+      됩니다. 신호가 조용히 사라지고 백테스트까지 무의미해집니다.
+    </div>
+
     <div class="callout callout-info">
       <strong>멱등성(Idempotency)</strong>
-      모든 삽입 쿼리는 <code>ON CONFLICT DO NOTHING</code>을 사용하므로 중복 실행에 안전합니다.
+      수집 삽입은 <code>ON CONFLICT DO NOTHING</code>, 스냅샷·포지션 갱신은
+      <code>ON CONFLICT DO UPDATE</code>를 씁니다. 배치를 다시 돌려도 안전합니다.
     </div>
   </section>
 
@@ -416,207 +589,329 @@
 
   <!-- ───── COLLECTOR ───── -->
   <section id="collector">
-    <h2>7. Collector 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">collector/</small></h2>
+    <h2>8. Collector 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">collector/</small></h2>
 
     <h3>universe.py — 수집 대상 선정</h3>
-    <p><code>target_codes(source)</code>가 <code>investor_flow</code>·<code>credit_balance</code> 두 수집기의 대상 종목을 정합니다.
-    <code>FinanceDataReader.StockListing('KRX')</code>의 <code>Marcap</code>을 읽어 시가총액이
-    <code>MIN_MARCAP</code>(3,000억) 이상인 종목만 남깁니다. KRX 조회라 KIS 요청 한도와 무관합니다.</p>
+    <p><code>target_codes(source)</code>가 <code>investor_flow</code>·<code>credit_balance</code> 두 수집기의
+    대상 종목을 정합니다. <code>FinanceDataReader.StockListing('KRX')</code>의 <code>Marcap</code>을 읽어
+    <code>MIN_MARCAP</code>(3,000억) 이상만 남깁니다. <code>large_caps()</code>는
+    <code>strategy/filters.py</code>도 함께 씁니다.</p>
     <pre><code>대상 = (시총 3,000억 이상 ∪ 해당 source로 이미 수집된 종목) ∩ stock_daily 보유 종목</code></pre>
 
     <div class="callout callout-info">
       <strong>시총 하위 종목을 제외하는 이유</strong>
       비용 모델이 편도 슬리피지 0.2%(<code>SLIP_BPS=20</code>)를 가정하는데, 거래대금이 얇은 종목에서는
-      성립하지 않습니다. 게다가 역발상 진입 필터(heat 낮음 + 52주 하위 30%)는 소외되고 하락한 종목을
-      고르는 필터라 비유동 소형주를 <strong>구조적으로</strong> 후보 상위에 올립니다. 단순 노이즈가 아니라
-      체계적 편향이므로 수집 단계에서 잘라냅니다.
+      성립하지 않습니다. 게다가 저평가·소외 종목을 고르는 필터는 비유동 소형주를
+      <strong>구조적으로</strong> 후보 상위에 올립니다. 단순 노이즈가 아니라 체계적 편향이므로
+      수집 단계에서 잘라냅니다.
     </div>
 
     <div class="callout callout-warn">
       <strong>이미 수집한 종목은 시총과 무관하게 유지합니다</strong>
       FDR이 주는 시총은 <strong>현재</strong> 값입니다. 과거에는 대형주였거나 이후 상장폐지된 종목을
-      소급 제외하면 시계열에 구멍이 생기고 백테스트에 생존 편향이 들어갑니다. 하필 역발상 전략은
-      '얻어맞은 종목'을 사므로, 실제로 상장폐지까지 간 종목만 빠지면 결과가 실제보다 좋게 나옵니다.
-      그래서 <code>collect_cursor</code>에 이미 기록이 있는 종목은 유니버스에 계속 포함시킵니다
-      (증분 수집이라 비용은 종목당 하루 1페이지 수준).
+      소급 제외하면 시계열에 구멍이 생기고 백테스트에 생존 편향이 들어갑니다. 그래서
+      <code>collect_cursor</code>에 기록이 있는 종목은 유니버스에 계속 포함시킵니다.
+      <br/><br/>
+      백테스트에서 시점별 시가총액이 필요할 때는 FDR이 아니라 <code>shares</code> 테이블
+      (그 시점에 공시돼 있던 발행주식수) × 그날 종가를 씁니다 — <code>strategy/quality.marcap_on()</code>,
+      <code>processor/valuation.market_caps()</code>.
     </div>
 
     <h3>stock_daily.py</h3>
-    <p>FinanceDataReader로 KRX 전 종목 코드를 가져온 뒤, <code>collect_cursor</code>를 기준으로 마지막 수집일 이후 데이터만 pykrx에서 증분 수집합니다. 요청 간 0.35초 딜레이(KRX 쓰로틀링 방지).</p>
+    <p>FinanceDataReader로 KRX 전 종목 코드를 가져온 뒤, <code>collect_cursor</code>를 기준으로 마지막
+    수집일 이후 데이터만 pykrx에서 증분 수집합니다. 요청 간 0.35초 딜레이(KRX 쓰로틀링 방지).</p>
 
     <h3>investor_flow.py</h3>
-    <p>KIS OpenAPI <strong>종목별 투자자매매동향(일별)</strong>으로 개인/외국인/기관계 순매수 거래대금을 수집합니다.</p>
     <table>
       <tr><th>항목</th><th>값</th></tr>
       <tr><td>Endpoint</td><td><code>/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily</code></td></tr>
       <tr><td>tr_id</td><td><code>FHPTJ04160001</code></td></tr>
-      <tr><td>페이지당 최대</td><td>30건 (영업일 기준 과거방향, <code>anchor_date</code>를 당겨가며 반복 조회)</td></tr>
-      <tr><td>응답 필드</td><td><code>stck_bsop_date</code>(영업일자) → d, <code>prsn_ntby_tr_pbmn</code> → individual_net, <code>frgn_ntby_tr_pbmn</code> → foreign_net, <code>orgn_ntby_tr_pbmn</code> → institution_net</td></tr>
+      <tr><td>페이지당 최대</td><td>30건 (영업일 기준 과거방향, <code>anchor_date</code>를 당겨가며 반복)</td></tr>
+      <tr><td>응답 필드</td><td><code>stck_bsop_date</code> → d, <code>prsn_ntby_tr_pbmn</code> → individual_net, <code>frgn_ntby_tr_pbmn</code> → foreign_net, <code>orgn_ntby_tr_pbmn</code> → institution_net <strong>(백만원 → 원 환산)</strong></td></tr>
       <tr><td>토큰 관리</td><td><code>executor/live.py</code>의 <code>_get_token()</code>/<code>_BASE_URL</code> 재사용</td></tr>
     </table>
-    <p><code>collect(start_date, end_date)</code>는 <code>stock_daily</code>의 종목 목록을 대상으로 <code>collect_cursor</code> 기반 증분 수집을 수행합니다. KIS API 키가 없으면 아무것도 수집하지 않고 즉시 반환합니다.</p>
 
     <h3>credit_balance.py</h3>
-    <p>KIS OpenAPI <strong>[국내주식-110] 신용잔고 일별추이</strong>로 종목별 융자 잔고를 수집합니다.</p>
     <table>
       <tr><th>항목</th><th>값</th></tr>
       <tr><td>Endpoint</td><td><code>/uapi/domestic-stock/v1/quotations/daily-credit-balance</code></td></tr>
       <tr><td>tr_id</td><td><code>FHPST04760000</code></td></tr>
-      <tr><td>페이지당 최대</td><td>30건 (결제일자 기준 과거방향, <code>anchor_date</code>를 당겨가며 반복 조회)</td></tr>
-      <tr><td>응답 필드</td><td><code>stlm_date</code>(결제일자) → d, <code>whol_loan_rmnd_amt</code>(전체 융자 잔고 금액) → credit_amt, <code>whol_loan_rmnd_rate</code>(전체 융자 잔고 비율) → credit_ratio</td></tr>
-      <tr><td>토큰 관리</td><td><code>executor/live.py</code>의 <code>_get_token()</code>/<code>_BASE_URL</code> 재사용</td></tr>
+      <tr><td>페이지당 최대</td><td>30건 (결제일자 기준 과거방향)</td></tr>
+      <tr><td>응답 필드</td><td><code>stlm_date</code> → d, <code>whol_loan_rmnd_amt</code> → credit_amt, <code>whol_loan_rmnd_rate</code> → credit_ratio</td></tr>
     </table>
-    <p><code>collect_kis(start_date, end_date)</code>도 동일한 증분 수집 구조이며, KIS API 키 미설정 시 <code>collect_stub()</code>(0 채움)으로 자동 폴백합니다. 결제일자 기준이라 최신 데이터가 영업일 대비 며칠 뒤처집니다.</p>
+    <p>KIS API 키 미설정 시 <code>collect_stub()</code>(0 채움)으로 자동 폴백합니다. 결제일자 기준이라
+    최신 데이터가 영업일 대비 며칠 뒤처집니다.</p>
 
     <div class="callout callout-info">
-      <strong>공통 구조: 역방향 페이지네이션과 커서 기록 규칙</strong>
-      두 수집기는 같은 구조를 씁니다. 한 번의 호출이 최대 30건만 반환하므로 <code>anchor_date</code>를
-      과거로 당겨가며 <code>start_bound</code>에 도달할 때까지 반복 조회하고, 페이지마다
-      <code>ON CONFLICT DO NOTHING</code>으로 삽입합니다. 다음 페이지가 앵커 날짜를 다시 포함하므로
-      실효 진행은 페이지당 약 29거래일입니다. 응답의 최과거일이 현재 앵커보다 과거로 밀리지 않으면
-      더 줄 데이터가 없다고 보고 종료합니다 — 이 가드가 없으면 같은 요청을 한도까지 반복하게 됩니다.
+      <strong>KIS 수집기 공통 구조: 역방향 페이지네이션과 커서 기록 규칙</strong>
+      한 번의 호출이 최대 30건만 반환하므로 <code>anchor_date</code>를 과거로 당겨가며
+      <code>start_bound</code>에 도달할 때까지 반복 조회합니다. 다음 페이지가 앵커 날짜를 다시
+      포함하므로 실효 진행은 페이지당 약 29거래일입니다. 응답의 최과거일이 현재 앵커보다 과거로
+      밀리지 않으면 종료합니다 — 이 가드가 없으면 같은 요청을 한도까지 반복합니다.
       <br/><br/>
-      <strong><code>collect_cursor</code>는 수집을 완주했을 때만 기록합니다.</strong> 완주란
-      (a) <code>start_bound</code>까지 훑었거나 (b) API가 더 줄 데이터가 없는 경우(신규상장·상장폐지)입니다.
-      <code>MAX_PAGES_PER_CODE</code>(120) 한도를 소진해 끝난 경우에는 커서를 남기지 않고 오류 목록에
-      기록해 다음 실행에서 다시 시도합니다. 이때 커서를 남기면 다음 실행의 <code>start_bound</code>가
-      그 날짜로 올라가, 받지 못한 과거 구간이 영구히 결손되기 때문입니다.
-      <br/><br/>
-      종목 단위로 <code>try/except</code>를 감싸므로 한 종목의 네트워크·DB 실패가 전체 스윕을 중단시키지
-      않습니다. 실패한 종목에는 커서가 남지 않아 다음 실행에서 자동으로 재시도됩니다.
+      <strong><code>collect_cursor</code>는 완주했을 때만 기록합니다.</strong> 완주란 (a)
+      <code>start_bound</code>까지 훑었거나 (b) API가 더 줄 데이터가 없는 경우(신규상장·상장폐지)입니다.
+      <code>MAX_PAGES_PER_CODE</code>(120) 한도를 소진해 끝난 경우 커서를 남기지 않습니다 —
+      남기면 다음 실행의 <code>start_bound</code>가 그 날짜로 올라가 못 받은 과거 구간이 영구 결손됩니다.
+      종목 단위 <code>try/except</code>로 한 종목의 실패가 전체 스윕을 중단시키지 않습니다.
     </div>
+
+    <h3>dart_corp_code.py — DART 고유번호 매핑</h3>
+    <p>DART 조회 API는 종목코드가 아니라 8자리 고유번호를 받습니다. 전체 목록이
+    <code>corpCode.xml</code> 한 파일(zip)로 제공되므로 받아서 상장사만 골라
+    <code>instruments.dart_corp_code</code>에 붙입니다. <strong>신규 상장이 생기면 다시 실행합니다.</strong></p>
+
+    <h3>disclosure.py — 공시 목록</h3>
+    <table>
+      <tr><th>항목</th><th>값</th></tr>
+      <tr><td>Endpoint</td><td><code>https://opendart.fss.or.kr/api/list.json</code></td></tr>
+      <tr><td>조회 단위</td><td>기간 × 시장(<code>Y</code> 유가증권 / <code>K</code> 코스닥). 종목별로 돌면 3,900콜이라 기간으로 한 번에 받아 우리 종목만 남긴다</td></tr>
+      <tr><td>분할</td><td>월 단위 (<code>PAGE_COUNT</code> 100, 조합당 <code>MAX_PAGES</code> 300)</td></tr>
+      <tr><td>증분</td><td><code>collect_cursor</code>의 마지막 수집일부터 오늘까지 이어받는다</td></tr>
+    </table>
+
+    <h3>financials.py — 주요계정 재무</h3>
+    <table>
+      <tr><th>항목</th><th>값</th></tr>
+      <tr><td>Endpoint</td><td><code>https://opendart.fss.or.kr/api/fnlttMultiAcnt.json</code> (다중회사)</td></tr>
+      <tr><td>배치</td><td>100종목 (120종목은 status 021로 거부). 전 종목이 40여 회 호출</td></tr>
+      <tr><td>보고서 코드</td><td>11013=Q1, 11012=Q2(반기), 11014=Q3, 11011=Q4(사업보고서)</td></tr>
+      <tr><td>연결/개별</td><td>CFS(연결) 우선, 없으면 OFS(개별). <code>fs_div</code>에 기록</td></tr>
+    </table>
+    <p>전 종목이 40여 회 호출로 끝나므로 시가총액으로 걸러 호출을 아낄 이유가 없어,
+    고유번호가 매핑된 종목을 모두 받습니다. 종목 선별은 전략 쪽에서 합니다.
+    EPS/BPS는 주요계정 API에 없습니다(전체 재무제표·XBRL을 따로 받아야 함).</p>
+
+    <h3>shares.py — 발행주식수</h3>
+    <p>DART 주식의총수현황(<code>stockTotqySttus.json</code>). 다중회사 조회가 없어 종목당 1콜입니다.
+    증자·분할이 없으면 잘 바뀌지 않으므로 사업보고서(연 1회) 기준으로 받는 것이 기본입니다.
+    이미 저장된 <code>(종목, 기간)</code>은 건너뛰므로 중간에 끊겨도 다시 실행하면 이어받고,
+    DART 일일 호출 한도(2만, status <code>020</code>)에 걸리면 즉시 멈춥니다.</p>
   </section>
 
   <hr class="divider" />
 
   <!-- ───── PROCESSOR ───── -->
   <section id="processor">
-    <h2>8. Processor 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">processor/</small></h2>
+    <h2>9. Processor 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">processor/</small></h2>
 
     <h3>signals.py — Heat Score 계산</h3>
-    <p>대상 날짜의 전 종목에 대해 30일 이동 기준(window) 대비 오늘 값의 비율을 계산하고, 3가지 요소를 결합하여 -10~+10 스케일의 <code>heat_score</code>를 산출합니다. 높으면 과열, 낮으면 소외입니다.</p>
+    <p>대상 날짜의 전 종목에 대해 30일 이동 기준 대비 오늘 값의 비율을 계산하고, 세 요소를 합쳐
+    <code>heat_score</code>를 냅니다. 높으면 과열, 낮으면 소외입니다.
+    <code>quality_v1</code>은 이 값을 쓰지 않지만, 역발상 계열 백테스트와 대조군 측정에 필요해
+    계속 계산합니다.</p>
 
-    <h4>구성 요소 및 가중치</h4>
     <table>
-      <tr><th>요소</th><th>계산식</th><th>기여 범위</th></tr>
-      <tr><td>개인 순매수 비율</td><td><code>(individual_flow_ratio - 1.0) × 3.0</code></td><td>-4.0 ~ +4.0</td></tr>
-      <tr><td>신용 급등 비율</td><td><code>(credit_surge_ratio - 1.0) × 3.0</code></td><td>-3.0 ~ +3.0</td></tr>
-      <tr><td>거래량 급등 비율</td><td><code>(volume_ratio - 1.5) × 2.0</code></td><td>-3.0 ~ +3.0</td></tr>
+      <tr><th>요소</th><th>계산식</th><th>클램프</th></tr>
+      <tr><td>개인 순매수 배율</td><td><code>(individual_flow_ratio - 1.0) × 3.0</code></td><td>−4.0 ~ +4.0</td></tr>
+      <tr><td>신용 급등 배율</td><td><code>(credit_surge_ratio - 1.0) × 3.0</code></td><td>−3.0 ~ +3.0</td></tr>
+      <tr><td>거래대금 급등 배율</td><td><code>(volume_ratio - 1.5) × 2.0</code></td><td>−3.0 ~ +3.0</td></tr>
     </table>
 
-    <h4>Signal 분류</h4>
     <pre><code>heat_score &lt; 7.0   → "neutral"  (진입 가능)
 7.0 ≤ score &lt; 8.5  → "avoid"   (진입 불가)
 score ≥ 8.5        → "sell"    (청산 신호)</code></pre>
 
     <div class="callout callout-warn">
-      <strong>결측 지표는 0점으로 취급됩니다</strong>
-      <code>_heat()</code>는 결측(<code>NaN</code>) 지표를 빼고 남은 항목의 <strong>원점수 합</strong>을
-      반환합니다. 정규화하지 않기 때문에 수급·신용 데이터가 없는 종목일수록 heat_score가 낮아지고,
-      3개 지표가 모두 없으면 0.0/<code>"neutral"</code>이 됩니다. 지표 개수가 다른 점수끼리는 비교가
-      성립하지 않으므로, <code>get_entry_candidates()</code>는 세 지표가 모두 존재하는 행만 후보로
-      삼습니다(9번 항목 참고).
+      <strong>클램프 하한은 0이 아니라 상한과 대칭입니다</strong>
+      하한을 0에 두면 세 배율이 모두 기준선 아래인 종목이 전부 정확히 0.0이 되는데, 그게 역발상이
+      매수 대상으로 삼는 구간입니다. 실측으로 필터 통과 종목의 66~74%가 0.0 동점이 되고,
+      그러면 <code>ORDER BY heat_score ASC</code>가 사실상 DB 행 순서로 종목을 고릅니다.
+      상한 쪽은 대칭이라 임계값의 의미는 달라지지 않습니다.
       <br/><br/>
-      <code>numpy</code> 계산 결과는 <code>contrarian_signals</code>에 넣기 전 파이썬 네이티브
-      <code>float()</code>로 캐스팅합니다 — <code>np.float64</code>를 그대로 psycopg2에 넘기면
-      INSERT가 실패합니다.
+      수식은 <code>contributions()</code> 한 곳에만 두고 <code>backfill_signals.py</code>가 import합니다 —
+      복제하면 백필이 운용 신호를 다른 수식으로 조용히 덮어씁니다.
+    </div>
+
+    <div class="callout callout-warn">
+      <strong>결측 지표는 0점으로 취급됩니다</strong>
+      <code>_heat()</code>는 결측(<code>NaN</code>)을 빼고 남은 항목의 <strong>원점수 합</strong>을
+      반환합니다. 정규화하지 않으므로 지표가 없는 종목일수록 점수가 낮아지고, 셋 다 없으면
+      0.0/<code>"neutral"</code>이 됩니다. 그래서 진입 후보는 <strong>세 지표가 모두 존재하는 행만</strong>
+      씁니다.
+      <br/><br/>
+      numpy 계산 결과는 INSERT 전에 파이썬 네이티브 <code>float()</code>로 캐스팅합니다 —
+      <code>np.float64</code>를 그대로 psycopg2에 넘기면 실패합니다.
+    </div>
+
+    <h3>valuation.py — 시점 정합 시가총액 · PBR</h3>
+    <p><code>available_period(d)</code>가 그 날짜에 이미 공시된 최신 사업보고서 기간을 돌려줍니다
+    (4월 이후면 <code>d.year-1</code>Q4, 1~3월이면 <code>d.year-2</code>Q4). 시가총액 = 종가 × 그 기간의
+    발행주식수입니다.</p>
+    <div class="callout callout-warn">
+      <strong>DART 주식의총수는 단위 오류가 섞여 있습니다</strong>
+      제출사가 10·1,000·1,000,000배로 잘못 적는 경우가 있고, 감자·병합과 구분되지 않습니다.
+      값을 고치지 않고, 같은 종목의 다른 기간 중앙값에서 <code>OUTLIER_RATIO</code>(5배) 이상
+      벗어난 기간은 '모름'으로 버립니다. 자본총계 대비 시총이 <code>PBR_SANITY_MAX</code>(50)를
+      넘어도 버립니다. 잘못 고쳐 조용히 틀린 값을 쓰는 것보다 안 쓰는 편이 낫습니다.
     </div>
 
     <h3>indicators.py — 기술적 지표</h3>
-    <p>SMA, rolling_std, volume_ratio, 52주 위치(pos_52w), 일간 로그 수익률 등을 numpy 배열로 계산합니다. 현재 메인 파이프라인에서 직접 호출되지는 않고 전략 분석용으로 준비되어 있습니다. 모든 지표는 <strong>t-1 데이터만 참조</strong>하여 look-ahead bias를 방지합니다.</p>
+    <p>SMA, rolling_std, volume_ratio, 52주 위치(pos_52w), 일간 로그 수익률 등을 numpy 배열로 계산합니다.
+    모든 지표는 <strong>t-1 데이터만 참조</strong>합니다.</p>
   </section>
 
   <hr class="divider" />
 
   <!-- ───── STRATEGY ───── -->
   <section id="strategy">
-    <h2>9. Strategy 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">strategy/contrarian.py</small></h2>
+    <h2>10. Strategy 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">strategy/</small></h2>
 
-    <h3>진입 후보 (get_entry_candidates)</h3>
-    <p>다음 조건을 모두 충족하는 종목만 반환합니다:</p>
-    <ul style="margin: 8px 0 16px 20px; line-height: 2;">
-      <li><code>heat_score &lt; HEAT_AVOID</code> (기본 7.0)</li>
-      <li><code>signal = 'neutral'</code></li>
-      <li><code>individual_flow_ratio</code>, <code>credit_surge_ratio</code>, <code>volume_ratio</code>가 <strong>모두 NOT NULL</strong></li>
-      <li><code>positions</code> 테이블에 없는 종목 (미보유)</li>
-      <li>52주 위치 ≤ 30% (52주 저점 근처)</li>
-    </ul>
-    <p>출력: <code>[{code, close, heat_score, pos52w}, ...]</code> — heat_score 오름차순 정렬</p>
+    <h3>quality.py — 운용 전략 <span class="badge badge-green">운영 중</span></h3>
+    <p><code>STRATEGY = "quality_v1"</code>. 분기 재무 기반, 월별 리밸런싱, 손절 없음.
+    <strong>수식은 이 파일에만 둡니다</strong> — <code>research/quality_backtest.py</code>가 여기서
+    가져다 씁니다. 검증 경로에 수식을 복제하면 한쪽만 고쳤을 때 운용과 백테스트가 조용히
+    갈라집니다 — 측정한 것과 다른 것을 굴리게 됩니다.</p>
 
-    <div class="callout callout-info">
-      <strong>세 지표를 모두 요구하는 이유</strong>
-      <code>heat_score</code>는 정규화되지 않은 원점수 합이라 지표가 결측일수록 값이 낮아집니다.
-      위 정렬이 heat_score 오름차순이므로, 이 조건이 없으면 <strong>데이터가 없는 종목이
-      "가장 안 과열된 종목"으로 둔갑해</strong> 후보 상위를 차지합니다. 지표 개수가 다른 점수끼리는
-      애초에 비교가 성립하지 않으므로 세 축이 모두 있는 종목만 후보로 삼습니다.
-      <br/><br/>
-      따라서 <code>investor_flow</code> 또는 <code>credit_balance</code> 수집이 비어 있으면 진입 후보가
-      나오지 않습니다. 이는 결측을 매수 신호로 오해하는 것보다 안전한 쪽으로 실패하도록 한 선택입니다.
+    <table>
+      <tr><th>함수</th><th>하는 일</th></tr>
+      <tr><td><code>load_financials()</code></td><td>연결(CFS) 우선 선택 → Q4 단독 환원 → TTM(직전 4개 단독 분기 합) → <code>avail</code>(기간종료 + 90일) 계산</td></tr>
+      <tr><td><code>snapshot(fin, d)</code></td><td><code>avail ≤ d</code>인 것 중 종목별 최신 재무</td></tr>
+      <tr><td><code>eligible(snap, mcap)</code></td><td>시총 3,000억 ↑ · 자본 &gt; 0 · TTM 순이익/매출 &gt; 0 · 부채비율 ≤ 2.0</td></tr>
+      <tr><td><code>score(s, kind)</code></td><td><code>quality</code> | <code>value</code> | <code>combo</code> — 백분위 순위의 평균</td></tr>
+      <tr><td><code>marcap_on(d)</code></td><td>시점별 시가총액 = 그때 공시돼 있던 발행주식수(연도 − 1의 Q4) × 그날 종가</td></tr>
+      <tr><td><code>get_targets(d, slots, kind, limit)</code></td><td>위를 엮어 목표 편입 종목을 점수 순으로 반환</td></tr>
+    </table>
+
+    <table>
+      <tr><th>랭킹 종류</th><th>구성</th><th>워크포워드 선택</th></tr>
+      <tr><td><code>quality</code></td><td>ROE + 영업이익률 + (−부채비율)</td><td>5개 창 중 1회</td></tr>
+      <tr><td><code>value</code></td><td>이익수익률(1/PER) + 순자산수익률(1/PBR)</td><td><strong>5개 창 중 4회 → <code>RANK_KIND</code></strong></td></tr>
+      <tr><td><code>combo</code></td><td>둘의 반반</td><td>훈련·검증 양쪽에서 각각보다 나빴음</td></tr>
+    </table>
+
+    <div class="callout callout-danger">
+      <strong>Q4는 분기가 아니라 연간 누적입니다</strong>
+      삼성전자 2025Q4 매출이 333조인데 Q1~Q3는 각 79/74/86조입니다. 전 종목 확인 결과
+      1,919 중 1,827이 기대비율 1.33 부근이었습니다. 그대로 TTM에 넣으면 4분기 실적이
+      7분기치가 됩니다. <strong>Q4 단독 = 연간 − (Q1+Q2+Q3)</strong>로 환원한 뒤 4분기 합으로
+      TTM을 만듭니다.
     </div>
 
-    <h3>청산 후보 (get_exit_candidates)</h3>
-    <p>보유 포지션 중 아래 조건을 검사합니다 (우선순위 순):</p>
+    <div class="callout callout-info">
+      <strong><code>limit</code>으로 슬롯보다 많이 뽑는 이유</strong>
+      <code>open_job()</code>은 <code>limit = slots × 3</code>으로 부릅니다. 에이전트가 일부를 반려해도
+      다음 순위로 슬롯을 채우기 위해서입니다 — 검증은 항상 슬롯을 다 채운 상태로 쟀으므로,
+      반려가 슬롯을 비우면 측정한 것과 다른 것을 굴리게 됩니다.
+    </div>
+
+    <h3>filters.py — 두 전략이 공유하는 종목 필터</h3>
+    <p>"잡주는 사지 않는다"를 코드로 옮긴 것입니다. 수집 단계(<code>collector/universe.py</code>)는
+    수급·신용을 받을 대상만 좁히지만 일봉은 전 종목을 받으므로, 진입 시점에 한 번 더 거릅니다.</p>
     <table>
-      <tr><th>우선순위</th><th>조건</th><th>청산 사유</th></tr>
-      <tr><td>1</td><td><code>close_price ≤ stop_px</code></td><td><code>"stop"</code></td></tr>
-      <tr><td>2</td><td><code>held_days ≥ max_hold_days</code></td><td><code>"expiry"</code></td></tr>
-      <tr><td>3</td><td><code>heat_score ≥ HEAT_SELL</code></td><td><code>"heat_signal"</code></td></tr>
+      <tr><th>필터</th><th>기준</th><th>이유</th></tr>
+      <tr><td><code>ordinary()</code></td><td>종목코드가 전부 숫자</td><td>신주인수권증서·전환우선주 등은 애초에 매매 대상이 아니다</td></tr>
+      <tr><td><code>liquid()</code></td><td>최근 20거래일 평균 거래대금 ≥ 10억원</td><td>편도 0.2% 슬리피지 가정이 성립하는지를 직접 재는 값</td></tr>
+      <tr><td><code>tradable()</code></td><td>위 둘 + 시총 3,000억 (<code>apply_marcap</code>로 끌 수 있음)</td><td>FDR은 현재 시총만 주므로 과거 시점에 적용하면 상장폐지 종목이 통째로 빠진다 — 백테스트에서는 꺼야 한다</td></tr>
     </table>
+
+    <h3>fundamental.py — 실적개선 공시 전략 <span class="badge badge-yellow">시뮬레이션 전용</span></h3>
+    <p><code>STRATEGY = "fundamental_v1"</code>. 분기·반기·사업보고서 공시일에 전년 동기 대비 영업이익이
+    개선되고 흑자이며 ROE ≥ 3% · 부채비율 ≤ 200%인 종목을 개선율 순으로 고릅니다. 체결은 공시일
+    다음 거래일 시가, 청산은 손절 −7% → 만기 20거래일 순(최소 보유 5거래일, 손절만 예외)입니다.</p>
+    <div class="callout callout-warn">
+      <strong>검증에서 기각된 전략입니다</strong>
+      12슬롯 검증 구간에서 거래당 −3.05%(t −3.22), 128건 중 96건(75%)이 손절이었습니다.
+      PBR을 축으로 얹은 <code>fundamental_v2</code>도 워크포워드에서 대조군보다 못했습니다.
+      코드가 16:10 배치에 남아 있는 것은 paper 모드로 실측치를 계속 쌓기 위해서이고,
+      실계좌 경로에는 연결되지 않습니다.
+    </div>
+
+    <h3>contrarian.py — 역발상 전략 <span class="badge badge-red">은퇴</span></h3>
+    <p><code>STRATEGY = "contrarian_v1"</code>. 52주 위치 하위 30% 종목을 <code>RANK_COL</code>
+    오름차순으로 진입, <code>heat_score ≥ HEAT_SELL</code> / 만기 / 손절로 청산합니다.
+    스케줄러에서 빠졌고 <code>backtester/engine.py</code>와 연구 스크립트의 대조군으로만 남아 있습니다.
+    생존 편향을 제거한 워크포워드에서 거래당 −0.78%, 랭킹으로 쓰던 <code>heat_score</code>는
+    대조군 t −3.40으로 해롭다는 것이 확정됐습니다.</p>
   </section>
 
   <hr class="divider" />
 
   <!-- ───── AGENTS ───── -->
   <section id="agents">
-    <h2>10. Agents 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">agents/</small></h2>
+    <h2>11. Agents 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">agents/</small></h2>
 
     <h3>base.py — Claude API 래퍼</h3>
-    <p><code>call(agent_name, code, prompt, cache_scope=None)</code>는 MD5(<code>agent + (cache_scope or code) + prompt</code>)로 <code>agent_decisions</code> 테이블을 먼저 조회합니다. 캐시 히트 시 API 호출 없이 재사용, 미스 시 Claude API 호출 후 결과를 저장합니다. 프롬프트에 종목이 들어가지 않는 <code>market_state</code>는 <code>cache_scope="market"</code>로 시장 단위 캐시를 씁니다.</p>
-    <p>API 호출이 실패하면 <code>'관망'</code>으로 떨어뜨리지 않고 <code>decision='오류'</code> 행을 <code>input_hash</code> NULL로 남깁니다(실패는 캐시되지 않음). 게이트는 이를 거부권과 분리해 <code>판단 불가(에이전트 오류)</code>로 반려하고, 대시보드가 최근 24시간분을 사유별로 묶어 전 페이지 상단 배너로 띄웁니다.</p>
+    <p><code>call(agent_name, code, prompt, cache_scope=None)</code>는
+    MD5(<code>agent + (cache_scope or code) + prompt</code>)로 <code>agent_decisions</code>를 먼저
+    조회합니다. 히트면 API 호출 없이 재사용, 미스면 Claude 호출(<code>claude-sonnet-4-6</code>,
+    <code>max_tokens=1024</code>) 후 저장합니다. 프롬프트에 종목이 들어가지 않는
+    <code>market_state</code>는 <code>cache_scope="market"</code>로 시장 단위 캐시를 씁니다.</p>
 
-    <h4>Claude 응답 포맷 (파싱 대상)</h4>
+    <h4>응답 포맷 (파싱 대상)</h4>
     <pre><code>결정: 매수 | 관망 | 청산
 확신: 0~10
 이유: 한 문장 근거</code></pre>
+    <p>라벨과 값 양옆에 마크다운 강조(<code>**결정: 청산**</code>)가 섞여 들어오므로 별표를 흘려보냅니다.
+    <strong>결정은 아는 값에만 맞춥니다</strong> — <code>\S+</code>로 통째로 집으면
+    <code>청산**</code> 같은 값이 나와 게이트의 문자열 비교를 조용히 빗나가고, 거부권이 발동해야 할
+    자리에서 아무 일도 일어나지 않습니다. 못 알아본 결정은 '관망'으로 눙치지 않고
+    <code>None</code>을 돌려 호출부가 실패로 기록합니다.</p>
 
     <h4>오류 처리</h4>
-    <p>API 키 미설정 또는 호출 실패 시 기본값 <code>"관망"</code>을 반환합니다.</p>
-
-    <h3>gate.py — 합의 게이트</h3>
+    <p>호출이 실패하면 <code>decision='오류'</code> 행을 <code>input_hash</code> NULL로 남깁니다
+    (실패는 캐시되지 않음). 실패 사유는 대응이 갈리므로 라벨로 분류합니다 — 크레딧 소진은
+    401이 아니라 400 <code>invalid_request_error</code>로 오기 때문에 키 오류와 먼저 구분합니다.</p>
     <table>
-      <tr><th>에이전트</th><th>역할</th><th>veto</th><th>하드코딩 규칙</th></tr>
-      <tr><td><code>market_state</code></td><td>시장 전반 상태</td><td><span class="badge badge-red">Yes</span></td><td>fall_pct ≥ 70% → 강제 "청산"</td></tr>
-      <tr><td><code>risk</code></td><td>포트폴리오 리스크</td><td><span class="badge badge-red">Yes</span></td><td>free_slots = 0 또는 same_sector ≥ 3 → 강제 "관망"</td></tr>
-      <tr><td><code>value_trap</code></td><td>공시 기반 가치 함정 판별</td><td><span class="badge badge-green">No</span></td><td>없음 (Claude 판단만)</td></tr>
+      <tr><th>라벨</th><th>상황</th></tr>
+      <tr><td><code>API 키 미설정</code></td><td><code>CLAUDE_API_KEY</code> 없음</td></tr>
+      <tr><td><code>크레딧 잔액 부족</code></td><td>충전 필요</td></tr>
+      <tr><td><code>API 키 인증 실패</code></td><td>키 교체 필요</td></tr>
+      <tr><td><code>요청 한도 초과</code> / <code>API 연결 실패</code></td><td>재시도 대상</td></tr>
+      <tr><td><code>응답 형식 오류</code> / <code>API 오류</code></td><td>파싱 실패 · 기타</td></tr>
     </table>
-
-    <h3>에이전트별 입력 데이터</h3>
-
-    <h4>market_state</h4>
-    <p>전체 종목 중 하락 비율(<code>fall_pct</code>), KODEX 200 20일 수익률(<code>trend_pct</code>). Claude에게 약세장·심리·트렌드 기반 매수/관망/청산 판단을 요청합니다.</p>
-
-    <h4>risk</h4>
-    <p>남은 슬롯 수(<code>free_slots</code>), 동일 섹터(코드 앞 3자리) 보유 수(<code>same_sector</code>). 슬롯·섹터 집중 리스크 기반 매수/관망 판단.</p>
-    <div class="callout callout-warn">
-      <strong>섹터 근사가 실제로는 동작하지 않습니다</strong>
-      한국 종목코드 앞 3자리는 업종이 아니라 상장 순서에 가깝습니다. 예를 들어
-      <code>003000</code> 부광약품(제약), <code>003030</code> 세아제강지주(철강),
-      <code>003020</code> 남양(식품), <code>003070</code> 코오롱글로벌(건설)이 같은 접두사입니다.
-      따라서 "같은 업종 3개 이상이면 관망" 규칙은 사실상 발동하지 않고, 발동한다면
-      무관한 종목을 거릅니다. 업종 분산은 현재 작동하지 않는 상태이며,
-      <code>instruments</code>에 업종 컬럼을 추가해야 고칠 수 있습니다.
+    <div class="callout callout-info">
+      <strong>실패를 '관망'과 섞지 않는 이유</strong>
+      조용히 관망으로 떨어뜨리면 게이트의 거부권과 구분이 안 돼, 크레딧이 떨어진 날에도
+      "시장이 안 좋아 안 샀다"로 보입니다. 대시보드는 이 라벨로 배너를 묶으므로 문구를 바꾸면
+      묶음도 바뀝니다.
     </div>
 
-    <h4>value_trap</h4>
-    <p>최근 90일 <code>disclosures</code> 공시 제목(최대 25건)과 60·250거래일 수익률. 52주 최저 부근 하락이 (A) 업황 사이클에 따른 일시적 조정인지 (B) 기업의 구조적 훼손인지 판별합니다.</p>
+    <h3>gate.py — 거부권 + 합의 게이트</h3>
+    <table>
+      <tr><th>게이트</th><th>거부권</th><th>합의</th><th>쓰는 곳</th></tr>
+      <tr><td><code>decide()</code></td><td><code>market_state</code>, <code>risk</code></td><td><code>value_trap</code></td><td>역발상 (은퇴)</td></tr>
+      <tr><td><code>decide_fundamental()</code></td><td><code>market_state</code>, <code>risk</code></td><td><code>disclosure</code>, <code>financials</code></td><td><code>fundamental_v1</code> 진입</td></tr>
+    </table>
+    <p>판정 순서는 <strong>오류 → 거부권 → 합의</strong>입니다. 승인 시 평균 확신을 함께 냅니다
+    (<code>score</code>가 DB에서 오면 Decimal, API에서 오면 float이라 <code>float()</code>로 못박습니다 —
+    승인될 때만 계산되는 줄이라 통과하는 순간에만 터졌습니다).</p>
+
+    <h3>에이전트별 입력 데이터</h3>
+    <table>
+      <tr><th>에이전트</th><th>프롬프트에 들어가는 것</th><th>하드코딩 규칙</th></tr>
+      <tr><td><code>market_state</code></td><td>전체 종목 하락 비율, KODEX 200(<code>069500</code>) 20일 수익률</td><td>전략별로 다름 (아래)</td></tr>
+      <tr><td><code>risk</code></td><td>전체/사용/여유 슬롯, 같은 업종군(코드 앞 3자리) 보유 수</td><td>여유 0 또는 같은 업종 3개 이상 → 관망(거부권)</td></tr>
+      <tr><td><code>value_trap</code></td><td>최근 90일 공시 제목 최대 25건, 60·250거래일 수익률</td><td>없음</td></tr>
+      <tr><td><code>disclosure</code></td><td>최근 90일 공시 이력 최대 15건 + 총 건수</td><td>없음</td></tr>
+      <tr><td><code>financials</code></td><td>최근 5개 보고서의 매출·영업이익(률)·ROE·부채비율</td><td>없음</td></tr>
+    </table>
+
+    <div class="callout callout-info">
+      <strong>market_state의 규칙은 전략마다 반대 방향을 봅니다</strong>
+      역발상은 공포에 사는 전략이라 <strong>하락 비율 50% 미만이면 관망</strong>(하락이 넓게 퍼진
+      날이 진입 조건)이고, 펀더멘털·퀄리티는 개별 실적을 보고 사므로
+      <strong>하락 비율 70% 이상이면 청산</strong>(시장 급락을 회피 조건으로)입니다.
+      한 프롬프트를 공유하면 둘 중 하나는 반드시 반대로 걸립니다.
+    </div>
+
     <div class="callout callout-warn">
       <strong>필터가 이미 쓴 지표는 넘기지 않습니다</strong>
-      <code>heat_score</code>와 그 구성 지표(<code>individual_flow_ratio</code>·<code>credit_surge_ratio</code>·<code>volume_ratio</code>)는
-      프롬프트에서 제외됩니다. 후보는 이미 <code>heat_score &lt; HEAT_AVOID</code>로 걸러져 들어오므로,
-      과열되지 않도록 미리 고른 종목에게 과열 여부를 되물으면 판단이 아니라 동어반복이 됩니다.
-      실제로 2026-08-19 기록에서 이전 두 에이전트(<code>retail_flow</code>·<code>credit_heat</code>)는
-      100건 중 100건 "매수"였습니다. 숫자 판정은 룰(필터)이 하고, LLM에는 룰로 표현할 수 없는
-      공시 텍스트만 줍니다. <code>tests/test_value_trap.py</code>가 이 규약을 강제합니다.
+      퀄리티에서는 PER·PBR·ROE를, 역발상에서는 <code>heat_score</code>와 그 구성 지표를 프롬프트에서
+      제외합니다. 후보를 고른 기준을 다시 물으면 판단이 아니라 동어반복이 됩니다 — 필터가 쓴
+      지표를 그대로 넘긴 에이전트는 100건 중 100건 "매수"로 측정됐습니다. 크레딧만 쓰고 결정은
+      하나도 바꾸지 않습니다. 숫자 판정은 룰이 하고, LLM에는 룰로 표현할 수 없는 공시 텍스트만
+      줍니다.
+      <code>tests/test_value_trap.py</code>가 이 규약을 강제합니다.
+    </div>
+
+    <div class="callout callout-warn">
+      <strong>risk의 섹터 근사가 실제로는 동작하지 않습니다</strong>
+      한국 종목코드 앞 3자리는 업종이 아니라 상장 순서에 가깝습니다.
+      <code>003000</code> 부광약품(제약), <code>003030</code> 세아제강지주(철강),
+      <code>003020</code> 남양(식품), <code>003070</code> 코오롱글로벌(건설)이 같은 접두사입니다.
+      "같은 업종 3개 이상이면 관망" 규칙은 사실상 발동하지 않고, 발동한다면 무관한 종목을 거릅니다.
+      <code>instruments</code>에 업종 컬럼을 추가해야 고칠 수 있습니다.
     </div>
   </section>
 
@@ -624,79 +919,124 @@ score ≥ 8.5        → "sell"    (청산 신호)</code></pre>
 
   <!-- ───── EXECUTOR ───── -->
   <section id="executor">
-    <h2>11. Executor 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">executor/</small></h2>
+    <h2>12. Executor 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">executor/</small></h2>
 
-    <h3>paper.py — 모의 매매 <span class="badge badge-green">운영 중</span></h3>
-    <h4>buy(code, name, signal_date, close_px, heat_score, agents_summary)</h4>
-    <ol style="margin: 8px 0 12px 20px; line-height: 2;">
-      <li><code>positions</code> 수 ≤ SLOTS 확인</li>
-      <li><code>stock_daily</code>에서 <code>signal_date</code> <strong>다음</strong> 거래일 시가 조회 — 없으면 체결하지 않고 거부</li>
-      <li>매수 비용 모델 적용: <code>entry_px = next_open × (1 + SLIP) × (1 + FEE)</code></li>
-      <li>손절가 계산: <code>stop_px = entry_px × (1 - STOP_PCT)</code></li>
-      <li><code>positions</code> 삽입, <code>trades</code> 삽입 (side='buy')</li>
-    </ol>
-    <p><code>signal_date</code>에는 <strong>직전 거래일</strong>이 들어옵니다(<code>scheduler._entry_signal_date()</code>).
-    그래야 2단계가 조회하는 "다음 거래일"이 오늘이 되어 당일 시가로 체결됩니다. 오늘 날짜를 넘기면
-    아직 존재하지 않는 내일 봉을 찾게 되어 모든 매수가 거부됩니다.</p>
-
-    <h4>sell(code, name, qty, entry_px, close_px, reason)</h4>
-    <ol style="margin: 8px 0 16px 20px; line-height: 2;">
-      <li>매도 비용 모델 적용: <code>fill_px = close_px × (1 - SLIP) × (1 - FEE - TAX)</code></li>
-      <li>수익률 계산: <code>realized_pct = fill_px / entry_px - 1</code></li>
-      <li>원 매수 trade에 exit_reason, realized_pct 업데이트</li>
-      <li>매도 trade 삽입, <code>positions</code>에서 삭제</li>
-    </ol>
-
-    <h3>live.py — KIS OpenAPI 실전 매매 <span class="badge badge-yellow">Stub</span></h3>
-    <p>토큰 캐시(60초 안전 마진), mock/live URL 전환, buy/sell/get_balance 함수가 구현되어 있으나 <strong>메인 파이프라인에 연결되지 않은 상태</strong>입니다.</p>
+    <h3>paper.py — DB 시뮬레이션 <span class="badge badge-green">운영 중</span></h3>
     <table>
-      <tr><th>구분</th><th>Base URL</th><th>Buy TR-ID</th><th>Sell TR-ID</th></tr>
-      <tr><td>Mock</td><td>openapivts.koreainvestment.com:29443</td><td>VTTC0802U</td><td>VTTC0801U</td></tr>
-      <tr><td>Live</td><td>openapi.koreainvestment.com:9443</td><td>TTTC0802U</td><td>TTTC0801U</td></tr>
+      <tr><th>함수</th><th>하는 일</th></tr>
+      <tr><td><code>adjust(code, name, target_qty, fill_px, strategy, agents)</code></td><td>보유 수량을 목표로 맞춘다 — <strong>차이나는 만큼만</strong> 매매. 퀄리티 리밸런싱 경로</td></tr>
+      <tr><td><code>buy(code, name, signal_date, close_px, heat, agents, strategy)</code></td><td>신호일 <strong>다음</strong> 거래일 시가로 진입. 봉이 없으면 거부. 펀더멘털 경로</td></tr>
+      <tr><td><code>sell(code, name, qty, entry_px, close_px, reason, strategy)</code></td><td>청산 + <code>exit_reason</code>·<code>realized_pct</code> 기록</td></tr>
+      <tr><td><code>current_equity(strategy, prices)</code></td><td>현금 + 보유 평가액. 리밸런싱 목표 금액의 근거</td></tr>
+      <tr><td><code>free_slots(strategy)</code></td><td>전략별 남은 슬롯</td></tr>
     </table>
+
+    <div class="callout callout-info">
+      <strong>전량 매도 후 재매수로 구현하지 않는 이유</strong>
+      계속 편입되는 종목까지 매달 왕복 비용을 내는데, <strong>낮은 회전율이 이 전략의 근거</strong>입니다.
+      검증도 회전분에만 비용을 매겼습니다. 빠진 종목은 <code>target_qty=0</code>으로 부릅니다.
+      추가 매수 시 진입가는 가중평균으로 갱신해야 부분 청산의 실현손익이 맞습니다.
+    </div>
+
+    <div class="callout callout-info">
+      <strong>목표 금액을 <code>CAPITAL</code>이 아니라 현재 자산으로 잡는 이유</strong>
+      <code>CAPITAL</code>로 계산하면 자산이 늘어도 투입액이 고정돼 현금 비중이 저절로 커집니다 —
+      복리로 굴러가지 않습니다. <code>current_equity()</code>가 <code>recorder.equity.cash_by_key()</code>로
+      현금을 읽어 슬롯 금액을 냅니다.
+    </div>
+
+    <h3>live.py — KIS OpenAPI 주문 <span class="badge badge-green">연동 완료</span></h3>
+    <table>
+      <tr><th>구분</th><th>Base URL</th><th>Buy TR-ID</th><th>Sell TR-ID</th><th><code>MODE</code></th></tr>
+      <tr><td>Mock</td><td>openapivts.koreainvestment.com:29443</td><td>VTTC0802U</td><td>VTTC0801U</td><td><code>live</code></td></tr>
+      <tr><td>Live</td><td>openapi.koreainvestment.com:9443</td><td>TTTC0802U</td><td>TTTC0801U</td><td><code>real</code></td></tr>
+    </table>
+    <table>
+      <tr><th>함수</th><th>하는 일</th></tr>
+      <tr><td><code>guard()</code></td><td>실전 서버인데 <code>LIVE_ENABLED</code>가 꺼져 있으면 예외</td></tr>
+      <tr><td><code>account_snapshot()</code></td><td>증권사 잔고를 그대로 읽어 <code>holdings</code> / <code>cash</code>(dnca) / <code>settled_cash</code>(prvs_rcdl_excc_amt) / <code>positions_value</code>(scts) / <code>total_equity</code>(nass) 반환</td></tr>
+      <tr><td><code>adjust(...)</code></td><td>차이만 시장가 주문 → 잔고로 체결 확인 → 부분 체결이면 재주문(<code>MAX_FILL_ATTEMPTS</code> 3) → <code>positions</code>·<code>trades</code> 기록</td></tr>
+      <tr><td><code>_settled_cash_after(amount)</code></td><td>이 매수가 T+2 결제 예정 예수금을 음수로 만드는지 확인</td></tr>
+    </table>
+
+    <div class="callout callout-danger">
+      <strong>주문을 넣었다고 체결된 것이 아닙니다</strong>
+      <code>adjust()</code>는 체결가·수량을 주문 뒤 잔고에서 다시 읽습니다. 고정 대기(2초) 대신
+      잔고 수량 변화를 폴링하고, 시장가 한 번으로 목표에 못 미치면 남는 수량만큼 다시 주문합니다 —
+      그러지 않으면 슬롯 크기가 어긋난 채 다음 달까지 방치됩니다. 한 라운드에 한 주도 안 붙으면
+      재시도해도 같으므로 멈춥니다.
+    </div>
+
+    <div class="callout callout-danger">
+      <strong>미수(외상) 방지</strong>
+      KIS 모의는 매수해도 <code>dnca_tot_amt</code>가 줄지 않습니다. 이 값으로 잔고를 계산하면
+      재실행마다 부풀어 <code>slot_value</code>가 커지고 새 매수가 미수로 뚫립니다. 슬롯 금액은
+      <code>nass_amt</code> 기준으로 잡고, 매수 직전에 <code>_settled_cash_after()</code>로
+      한 번 더 막습니다.
+    </div>
+
+    <h3>sizing.py / guard.py — 공용</h3>
+    <p><code>position_qty(px)</code>: 1슬롯 = <code>CAPITAL / SLOTS</code>로 살 수 있는 주식 수(내림).
+    <code>already_entered(code, strategy, mode)</code>: 이미 보유 중이거나 같은 날 매수 기록이 있으면
+    거부 사유를 돌려줍니다 — <code>positions</code>는 PK 충돌로 무시되지만 <code>trades</code>에는 한 줄이
+    더 들어가 매수금액이 두 번 잡히고 현금·자산 스냅샷이 틀어집니다.</p>
   </section>
 
   <hr class="divider" />
 
   <!-- ───── RECORDER ───── -->
   <section id="recorder">
-    <h2>12. Recorder 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">recorder/</small></h2>
+    <h2>13. Recorder 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">recorder/</small></h2>
+
+    <h3>equity.py — 일별 자산 스냅샷</h3>
+    <pre><code>현금     = CAPITAL_&lt;전략&gt; - 매수금액 + 매도금액
+평가금액 = 보유수량 × 기준일 종가 (기준일 봉이 없으면 직전 거래일 종가)
+총자산   = 현금 + 평가금액</code></pre>
+    <p><code>(d, mode, strategy)</code> 단위로 <code>equity_daily</code>에 기록합니다.
+    <code>RETIRED_STRATEGIES</code>에 든 전략은 자금을 넘겼으므로 집계에서 뺍니다(과거 기록은 남습니다).
+    <code>positions</code>는 현재 상태만 갖고 있어 과거 날짜를 소급 기록할 수는 없습니다.</p>
+    <div class="callout callout-warn">
+      <strong>live 모드는 우리 장부로 계산하지 않습니다</strong>
+      KIS가 계산한 순자산(<code>nass_amt</code>)을 그대로 저장하고, 현금은
+      <code>nass_amt − scts_evlu_amt</code>(실질 현금)로 냅니다. 예수금(<code>dnca_tot_amt</code>)을
+      '쓸 수 있는 현금'으로 보여 주면 미수 상태가 화면에서 가려집니다. 음수라도 실체를 그대로
+      냅니다.
+    </div>
 
     <h3>trade_log.py — 기본 성과 요약</h3>
-    <p><code>summary()</code>: trades 테이블 (side='sell') 기준으로 총 거래 수, 승률, 평균 수익률, 표준편차, t-value, min/max 수익률 출력. 현재 보유 포지션도 함께 출력.</p>
+    <p><code>summary()</code>: <code>trades</code>(side='sell') 기준 총 거래 수, 승률, 평균 수익률,
+    표준편차, t-value, min/max. 현재 보유 포지션도 함께 출력합니다.</p>
 
     <h3>evaluator.py — 고급 지표</h3>
-    <p><code>full_report()</code> (최소 5건 이상 필요):</p>
-    <ul style="margin: 8px 0 16px 20px; line-height: 2;">
-      <li><strong>MDD</strong>: <code>min(equity_curve / peak) - 1</code> (numpy accumulate 기반)</li>
-      <li><strong>t-value</strong>: <code>mean / (std / √n)</code></li>
-      <li><strong>전반/후반 비교</strong>: 수익률 트렌드 일관성 확인</li>
-      <li><strong>부트스트랩</strong> (1000회): 재샘플링 후 양의 평균 비율 (≥80% → 전략 엣지 보유)</li>
-    </ul>
+    <p><code>full_report()</code> (최소 5건 필요): MDD, t-value, 전반/후반 비교,
+    부트스트랩 1000회 양의 평균 비율.</p>
   </section>
 
   <hr class="divider" />
 
   <!-- ───── BACKTESTER ───── -->
   <section id="backtester">
-    <h2>13. Backtester 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">backtester/</small></h2>
+    <h2>14. Backtester 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">backtester/</small></h2>
 
-    <h3>engine.py — 이벤트 기반 백테스트</h3>
-    <p><code>run(start, end, ...)</code>는 <code>contrarian_signals</code>를 직접 조회하여 진입→청산 시뮬레이션을 수행합니다.</p>
-    <pre><code>시뮬레이션 로직:
-1. heat &lt; heat_avoid &amp; signal='neutral' 종목 → 다음 거래일 시가로 진입
+    <h3>engine.py — 이벤트 기반 백테스트 (역발상)</h3>
+    <pre><code>1. heat &lt; heat_avoid &amp; signal='neutral' 종목 → 다음 거래일 시가로 진입
 2. 이후 20일간 매일 확인:
-   a. low ≤ stop_px   → 손절 (비관적 fill: stop_px 사용)
+   a. low ≤ stop_px    → 손절 (비관적 fill: stop_px 사용)
    b. heat ≥ heat_sell → 과열 청산 (당일 종가)
-   c. days_held ≥ max_hold → 만기 청산 (당일 종가)
-3. 비용 모델(cost_model.py) 적용하여 순수익률 계산</code></pre>
-
+   c. days_held ≥ max  → 만기 청산 (당일 종가)
+3. cost_model.py로 순수익률 계산</code></pre>
     <div class="callout callout-info">
       <strong>중복 포지션 방지</strong>
-      <code>active</code> 딕셔너리가 종목별 마지막 청산일을 들고 있으며, 신호일이 그 청산일 이하이면
-      이미 보유 중인 것으로 보고 건너뜁니다. 같은 종목에 매일 신호가 떠도 포지션은 하나만 열리고,
-      청산 이후 신호부터 다시 진입할 수 있습니다.
+      <code>active</code> 딕셔너리가 종목별 마지막 청산일을 들고 있으며, 신호일이 그 이하이면
+      건너뜁니다. 같은 종목에 매일 신호가 떠도 포지션은 하나만 열리고, 청산 이후 신호부터
+      다시 진입합니다.
     </div>
+
+    <h3>fundamental_sim.py — 펀더멘털 시뮬레이션 코어</h3>
+    <p><code>research/fundamental_backtest.py</code>(단일 구간)와
+    <code>research/fundamental_walkforward.py</code>(워크포워드)가 <strong>같은 코드</strong>를 쓰도록
+    여기 둡니다. 규칙이 두 곳에서 갈라지면 검증이 무의미해집니다.
+    <code>MIN_HOLD_DAYS</code>는 <code>strategy/fundamental.py</code>에서 가져옵니다.</p>
 
     <h3>cost_model.py</h3>
     <pre><code>buy_price(px)  = px × (1 + SLIP) × (1 + FEE)
@@ -712,20 +1052,55 @@ net_return     = sell_price(exit) / buy_price(entry) - 1</code></pre>
       <tr><td>무작위 대조군 (200회)</td><td>전략 수익률이 상위 20% 이내</td></tr>
     </table>
 
-    <h3 id="analysis-tools">검증용 보조 스크립트 (프로젝트 루트)</h3>
-    <p><code>engine.py</code>의 서버사이드 <code>CROSS JOIN LATERAL</code> 쿼리는 DB 부하가 크기 때문에, 동일 로직과 동일 비용모델(<code>cost_model.py</code> 재사용)을 클라이언트 측 pandas 연산으로 재구현한 스크립트들입니다. DB 여유가 부족한 환경에서는 이쪽을 사용합니다.</p>
+    <h3>store.py — 결과 저장</h3>
+    <p><code>save_run(strategy, start_d, end_d, params, summary, trades)</code>가
+    <code>backtest_runs</code> / <code>backtest_trades</code>에 기록하고 <code>run_id</code>를 반환합니다.
+    <strong>전략당 결과는 한 건만 남깁니다</strong> — 규칙을 바꾼 백테스트는 이전 결과를 통째로
+    덮어쓰므로, 비교하려는 변형에는 각각 다른 <code>strategy</code> 이름을 줍니다.</p>
+    <div class="callout callout-warn">
+      <strong>numpy/pandas 스칼라는 저장 직전에 끊습니다</strong>
+      <code>_native()</code>가 <code>.item()</code>과 <code>date()</code> 변환을 한 곳에서 처리합니다.
+      이 저장소에서 세 번 겪은 실패입니다 — numpy 2.0의 <code>repr('np.float64(...)')</code>이 SQL에
+      그대로 박히거나 <code>numpy.datetime64</code>를 adapt하지 못해 INSERT가 죽습니다.
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- ───── RESEARCH ───── -->
+  <section id="research">
+    <h2>15. 연구 · 검증 스크립트</h2>
+    <p>전략 검증 과정과 판정 근거는 <strong><code>research/README.md</code></strong>에 있습니다.
+    새 가설을 시험하기 전에 반드시 읽으세요 — 같은 함정을 반복하지 않기 위한 방법론과 실패 사례가
+    정리돼 있습니다.</p>
+
     <table>
       <tr><th>스크립트</th><th>역할</th></tr>
-      <tr><td><code>migrate_from_ref.py</code></td><td>외부 참조 DB(stock_daily/stock_flow/instruments)를 프로젝트 Railway DB로 마이그레이션 (최초 데이터 확보용, 1회성)</td></tr>
-      <tr><td><code>backfill_signals.py</code></td><td><code>contrarian_signals</code>를 종목별 SQL 반복 호출 대신 pandas 벡터화로 대량 백필 (동일 heat_score 공식, 대폭 고속화)</td></tr>
-      <tr><td><code>run_backtest_local.py</code></td><td><code>backtester/engine.py</code>와 동일 알고리즘을 로컬 pandas로 재현 (서버 쿼리 없이 백테스트 실행 + 기간분리/부트스트랩/무작위대조군 검증까지 한 번에 출력)</td></tr>
-      <tr><td><code>decile_analysis.py</code></td><td>heat_score/개인수급비율/거래대금비율을 문턱값 없이 10분위로 나눠 향후 5·10·20거래일 수익률을 관찰 (과최적화 위험이 낮은 방식). KOSPI 월간 지수로 시장 베타 대비 초과수익도 비교</td></tr>
+      <tr><td><code>research/quality_backtest.py</code></td><td>퀄리티/가치 훈련·검증 분리. 리밸런싱 주기·슬롯·랭킹 종류 비교</td></tr>
+      <tr><td><code>research/quality_walkforward.py</code></td><td>퀄리티/가치 워크포워드. <code>WF_SLOTS</code>로 슬롯 지정</td></tr>
+      <tr><td><code>research/portfolio_backtest.py</code></td><td>슬롯 제약 포트폴리오 백테스트 (역발상)</td></tr>
+      <tr><td><code>research/contrarian_walkforward.py</code></td><td>역발상 워크포워드</td></tr>
+      <tr><td><code>research/rerun_hypotheses.py</code></td><td>기각된 다섯 가설 + 벤치마크를 시점별 시가총액 유니버스로 재산정</td></tr>
+      <tr><td><code>research/fundamental_backtest.py</code></td><td>펀더멘털 단일 구간</td></tr>
+      <tr><td><code>research/fundamental_walkforward.py</code></td><td>펀더멘털 워크포워드 (PBR 변형 자동 선택)</td></tr>
+      <tr><td><code>research/rank_study.py</code></td><td>랭킹에 신호가 있는가 — 랭킹별 수익률 곡선</td></tr>
+      <tr><td><code>research/factor_deciles.py</code></td><td>시총 3,000억 이상 유니버스 분위수 분석</td></tr>
+      <tr><td><code>backfill_signals.py</code></td><td><code>contrarian_signals</code> 벡터화 백필 (<code>processor.signals.contributions()</code> 재사용, 재개 가능)</td></tr>
+      <tr><td><code>run_backtest_local.py</code></td><td><code>engine.py</code>와 같은 알고리즘을 로컬 pandas로 재현 + 검증 출력</td></tr>
+      <tr><td><code>decile_analysis.py</code></td><td>문턱값 없이 10분위로 향후 5·10·20거래일 수익률 관찰, KOSPI 대비 초과수익</td></tr>
+      <tr><td><code>migrate_from_ref.py</code></td><td>외부 참조 DB 이관 (1회성)</td></tr>
     </table>
-    <div class="callout callout-info">
-      <strong>사용법</strong>
-      <pre style="margin-top:8px"><code>python backfill_signals.py 2022-01-01 2024-12-31
-python run_backtest_local.py 2022-01-01 2024-12-31
-python decile_analysis.py 2022-01-01 2024-12-31</code></pre>
+
+    <div class="callout callout-danger">
+      <strong>생존 편향 — 이 저장소가 실제로 겪은 가장 큰 결함</strong>
+      연구 경로가 FDR의 <strong>현재</strong> 시가총액으로 과거 유니버스를 정했습니다. 신호를 가진
+      3,136종목 중 272종목이 현재 미상장이고 그 신호 122,819행을 백테스트가 한 번도 보지 않았는데,
+      그중 81%가 역발상이 사는 구간(<code>heat_score &lt; 0</code>)이었습니다. 게다가 3,000억 경계 ±10%에
+      97종목이 걸쳐 있어 <strong>실행할 때마다 답이 달라집니다</strong>.
+      <br/><br/>
+      그래서 연구 경로도 운용과 같은 규칙을 씁니다 — 시점별 시가총액(<code>shares</code> × 종가)으로
+      유니버스를 정하고, 상장폐지 종목도 상폐 시점까지는 후보에 올립니다. 이 기준으로 다시 재면
+      역발상 가설에 <strong>양수가 하나도 남지 않습니다.</strong>
     </div>
   </section>
 
@@ -733,42 +1108,79 @@ python decile_analysis.py 2022-01-01 2024-12-31</code></pre>
 
   <!-- ───── DASHBOARD ───── -->
   <section id="dashboard">
-    <h2>14. Dashboard 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">dashboard/</small></h2>
+    <h2>16. Dashboard 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">dashboard/</small></h2>
 
     <h3>FastAPI 라우트</h3>
     <table>
       <tr><th>메서드</th><th>경로</th><th>설명</th></tr>
-      <tr><td>GET</td><td><code>/</code></td><td>현재 포지션 P&L + 오늘의 거래</td></tr>
-      <tr><td>GET</td><td><code>/trades</code></td><td>최근 50건 거래 내역</td></tr>
-      <tr><td>GET</td><td><code>/settings</code></td><td>파라미터 설정 폼</td></tr>
-      <tr><td>POST</td><td><code>/settings</code></td><td>파라미터 업데이트 → 캐시 초기화 → redirect</td></tr>
+      <tr><td>GET</td><td><code>/</code></td><td>포지션 · 자산곡선 · 자산배분 · 오늘의 거래 (<code>?mode=paper|live|real</code>)</td></tr>
+      <tr><td>GET</td><td><code>/trades</code></td><td>거래 내역 (<code>?days=7|30|90|all</code>, <code>side</code>, <code>reason</code> 필터, 최대 200건)</td></tr>
+      <tr><td>GET</td><td><code>/backtest</code></td><td>백테스트 실행 조회 (<code>?run=</code>, <code>reason=</code>, <code>worst=</code>)</td></tr>
+      <tr><td>GET / POST</td><td><code>/settings</code></td><td>런타임 파라미터 조회 / 저장 → 캐시 초기화 → redirect</td></tr>
     </table>
 
-    <h3>템플릿 구조</h3>
-    <p>Bootstrap 5 다크 테마 기반. <code>base.html</code>에 공통 레이아웃(네비게이션: 포지션 | 거래내역 | 설정)을 두고, 나머지 페이지가 상속합니다.</p>
-
-    <h4>index.html (포지션 뷰)</h4>
+    <h3>index.html — 포지션 뷰</h3>
     <ul style="margin: 6px 0 12px 20px; line-height: 2;">
-      <li>통계 카드: 보유 종목 수, 전체 P&L, 오늘 거래 수</li>
-      <li>포지션 테이블: 종목코드, 종목명, 진입가, 현재가, 수익률%, P&L, 진입일, 손절가</li>
-      <li>오늘의 거래 테이블 (매수/매도 뱃지 포함)</li>
+      <li>모드 탭: <strong>시뮬레이션</strong>(주문 없음) / <strong>계좌</strong>(모의투자) / <strong>계좌</strong>(실전계좌)</li>
+      <li>통계 카드: 보유 종목 수, 총 평가손익, 오늘 거래 수</li>
+      <li>자산 곡선(<code>equity_daily</code> 합산) · 자산 배분 누적 막대(초과분은 '기타'로 접음)</li>
+      <li>포지션 테이블: 진입가·현재가·수익률·평가손익·손절가 + <strong>진입 시 에이전트 의견</strong></li>
+      <li>오늘의 거래 테이블</li>
     </ul>
+    <div class="callout callout-info">
+      <strong>'모의/실전' 라벨만으로는 무엇인지 알 수 없었습니다</strong>
+      <code>paper</code>는 우리 DB 안의 가상 체결이고 주문이 아무 데도 나가지 않는데, 증권사
+      모의계좌로 오해하기 쉽습니다. 그래서 탭에 어느 쪽인지 적습니다.
+      <br/><br/>
+      포지션의 에이전트 의견은 <strong>의견이 실린 매수 기록</strong>을 먼저 고릅니다. 비중만 맞추는
+      추가 매수에는 판단이 없어서, 그냥 '최근 매수'를 잡으면 그 빈 기록이 진입 판단을 덮어
+      의견란이 비어 보입니다.
+    </div>
 
-    <h4>trades.html</h4>
-    <p>최근 50건 trades 테이블 출력 (정렬: ts DESC)</p>
+    <h3>backtest.html — 백테스트 뷰</h3>
+    <p>저장 이름(<code>credit_rank_no52w_exit</code> 등)만으로는 무슨 조합인지, 결론이 뭔지 알 수
+    없었습니다. 그래서 화면이 대신 말합니다:</p>
+    <ul style="margin: 6px 0 12px 20px; line-height: 2;">
+      <li><strong>knob 표</strong>: <code>params</code>에서 랭킹 종류·컬럼·리밸런싱 주기·슬롯·52주 필터·청산 랭킹을 뽑아 표시</li>
+      <li><strong>판정</strong>: 부호 일관성과 |t| ≥ 2로 자동 판정. 겹치는 구간의 옛 측정은 접어 둠</li>
+      <li><strong>다중비교 경고</strong>: k개를 시험하면 최소 하나가 우연히 양수일 확률(<code>1 − 0.95^k</code>)을 함께 표시</li>
+      <li><strong>팩터 / 랭킹 팩터 / 워크포워드 표</strong>, 자산곡선, 청산사유 분포, 분기별 안정성, 개별 매매 목록</li>
+      <li>기본 선택은 <strong>지금 굴리는 전략(quality)</strong>의 신뢰 가능한 최신 측정</li>
+    </ul>
+    <div class="callout callout-warn">
+      <strong>구간이 겹치는 실행은 대조가 아니라 재측정입니다</strong>
+      지표 정의가 바뀔 때마다 그런 쌍이 생깁니다(heat_score 대칭화 전후). 옛 측정을 함께 세면
+      실제로는 전 구간 음수인 규칙이 '부호 불안정'으로 읽히므로, 겹치는 것끼리는 최신만 남기고
+      나머지는 <em>대체됨</em>으로 접습니다.
+    </div>
 
-    <h4>settings.html</h4>
-    <p>HEAT_AVOID, HEAT_SELL, STOP_PCT, MAX_HOLD_DAYS, SLOTS 입력 폼. 저장 후 성공 메시지 표시.</p>
+    <h3>settings.html — 설정 뷰</h3>
+    <p>값마다 <strong>언제부터 듣는지</strong>를 함께 표시합니다.</p>
+    <table>
+      <tr><th>키</th><th>적용 시점</th><th>이유</th></tr>
+      <tr><td><code>HEAT_AVOID</code></td><td>즉시</td><td>다음 판단부터 신규 매수 필터에 적용</td></tr>
+      <tr><td><code>HEAT_SELL</code></td><td>즉시</td><td>보유 중인 포지션의 청산 판정에도 바로 적용</td></tr>
+      <tr><td><code>STOP_PCT</code></td><td>신규 진입분만</td><td>손절가는 진입 시점에 <code>positions.stop_px</code>로 저장됨</td></tr>
+      <tr><td><code>MAX_HOLD_DAYS</code></td><td>신규 진입분만</td><td>보유기간 한도는 <code>positions.max_hold_days</code>로 박제됨</td></tr>
+      <tr><td><code>SLOTS</code></td><td>신규 진입분만</td><td>보유 수가 넘어도 강제 청산하지 않음 — 자리가 빌 때까지 신규 매수만 멈춤</td></tr>
+      <tr><td><code>CAPITAL</code></td><td>신규 진입분만</td><td>이미 산 종목의 수량은 그대로</td></tr>
+    </table>
+
+    <h3>공통</h3>
+    <p>자체 CSS(<code>static/css/style.css</code>)를 쓰고, 주소에 파일 <code>mtime</code>을 붙여 캐시를
+    무효화합니다 — 주소가 그대로면 브라우저가 옛 CSS를 계속 써서 재배포를 알아채지 못합니다.
+    에이전트 호출 실패는 최근 24시간분을 사유 라벨로 묶어 전 페이지 상단 배너로 띄웁니다.</p>
   </section>
 
   <hr class="divider" />
 
   <!-- ───── TESTS ───── -->
   <section id="tests">
-    <h2>15. 테스트 <small style="font-size:12px;font-weight:400;color:var(--muted)">tests/</small></h2>
+    <h2>17. 테스트 <small style="font-size:12px;font-weight:400;color:var(--muted)">tests/</small></h2>
 
-    <p>DB(<code>db.connection</code>), Claude API, KIS API를 전부 mock으로 격리한 순수 단위 테스트입니다.
-    실제 네트워크·DB 연결 없이 1~2초 내에 완료되므로 백필이나 스케줄러가 도는 중에도 안전하게 실행할 수 있습니다.</p>
+    <p>DB(<code>db.connection</code>) · Claude API · KIS API · DART API를 전부 mock으로 격리한 순수
+    단위 테스트입니다. 실제 네트워크·DB 연결 없이 수 초 내 완료되므로 백필이나 스케줄러가 도는
+    중에도 안전하게 실행할 수 있습니다. <strong>27개 파일 259건.</strong></p>
 
     <pre><code>pip install -r requirements-dev.txt
 pytest tests/ -v</code></pre>
@@ -776,24 +1188,32 @@ pytest tests/ -v</code></pre>
     <h3>픽스처 (conftest.py)</h3>
     <table>
       <tr><th>픽스처</th><th>역할</th></tr>
-      <tr><td><code>mock_db</code></td><td><code>db.connection</code>의 <code>fetchone</code>/<code>fetchall</code>/<code>execute</code>/<code>executemany</code>를 교체. 모든 모듈이 <code>import db.connection as db</code> 후 호출하므로 한 번의 패치가 전 모듈에 적용됩니다</td></tr>
-      <tr><td><code>mock_settings</code></td><td><code>config.get_setting()</code>이 캐시 만료 시 <code>psycopg2.connect()</code>를 직접 호출하므로, 하드코딩 기본값(<code>config._DEFAULTS</code>)만 반환하도록 격리</td></tr>
-      <tr><td><code>mock_claude</code></td><td><code>agents.base._get_client()</code>가 반환하는 Anthropic 클라이언트를 교체. 응답 텍스트를 지정해 파싱 경로를 검증</td></tr>
+      <tr><td><code>mock_db</code></td><td><code>db.connection</code>의 <code>fetchone</code>/<code>fetchall</code>/<code>execute</code>/<code>executemany</code>를 교체. 모든 모듈이 <code>import db.connection as db</code> 후 호출하므로 한 번의 패치가 전 모듈에 적용됨</td></tr>
+      <tr><td><code>mock_settings</code></td><td><code>config.get_setting()</code>이 캐시 만료 시 <code>psycopg2.connect()</code>를 직접 호출하므로, <code>config._DEFAULTS</code>만 반환하도록 격리</td></tr>
+      <tr><td><code>mock_claude</code></td><td><code>agents.base._get_client()</code>가 반환하는 Anthropic 클라이언트를 교체</td></tr>
     </table>
 
     <h3>커버리지</h3>
     <table>
       <tr><th>파일</th><th>검증 대상</th></tr>
-      <tr><td><code>test_universe.py</code></td><td>시총 기준 필터, 이미 수집한 소형주·상장폐지 종목 유지, 일봉 없는 종목 제외, 시총 결측 처리, source별 커서 조회</td></tr>
-      <tr><td><code>test_investor_flow.py</code><br/><code>test_credit_balance.py</code></td><td>역방향 페이지네이션 종료 조건 3가지, <strong>커서 기록 규칙</strong>(완주 시에만 기록 / 페이지 한도 소진 시 미기록), UTC 커서의 로컬 시각 비교, 행 파싱(범위 밖·깨진 날짜·필드 누락), 종목별 실패 격리, <code>_fetch_page</code> 응답 파싱과 <code>rt_cd</code> 오류, API 키 미설정 경로</td></tr>
-      <tr><td><code>test_scheduler.py</code></td><td><code>_entry_signal_date()</code>가 직전 거래일을 고르는지, 신호가 없거나 체결일이 오늘이 아니면 건너뛰는지, 그 신호일로 <code>paper.buy()</code>가 실제 체결되는지</td></tr>
-      <tr><td><code>test_signals.py</code></td><td><code>_heat()</code>의 요소별 클램프 상한(4/3/3), signal 분류 경계(7.0 / 8.5), 결측 처리</td></tr>
-      <tr><td><code>test_contrarian.py</code></td><td>보유 종목 제외, 52주 위치 경계값, 결측 지표 가드, 청산 사유 우선순위(stop &gt; expiry &gt; heat_signal)</td></tr>
-      <tr><td><code>test_paper.py</code></td><td>슬롯 초과 거부, 신호일 이후 봉 부재 시 거부, 매수/매도 비용모델 계산과 DB 기록</td></tr>
-      <tr><td><code>test_agents_base.py</code><br/><code>test_gate.py</code></td><td>Claude 응답 파싱, 캐시 히트/미스, API 키 미설정·API 오류 폴백, veto 우선순위와 합의</td></tr>
-      <tr><td><code>test_cost_model.py</code></td><td><code>buy_price</code>/<code>sell_price</code>/<code>net_return</code> 계산</td></tr>
-      <tr><td><code>test_connection.py</code></td><td>쿼리 실패 시 롤백, 롤백조차 실패하면 커넥션 폐기 후 재연결, 원본 예외 보존</td></tr>
-      <tr><td><code>test_engine.py</code></td><td>동일 종목 중복 포지션 방지, 청산 이후 재진입 가능, 손절이 만기보다 우선</td></tr>
+      <tr><td><code>test_quality.py</code></td><td>퀄리티 전략(TTM·Q4 환원·시점 시총·랭킹)과 <code>paper.adjust</code> 동일가중 리밸런싱</td></tr>
+      <tr><td><code>test_fundamental.py</code></td><td>기간 파싱, 진입 조건, 최소 보유기간</td></tr>
+      <tr><td><code>test_contrarian.py</code></td><td>보유 종목 제외, 52주 위치 경계, 결측 지표 가드, 청산 사유 우선순위</td></tr>
+      <tr><td><code>test_agents_base.py</code> · <code>test_gate.py</code></td><td>응답 파싱(마크다운 강조 포함), 캐시 히트/미스, 실패 분류, 오류 → 거부권 → 합의 판정 순서</td></tr>
+      <tr><td><code>test_value_trap.py</code></td><td>공시 텍스트만 프롬프트에 들어가는지 (필터가 쓴 지표 제외 규약)</td></tr>
+      <tr><td><code>test_market_state.py</code></td><td>전략별로 반대 방향인 시장 판단 규칙</td></tr>
+      <tr><td><code>test_fundamental_agents.py</code></td><td><code>disclosure</code>·<code>financials</code> 프롬프트 구성</td></tr>
+      <tr><td><code>test_universe.py</code></td><td>시총 필터, 이미 수집한 소형주·상장폐지 종목 유지, source별 커서</td></tr>
+      <tr><td><code>test_investor_flow.py</code> · <code>test_credit_balance.py</code></td><td>역방향 페이지네이션 종료 조건, <strong>커서 기록 규칙</strong>, 행 파싱, 종목별 실패 격리</td></tr>
+      <tr><td><code>test_disclosure.py</code> · <code>test_financials.py</code> · <code>test_shares.py</code> · <code>test_dart_corp_code.py</code></td><td>월 분할, 금액 파싱, 연결/개별 선택, 배치, 보통주 선택, 한도 초과 중단과 재개, corpCode.xml 파싱</td></tr>
+      <tr><td><code>test_signals.py</code></td><td><code>_heat()</code> 클램프 상·하한, signal 분류 경계, 결측 처리</td></tr>
+      <tr><td><code>test_valuation.py</code></td><td>시점 매핑, 단위 오류 배제, PBR</td></tr>
+      <tr><td><code>test_paper.py</code></td><td>슬롯 초과 거부, 신호일 이후 봉 부재 시 거부, 비용모델과 DB 기록</td></tr>
+      <tr><td><code>test_scheduler.py</code></td><td><code>_entry_signal_date()</code>가 직전 거래일을 고르는지, 체결일이 오늘이 아니면 건너뛰는지</td></tr>
+      <tr><td><code>test_open_job.py</code></td><td>스텁 브로커로 <code>open_job()</code>을 끝까지 구동 — 미수 시 달력 무시, 매도 우선 정렬</td></tr>
+      <tr><td><code>test_no_undefined_names.py</code></td><td>pyflakes로 트리 전체의 미정의 이름 검출. <strong>임포트도 통과하고 다른 테스트도 통과하지만 호출되는 순간 죽는</strong> 결함을 잡는다</td></tr>
+      <tr><td><code>test_cost_model.py</code> · <code>test_engine.py</code> · <code>test_connection.py</code></td><td>비용 계산, 중복 포지션 방지와 손절 우선, 롤백·재연결</td></tr>
+      <tr><td><code>test_backtest_view.py</code> · <code>test_settings_view.py</code> · <code>test_dashboard_alerts.py</code></td><td>knob 조합과 판정, 설정 적용 시점 표기, 에이전트 실패 배너 집계</td></tr>
     </table>
   </section>
 
@@ -801,17 +1221,21 @@ pytest tests/ -v</code></pre>
 
   <!-- ───── EXTERNAL APIS ───── -->
   <section id="external">
-    <h2>16. 외부 API & 서비스</h2>
+    <h2>18. 외부 API &amp; 서비스</h2>
     <table>
       <tr><th>서비스</th><th>용도</th><th>라이브러리/방식</th><th>상태</th></tr>
-      <tr><td>pykrx</td><td>일봉 OHLCV</td><td>pykrx 1.2.8 (KRX 데이터, 인증 불필요)</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>FinanceDataReader</td><td>KRX 전 종목 코드 목록</td><td>StockListing('KRX')</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>pykrx</td><td>일봉 OHLCV</td><td>pykrx 1.2.8 (인증 불필요)</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>FinanceDataReader</td><td>KRX 전 종목 코드, 현재 시가총액</td><td><code>StockListing('KRX')</code></td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>Anthropic Claude API</td><td>에이전트 의사결정</td><td>anthropic SDK, claude-sonnet-4-6</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>KIS OpenAPI — 투자자매매동향</td><td>investor-trade-by-stock-daily (FHPTJ04160001)</td><td>requests (자체 구현)</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>KIS OpenAPI — 신용잔고 조회</td><td>daily-credit-balance (FHPST04760000)</td><td>requests (자체 구현)</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>KIS OpenAPI — 주문 실행</td><td>실전/모의 매수·매도</td><td>requests (자체 구현)</td><td><span class="status-stub">Stub (스케줄러 미연결)</span></td></tr>
+      <tr><td>KIS OpenAPI — 신용잔고</td><td>daily-credit-balance (FHPST04760000)</td><td>requests (자체 구현)</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>KIS OpenAPI — 주문 · 잔고</td><td>시장가 매수·매도, 잔고 조회</td><td>requests (자체 구현)</td><td><span class="status-prod">운영 중 (모의투자 서버)</span></td></tr>
+      <tr><td>DART — 고유번호</td><td>corpCode.xml</td><td>requests + zipfile + ElementTree</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>DART — 공시검색</td><td>list.json</td><td>requests (월 단위 분할)</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>DART — 다중회사 주요계정</td><td>fnlttMultiAcnt.json</td><td>requests (100종목 배치)</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>DART — 주식의총수현황</td><td>stockTotqySttus.json</td><td>requests (종목당 1콜)</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>Railway PostgreSQL</td><td>모든 데이터 영속</td><td>psycopg2</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>DART API</td><td>공시 데이터</td><td>미구현 (env 예약)</td><td><span class="status-todo">미구현</span></td></tr>
+      <tr><td>KRX Open API</td><td>investor_flow 공식 수집 경로</td><td>미구현 (env 예약)</td><td><span class="status-todo">미구현</span></td></tr>
     </table>
   </section>
 
@@ -819,58 +1243,52 @@ pytest tests/ -v</code></pre>
 
   <!-- ───── BUSINESS LOGIC ───── -->
   <section id="business">
-    <h2>17. 핵심 비즈니스 로직</h2>
+    <h2>19. 핵심 비즈니스 로직</h2>
 
-    <h3>Heat Score 공식</h3>
+    <h3>quality_v1 편입 체크리스트</h3>
+    <ol style="margin: 8px 0 16px 20px; line-height: 2.2;">
+      <li>기준일이 그 달의 첫 거래일 (또는 해당 전략 보유가 0)</li>
+      <li>재무가 <strong>기간종료 + 90일</strong>이 지나 공시된 것</li>
+      <li>시가총액 ≥ 3,000억 (시점별 발행주식수 × 종가)</li>
+      <li>TTM 순이익 &gt; 0 · TTM 매출 &gt; 0 · 자본총계 &gt; 0</li>
+      <li>부채비율 ≤ 200%</li>
+      <li>보통주 · 최근 20거래일 평균 거래대금 ≥ 10억원</li>
+      <li><code>value</code> 점수 상위 <code>SLOTS</code>개</li>
+      <li><code>value_trap</code> 에이전트 → 매수 (공시에 구조적 훼손 근거 없음)</li>
+    </ol>
+
+    <h3>heat_score 공식 (역발상 계열)</h3>
     <pre><code>heat_score =
-    clamp((flow_ratio   - 1.0) * 3.0, -4, 4)   # 개인   [-4, +4]
-  + clamp((credit_ratio - 1.0) * 3.0, -3, 3)   # 신용   [-3, +3]
+    clamp((flow_ratio   - 1.0) * 3.0, -4, 4)   # 개인     [-4, +4]
+  + clamp((credit_ratio - 1.0) * 3.0, -3, 3)   # 신용     [-3, +3]
   + clamp((vol_ratio    - 1.5) * 2.0, -3, 3)   # 거래대금 [-3, +3]</code></pre>
-    <div class="callout callout-warn">
-      <strong>하한은 0이 아니라 상한과 대칭입니다</strong>
-      하한을 0에 두면 세 배율이 모두 기준선 아래인 종목이 전부 정확히 0.0이 되는데,
-      그게 이 전략이 매수 대상으로 삼는 구간입니다. 2026-08-18 기준 필터를 통과한
-      1,324종목 중 426종목이 0.0 동점이었고(전 구간 66~74%),
-      <code>ORDER BY heat_score ASC</code>가 사실상 DB 행 순서로 종목을 골랐습니다.
-      과열에서 팔고 비과열에서 사려면 자가 양쪽으로 뻗어야 합니다. 상한 쪽은 그대로라
-      <code>HEAT_AVOID</code>·<code>HEAT_SELL</code> 임계값의 의미는 바뀌지 않습니다.
-      수식은 <code>processor/signals.py</code>의 <code>contributions()</code> 한 곳에만 두고
-      <code>backfill_signals.py</code>가 이를 import합니다 — 복제하면 백필이 운용 신호를
-      다른 수식으로 조용히 덮어씁니다.
-    </div>
 
-    <h3>진입 조건 체크리스트</h3>
-    <ol style="margin: 8px 0 16px 20px; line-height: 2.2;">
-      <li><code>heat_score &lt; 7.0</code></li>
-      <li><code>signal = 'neutral'</code></li>
-      <li>heat_score의 3개 입력 지표가 모두 존재 (결측 종목 배제)</li>
-      <li>미보유 종목</li>
-      <li>52주 위치 ≤ 30%</li>
-      <li>market_state 에이전트 → 매수 승인</li>
-      <li>risk 에이전트 → 매수 승인</li>
-      <li>value_trap 에이전트 → 매수 (공시에 구조적 훼손 근거 없음)</li>
-    </ol>
-
-    <h3>청산 조건 (우선순위)</h3>
-    <ol style="margin: 8px 0 16px 20px; line-height: 2.2;">
-      <li>손절: <code>close ≤ entry × (1 - 0.07)</code></li>
-      <li>만기: <code>held_days ≥ 20</code></li>
-      <li>과열 청산: <code>heat_score ≥ 8.5</code></li>
-    </ol>
+    <h3>청산</h3>
+    <table>
+      <tr><th>전략</th><th>청산 규칙</th></tr>
+      <tr><td><code>quality_v1</code></td><td><strong>손절도 보유기한도 없음.</strong> 월별 리밸런싱에서 목표에 없으면 전량 매도</td></tr>
+      <tr><td><code>fundamental_v1</code></td><td>손절 −7% → 만기 20거래일 (최소 보유 5거래일, 손절만 예외)</td></tr>
+      <tr><td><code>contrarian_v1</code></td><td>손절 → 만기 → <code>heat_score ≥ 8.5</code> (은퇴)</td></tr>
+    </table>
 
     <h3>비용 모델</h3>
     <pre><code># 매수 실효가
 entry_px = market_px × 1.0020 × 1.000150   # +0.215%
 
 # 매도 실효가
-exit_px  = market_px × 0.9980 × 0.999650   # -0.235%  (수수료 0.015% + 세금 0.20%)
+exit_px  = market_px × 0.9980 × 0.997850   # -0.415%  (수수료 0.015% + 세금 0.20%)
 
 # 순수익률
 net_return = exit_px / entry_px - 1</code></pre>
+    <p>왕복 약 0.63%입니다. <code>quality_v1</code>이 회전율을 낮추는 이유가 여기 있습니다 —
+    연 21회 회전하면 이 비용만으로 연 13.2%를 냅니다.</p>
 
     <div class="callout callout-info">
       <strong>Look-Ahead Bias 방지</strong>
-      모든 지표는 t-1 데이터 기준으로 계산됩니다. 진입은 신호 발생 다음 거래일 시가 기준으로 실행됩니다.
+      지표는 t-1 데이터 기준으로 계산하고, 체결은 기준일 다음 거래일 시가로 합니다.
+      재무는 공시 지연 90일을, 발행주식수는 연도 − 1의 Q4를 씁니다. 공시는 장중·마감 후 아무 때나
+      나오므로 그날 공시를 그날 시가로 체결했다고 보면 미래를 참조하게 됩니다 —
+      직전 거래일 공시를 오늘 시가로 체결합니다.
     </div>
   </section>
 
@@ -878,85 +1296,92 @@ net_return = exit_px / entry_px - 1</code></pre>
 
   <!-- ───── DEPLOY ───── -->
   <section id="deploy">
-    <h2>18. 배포 & 운영</h2>
+    <h2>20. 배포 &amp; 운영</h2>
 
     <h3>Railway 배포 구성</h3>
     <pre><code># Procfile
 web:    uvicorn dashboard.app:app --host 0.0.0.0 --port $PORT
 worker: python scheduler.py</code></pre>
-    <p><code>web</code> 프로세스(FastAPI)와 <code>worker</code> 프로세스(APScheduler)가 분리된 dyno에서 독립 실행됩니다.</p>
+    <p><code>web</code>(FastAPI)과 <code>worker</code>(APScheduler)가 분리된 dyno에서 독립 실행됩니다.
+    스케줄러는 <code>Asia/Seoul</code> 타임존으로 평일 09:05 / 16:10 두 작업을 등록합니다.</p>
 
     <h3>로컬 개발</h3>
     <pre><code>pip install -r requirements.txt
-python setup_db.py                        # DB 초기화 (최초 1회)
-python scheduler.py --now                 # 즉시 실행 테스트
+python setup_db.py                        # DB 초기화 (멱등)
+python scheduler.py --open                # 09:05 배치 즉시 실행
+python scheduler.py --now                 # 16:10 배치 즉시 실행
 uvicorn dashboard.app:app --reload        # 대시보드 개발 서버</code></pre>
 
-    <h3>실전 전환 기준 (README 기준)</h3>
-    <ul style="margin: 8px 0 16px 20px; line-height: 2;">
-      <li>모의 거래 청산 30건 이상</li>
-      <li>실현된 슬리피지 ≤ 0.20%</li>
-      <li>MDD ≤ 백테스트 MDD × 150%</li>
-    </ul>
+    <h3>실전 전환 절차</h3>
+    <ol style="margin: 8px 0 16px 20px; line-height: 2;">
+      <li>모의 거래 청산 30건 이상, 실현 슬리피지 ≤ 0.20%, MDD ≤ 백테스트 MDD × 150%</li>
+      <li><code>.env</code>에 <code>KIS_MOCK=false</code>, <code>KIS_MODE=live</code></li>
+      <li><code>settings</code>에 <code>LIVE_ENABLED=true</code> 삽입</li>
+      <li>이전 전략의 최종 자산을 <code>CAPITAL_quality_v1</code>로 넘기고 이전 전략을 <code>RETIRED_STRATEGIES</code>에 추가</li>
+    </ol>
+    <p>2~3 중 하나라도 빠지면 <code>executor/live.guard()</code>가 주문을 막습니다.</p>
   </section>
 
   <hr class="divider" />
 
-  <!-- ───── TODO ───── -->
-  <section id="todo">
-    <h2>19. 미완성 항목 & 향후 개선</h2>
+  <!-- ───── LIMITS ───── -->
+  <section id="limits">
+    <h2>21. 알려진 제약 &amp; 향후 개선</h2>
 
-    <div class="callout callout-info">
-      <strong>1. 과거 데이터 축적 및 백테스트 재검증</strong>
-      <code>investor_flow</code>·<code>credit_balance</code> 전 종목 백필이 끝나면 <code>backfill_signals.py</code>로
-      과거 <code>contrarian_signals</code>를 재계산하고 백테스트를 다시 검증해야 합니다
-      (<a href="#analysis-tools">검증용 보조 스크립트</a> 참고).
+    <div class="callout callout-warn">
+      <strong>1. 운용 전략이 통계적으로 유의하지 않습니다 <span class="badge badge-yellow">가장 중요</span></strong>
+      <code>quality_v1</code>은 워크포워드 5개 창에서 대조군을 일관되게 이겼지만 t +1.19, 승률 41%,
+      5개 창 중 3개가 음수입니다. 같은 기간 KOSPI(+135.5%)도 이기지 못합니다(우리 유니버스는
+      동일가중이라 대형주 상승을 담지 못합니다). <strong>진짜 시험은 2026-08-21 이후 실측치</strong>입니다.
     </div>
 
     <div class="callout callout-warn">
-      <strong>2. 실전 주문 실행 연동 <span class="badge badge-yellow">High Priority</span></strong>
-      <code>executor/live.py</code>의 buy/sell을 scheduler 파이프라인에 연결해야 합니다.
-      주문 확인 및 부분 체결 처리 로직도 필요합니다.
+      <strong>2. risk 에이전트의 업종 분산이 동작하지 않습니다</strong>
+      종목코드 앞 3자리는 업종이 아니라 상장 순서에 가깝습니다. <code>instruments</code>에 업종 컬럼을
+      추가해야 고칠 수 있습니다.
     </div>
 
     <div class="callout callout-info">
-      <strong>3. DART 공시 데이터 필터링</strong>
-      주요 공시일 전후 종목을 진입 후보에서 제외하면 돌발 리스크를 줄일 수 있습니다.
+      <strong>3. 슬리피지 실측이 필요합니다</strong>
+      비용 모델은 편도 0.2%를 가정하지만, 시총 3,000억·거래대금 10억 하한에서 실제로 그 값이
+      나오는지는 <code>live</code> 모드 체결 기록으로 직접 확인해야 합니다.
     </div>
 
     <div class="callout callout-info">
-      <strong>4. 에이전트 고도화</strong>
-      Anthropic prompt caching 활용으로 반복 분석 비용 절감 가능.
-      도구 사용(tool use)으로 에이전트가 DB를 직접 조회하는 방식도 검토할 수 있습니다.
+      <strong>4. <code>fundamental_v1</code> paper 경로의 처분</strong>
+      검증에서 기각됐지만 16:10 배치에서 계속 돕니다. 실측치가 충분히 쌓이면 그것으로 판정을
+      확인하고 <code>RETIRED_STRATEGIES</code>로 보낼지 결정해야 합니다.
     </div>
 
     <div class="callout callout-info">
-      <strong>5. 대시보드 고도화</strong>
-      WebSocket 기반 실시간 P&L 스트리밍, 백테스트 결과 뷰어, 에이전트 의사결정 이유 표시.
+      <strong>5. 에이전트 비용 절감</strong>
+      Anthropic prompt caching을 쓰면 반복 분석 비용을 줄일 수 있습니다. 현재는 입력 해시 기반
+      DB 캐시만 있습니다.
     </div>
 
     <h3>모듈별 현황 요약</h3>
     <table>
       <tr><th>컴포넌트</th><th>파일</th><th>상태</th></tr>
-      <tr><td>데이터 수집</td><td>collector/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>신호 계산</td><td>processor/signals.py</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>AI 게이트</td><td>agents/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>시세·수급 수집</td><td>collector/stock_daily.py, investor_flow.py, credit_balance.py</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>공시·재무 수집</td><td>collector/disclosure.py, financials.py, shares.py, dart_corp_code.py</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>신호 계산</td><td>processor/signals.py, valuation.py</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>운용 전략</td><td>strategy/quality.py, filters.py</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>기각 전략 (paper 병행)</td><td>strategy/fundamental.py</td><td><span class="status-stub">시뮬레이션 전용</span></td></tr>
+      <tr><td>은퇴 전략 (대조군)</td><td>strategy/contrarian.py</td><td><span class="status-todo">스케줄러 미연결</span></td></tr>
+      <tr><td>AI 에이전트</td><td>agents/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>모의 실행</td><td>executor/paper.py</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>실전 실행</td><td>executor/live.py</td><td><span class="status-stub">Stub — 미연동</span></td></tr>
-      <tr><td>신용잔고 수집</td><td>collector/credit_balance.py</td><td><span class="status-prod">운영 중 (KIS OpenAPI)</span></td></tr>
-      <tr><td>개인수급 수집</td><td>collector/investor_flow.py</td><td><span class="status-prod">운영 중 (KIS OpenAPI)</span></td></tr>
+      <tr><td>실전 실행</td><td>executor/live.py</td><td><span class="status-prod">운영 중 (실계좌는 LIVE_ENABLED 잠금)</span></td></tr>
+      <tr><td>자산 기록</td><td>recorder/equity.py</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>백테스터 · 결과 저장</td><td>backtester/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>연구 스크립트</td><td>research/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>웹 대시보드</td><td>dashboard/app.py</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>백테스터</td><td>backtester/engine.py</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>검증기</td><td>backtester/validator.py</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>로컬 백테스트/분위수 분석</td><td>run_backtest_local.py, decile_analysis.py</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>단위 테스트</td><td>tests/ (pytest)</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>DART API</td><td>미구현</td><td><span class="status-todo">미구현</span></td></tr>
+      <tr><td>단위 테스트</td><td>tests/ (259건)</td><td><span class="status-prod">운영 중</span></td></tr>
     </table>
   </section>
 
   <hr class="divider" />
   <p style="color:var(--muted); font-size: 12px; margin-top: 32px; padding-bottom: 64px;">
-    WarrenBuffett Bot UDD v1.2 &nbsp;·&nbsp; 2026-08-12 기준 &nbsp;·&nbsp; github.com/LJY-HY/WarrenBuffett
+    WarrenBuffett Bot UDD &nbsp;·&nbsp; 2026-08-25 기준 &nbsp;·&nbsp; github.com/LJY-HY/WarrenBuffett
   </p>
 
 </main>
