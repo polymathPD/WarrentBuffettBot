@@ -137,7 +137,10 @@ def call(agent_name: str, code: str, prompt: str,
     try:
         resp = _get_client().messages.create(
             model=MODEL,
-            max_tokens=256,
+            # 256으로 잘라 놨더니 재무처럼 분석이 긴 에이전트는 '결정: X' 줄까지
+            # 못 가서 파싱이 조용히 실패했다. 판단은 요약 한 줄인데 여기에 드는
+            # 토큰 비용은 무시할 만하다.
+            max_tokens=1024,
             messages=[{"role": "user", "content": prompt}],
         )
         text = resp.content[0].text
