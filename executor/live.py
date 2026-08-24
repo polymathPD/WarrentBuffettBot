@@ -152,6 +152,26 @@ def _find_holding(code: str) -> dict | None:
     return None
 
 
+def _wait_for_qty_change(code: str, prev_qty: float,
+                         timeout_s: float = 15.0,
+                         poll_s: float = 2.0) -> tuple[dict | None, float]:
+    """주문 뒤 잔고가 바뀔 때까지 폴링. 바뀌면 즉시, 아니면 timeout 마지막 값 반환.
+
+    2초 고정 대기로는 KIS 모의 서버의 체결 반영을 자주 놓쳤다 — 10건 중 7건이
+    '잔고 변화 없음'으로 찍혀 다음 리밸런싱까지 방치됐다. 잔고 조회는 계좌
+    단위로 응답이 커서 폴링 간격은 KIS 모의(초당 2건) 한도에 맞춰 잡는다.
+    """
+    deadline = time.time() + timeout_s
+    holding, qty = None, prev_qty
+    while time.time() < deadline:
+        time.sleep(poll_s)
+        holding = _find_holding(code)
+        qty = float(_field(holding, "hldg_qty", code)) if holding else 0.0
+        if qty != prev_qty:
+            break
+    return holding, qty
+
+
 def buy_and_record(code: str, name: str, strategy: str,
                    agents_summary: dict | None = None) -> bool:
     """실전 시장가 매수 주문 후 체결 확인하여 positions/trades에 mode='live'로 기록.
@@ -314,9 +334,7 @@ def adjust(code: str, name: str, target_qty: int, strategy: str,
         print(f"[{MODE} {side} 실패] {code} {name} - {result.get('msg1')}")
         return
 
-    time.sleep(2)  # 체결 반영 대기
-    after = _find_holding(code)
-    new_qty = float(_field(after, "hldg_qty", code)) if after else 0.0
+    after, new_qty = _wait_for_qty_change(code, cur)
     filled = new_qty - cur
     if filled == 0:
         print(f"[{MODE} {side} 미체결] {code} {name} - 잔고 변화 없음")
