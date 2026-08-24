@@ -268,7 +268,7 @@
 ├── run_backtest_local.py   # 로컬 백테스트 + 검증
 ├── decile_analysis.py      # 분위수 분석
 ├── migrate_from_ref.py     # 외부 참조 DB 이관 (1회성)
-└── tests/                  # pytest 26개 파일 253건 (DB·API 전부 mock)</code></pre>
+└── tests/                  # pytest 28개 파일 265건 (DB·API 전부 mock)</code></pre>
   </section>
 
   <hr class="divider" />
@@ -955,16 +955,22 @@ score ≥ 8.5        → "sell"    (청산 신호)</code></pre>
       <tr><th>함수</th><th>하는 일</th></tr>
       <tr><td><code>guard()</code></td><td>실전 서버인데 <code>LIVE_ENABLED</code>가 꺼져 있으면 예외</td></tr>
       <tr><td><code>account_snapshot()</code></td><td>증권사 잔고를 그대로 읽어 <code>holdings</code> / <code>cash</code>(dnca) / <code>settled_cash</code>(prvs_rcdl_excc_amt) / <code>positions_value</code>(scts) / <code>total_equity</code>(nass) 반환</td></tr>
-      <tr><td><code>adjust(...)</code></td><td>차이만 시장가 주문 → 잔고로 체결 확인 → 부분 체결이면 재주문(<code>MAX_FILL_ATTEMPTS</code> 3) → <code>positions</code>·<code>trades</code> 기록</td></tr>
+      <tr><td><code>adjust(...)</code></td><td>차이만 시장가 주문 → 잔고가 목표에 닿을 때까지 폴링 → 미체결 0을 확인한 경우에만 부족분 재주문(<code>MAX_FILL_ATTEMPTS</code> 3) → <code>positions</code>·<code>trades</code> 기록</td></tr>
+      <tr><td><code>_wait_for_fill(code, expected)</code></td><td>잔고가 목표 수량에 닿을 때까지 45초 폴링. '조금이라도 바뀌면 종료'가 아니다</td></tr>
+      <tr><td><code>_outstanding_qty(code)</code></td><td>일별주문체결조회로 오늘 낸 주문의 미체결 순수량. 조회 실패나 빈 응답은 <code>None</code>(모름)</td></tr>
       <tr><td><code>_settled_cash_after(amount)</code></td><td>이 매수가 T+2 결제 예정 예수금을 음수로 만드는지 확인</td></tr>
     </table>
 
     <div class="callout callout-danger">
-      <strong>주문을 넣었다고 체결된 것이 아닙니다</strong>
-      <code>adjust()</code>는 체결가·수량을 주문 뒤 잔고에서 다시 읽습니다. 고정 대기(2초) 대신
-      잔고 수량 변화를 폴링하고, 시장가 한 번으로 목표에 못 미치면 남는 수량만큼 다시 주문합니다 —
-      그러지 않으면 슬롯 크기가 어긋난 채 다음 달까지 방치됩니다. 한 라운드에 한 주도 안 붙으면
-      재시도해도 같으므로 멈춥니다.
+      <strong>부족분 재주문은 증권사가 '미체결 0'이라고 답한 경우에만</strong>
+      체결이 잔고에 잡히기까지 한참 걸립니다. 2026-08-24에 체결된 2,097주 중 폴링으로 본 것은
+      793주(38%)뿐이었고, 못 본 1,304주를 미체결로 오해해 다시 주문했습니다 — 원주문이 아직
+      살아 있었으므로 같은 물량을 두 번 산 셈입니다.
+      <code>_wait_for_fill()</code>은 수량이 <em>목표에 닿을</em> 때까지 45초 기다립니다(예전에는
+      조금이라도 바뀌면 즉시 빠져나왔습니다). 그래도 모자라면 <code>_outstanding_qty()</code>로
+      앞선 주문이 끝났는지 묻고, <strong>명시적인 0일 때만</strong> 부족분을 냅니다. 모의 서버는
+      <code>rt_cd=0</code>에 빈 응답을 주기도 하는데 이것은 '미체결 없음'이 아니라 '모름'이므로
+      재주문하지 않습니다.
     </div>
 
     <div class="callout callout-danger">
@@ -1180,7 +1186,7 @@ net_return     = sell_price(exit) / buy_price(entry) - 1</code></pre>
 
     <p>DB(<code>db.connection</code>) · Claude API · KIS API · DART API를 전부 mock으로 격리한 순수
     단위 테스트입니다. 실제 네트워크·DB 연결 없이 수 초 내 완료되므로 백필이나 스케줄러가 도는
-    중에도 안전하게 실행할 수 있습니다. <strong>27개 파일 259건.</strong></p>
+    중에도 안전하게 실행할 수 있습니다. <strong>28개 파일 265건.</strong></p>
 
     <pre><code>pip install -r requirements-dev.txt
 pytest tests/ -v</code></pre>
@@ -1211,6 +1217,7 @@ pytest tests/ -v</code></pre>
       <tr><td><code>test_paper.py</code></td><td>슬롯 초과 거부, 신호일 이후 봉 부재 시 거부, 비용모델과 DB 기록</td></tr>
       <tr><td><code>test_scheduler.py</code></td><td><code>_entry_signal_date()</code>가 직전 거래일을 고르는지, 체결일이 오늘이 아니면 건너뛰는지</td></tr>
       <tr><td><code>test_open_job.py</code></td><td>스텁 브로커로 <code>open_job()</code>을 끝까지 구동 — 미수 시 달력 무시, 매도 우선 정렬</td></tr>
+      <tr><td><code>test_live_fill.py</code></td><td>미체결이 남아 있거나 확인 불가면 재주문하지 않는다 (매수·매도 양쪽), 빈 응답은 0이 아니라 모름, 폴링은 목표 수량까지 기다린다</td></tr>
       <tr><td><code>test_no_undefined_names.py</code></td><td>pyflakes로 트리 전체의 미정의 이름 검출. <strong>임포트도 통과하고 다른 테스트도 통과하지만 호출되는 순간 죽는</strong> 결함을 잡는다</td></tr>
       <tr><td><code>test_cost_model.py</code> · <code>test_engine.py</code> · <code>test_connection.py</code></td><td>비용 계산, 중복 포지션 방지와 손절 우선, 롤백·재연결</td></tr>
       <tr><td><code>test_backtest_view.py</code> · <code>test_settings_view.py</code> · <code>test_dashboard_alerts.py</code></td><td>knob 조합과 판정, 설정 적용 시점 표기, 에이전트 실패 배너 집계</td></tr>
@@ -1333,6 +1340,9 @@ uvicorn dashboard.app:app --reload        # 대시보드 개발 서버</code></p
       <code>quality_v1</code>은 워크포워드 5개 창에서 대조군을 일관되게 이겼지만 t +1.19, 승률 41%,
       5개 창 중 3개가 음수입니다. 같은 기간 KOSPI(+135.5%)도 이기지 못합니다(우리 유니버스는
       동일가중이라 대형주 상승을 담지 못합니다). <strong>진짜 시험은 2026-08-21 이후 실측치</strong>입니다.
+      다만 <strong>2026-08-24 하루는 성과 집계에서 빼야 합니다</strong> — 재실행이 겹쳐 순자산 1,022만원
+      계좌가 2,660만원어치를 들고 미수 -1,638만원이 났습니다. 그날 수익률은 2.6배 레버리지가 걸린
+      값이라 전략의 성과가 아닙니다.
     </div>
 
     <div class="callout callout-warn">
@@ -1341,20 +1351,29 @@ uvicorn dashboard.app:app --reload        # 대시보드 개발 서버</code></p
       추가해야 고칠 수 있습니다.
     </div>
 
+    <div class="callout callout-warn">
+      <strong>3. 모의 서버가 미체결 내역을 주는지 확인되지 않았습니다</strong>
+      <code>_outstanding_qty()</code>는 일별주문체결조회로 앞선 주문이 끝났는지 봅니다. 2026-08-25에
+      직접 호출해 보니 <code>rt_cd=0</code>에 <code>output1</code>이 비어 있었는데, 날짜가 넘어가서인지
+      모의가 원래 안 주는지 구분되지 않습니다. 안 준다면 부분 체결분 보충 주문이 아예 안 나가
+      슬롯이 목표에 못 미친 채로 남습니다 — 겹쳐 사지는 않으므로 안전한 쪽으로 실패합니다.
+      <code>[live buy 중단]</code> 로그가 찍히는지로 판별합니다.
+    </div>
+
     <div class="callout callout-info">
-      <strong>3. 슬리피지 실측이 필요합니다</strong>
+      <strong>4. 슬리피지 실측이 필요합니다</strong>
       비용 모델은 편도 0.2%를 가정하지만, 시총 3,000억·거래대금 10억 하한에서 실제로 그 값이
       나오는지는 <code>live</code> 모드 체결 기록으로 직접 확인해야 합니다.
     </div>
 
     <div class="callout callout-info">
-      <strong>4. <code>fundamental_v1</code> paper 경로의 처분</strong>
+      <strong>5. <code>fundamental_v1</code> paper 경로의 처분</strong>
       검증에서 기각됐지만 16:10 배치에서 계속 돕니다. 실측치가 충분히 쌓이면 그것으로 판정을
       확인하고 <code>RETIRED_STRATEGIES</code>로 보낼지 결정해야 합니다.
     </div>
 
     <div class="callout callout-info">
-      <strong>5. 에이전트 비용 절감</strong>
+      <strong>6. 에이전트 비용 절감</strong>
       Anthropic prompt caching을 쓰면 반복 분석 비용을 줄일 수 있습니다. 현재는 입력 해시 기반
       DB 캐시만 있습니다.
     </div>
@@ -1375,7 +1394,7 @@ uvicorn dashboard.app:app --reload        # 대시보드 개발 서버</code></p
       <tr><td>백테스터 · 결과 저장</td><td>backtester/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>연구 스크립트</td><td>research/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>웹 대시보드</td><td>dashboard/app.py</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>단위 테스트</td><td>tests/ (259건)</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>단위 테스트</td><td>tests/ (265건)</td><td><span class="status-prod">운영 중</span></td></tr>
     </table>
   </section>
 

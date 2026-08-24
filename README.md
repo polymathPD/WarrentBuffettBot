@@ -26,7 +26,7 @@ flowchart TD
         R3["🤖 value_trap\n공시 텍스트로 가치 함정 판별\n⚡ 반려하면 다음 순위로 대체"]
         R4["🤖 market_state / risk\n🤖 disclosure / financials\n판단을 기록만 (편입은 막지 않음)"]
         R5{"KIS_MODE"}
-        R6["executor.live.adjust()\n매도를 전부 낸 뒤 매수\n잔고로 체결 확인 · 부분 체결이면 재주문"]
+        R6["executor.live.adjust()\n매도를 전부 낸 뒤 매수\n목표 수량까지 폴링 · 미체결 0일 때만 재주문"]
         R7["executor.paper.adjust()\n오늘 시가로 DB 시뮬레이션"]
         R8["equity_daily 스냅샷"]
     end
@@ -149,6 +149,11 @@ flowchart TD
 > 상태에서 매수가 미수 가드에 걸려 슬롯이 빈 채로 끝납니다. 주문은 체결 금액 차이 오름차순으로
 > 정렬해 큰 매도부터 나갑니다.
 
+> **부족분 재주문은 증권사가 "미체결 0"이라고 답한 경우에만 나갑니다.** 체결이 잔고에 반영되기까지
+> 오래 걸려서, 잔고만 보고 재주문하면 아직 살아 있는 주문 위에 겹쳐 삽니다. `_wait_for_fill()`이
+> 목표 수량에 닿을 때까지 45초 기다리고, 그래도 모자라면 `_outstanding_qty()`(일별주문체결조회)로
+> 앞선 주문이 끝났는지 확인합니다. 조회가 실패하거나 빈 응답이면 "모름"으로 보고 주문하지 않습니다.
+
 ---
 
 ## 기술 스택
@@ -183,7 +188,7 @@ flowchart TD
 ## 단위 테스트
 
 DB / Claude API / KIS API / DART API를 전부 mock으로 격리한 순수 단위 테스트입니다
-(실제 네트워크·DB 연결 없이 수 초 내 완료). **27개 파일 259건.**
+(실제 네트워크·DB 연결 없이 수 초 내 완료). **28개 파일 265건.**
 
 ```bash
 pip install -r requirements-dev.txt
@@ -196,7 +201,7 @@ pytest tests/ -v
 | 에이전트 | `test_agents_base.py`, `test_gate.py`, `test_value_trap.py`, `test_market_state.py`, `test_fundamental_agents.py` |
 | 수집 | `test_universe.py`, `test_investor_flow.py`, `test_credit_balance.py`, `test_disclosure.py`, `test_financials.py`, `test_shares.py`, `test_dart_corp_code.py` |
 | 계산 | `test_signals.py`, `test_valuation.py`, `test_cost_model.py` |
-| 실행·기록 | `test_paper.py`, `test_scheduler.py`, `test_open_job.py`, `test_connection.py`, `test_engine.py` |
+| 실행·기록 | `test_paper.py`, `test_scheduler.py`, `test_open_job.py`, `test_live_fill.py`, `test_connection.py`, `test_engine.py` |
 | 정적 검사 | `test_no_undefined_names.py` — pyflakes로 트리 전체의 미정의 이름을 잡는다 |
 | 대시보드 | `test_backtest_view.py`, `test_settings_view.py`, `test_dashboard_alerts.py` |
 
@@ -305,6 +310,10 @@ python decile_analysis.py 2022-01-01 2024-12-31
 > 승률 41%이고 5개 창 중 3개가 음수이며, 같은 기간 KOSPI를 이기지 못합니다.
 > "돈 버는 전략을 찾았다"가 아니라 "랭킹이 랭킹 안 하는 것보다 낫다는 게 5개 창에서 일관됐다"가
 > 정확한 표현입니다. 진짜 시험은 2026-08-21 이후 데이터입니다.
+>
+> 실측치를 읽을 때 **2026-08-24는 빼야 합니다.** 재실행이 겹쳐 순자산 1,022만원 계좌가
+> 2,660만원어치를 들고 미수 -1,638만원이 났습니다. 그날 수익률은 2.6배 레버리지가 걸린 값이라
+> 전략의 성과가 아닙니다.
 >
 > 역발상 다섯 가설과 펀더멘털 두 변형은 모두 기각됐습니다. 생존 편향(현재 상장 목록으로 과거를
 > 백테스트)을 제거한 뒤 남은 양수가 하나도 없습니다.
