@@ -334,9 +334,10 @@ def account_snapshot() -> dict:
     cash = float(summary.get("dnca_tot_amt") or 0)
     positions_value = float(summary.get("scts_evlu_amt") or 0)
     total_equity = float(summary.get("nass_amt") or (cash + positions_value))
+    settled_cash = float(summary.get("prvs_rcdl_excc_amt") or cash)
     return {"holdings": holdings, "cash": cash,
             "positions_value": positions_value, "total_equity": total_equity,
-            "raw_summary": summary}
+            "settled_cash": settled_cash, "raw_summary": summary}
 
 
 MAX_FILL_ATTEMPTS = 3

@@ -16,6 +16,12 @@ import config
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
 
+def name_of(code: str) -> str:
+    import db.connection as db
+    row = db.fetchone("SELECT name FROM instruments WHERE code=%s", (code,))
+    return row["name"] if row else code
+
+
 def _entry_signal_date(today: str):
     """
     오늘 시가로 체결할 진입 신호일을 고른다.
@@ -110,28 +116,32 @@ def open_job():
             print(f"잔고 조회 실패 - 건너뜀: {type(e).__name__} {str(e)[:100]}")
             return
         empty = not snap["holdings"]
+        # 미수(외상매수)는 T+2에 반대매매로 끝난다. 달력을 기다리면 늦는다.
+        # 2026-08-24에 재실행이 겹쳐 10M 계좌가 26.7M을 들고 -16.4M 미수가 났는데,
+        # 다음 리밸런싱일이 9월 1일이라 그때까지 방치될 뻔했다.
+        in_debt = snap["settled_cash"] < 0
+        if in_debt:
+            print(f"  미수 {snap['settled_cash']:,.0f}원 - 달력과 무관하게 정리한다")
     else:
+        in_debt = False
         empty = not db.fetchone(
             "SELECT 1 FROM positions WHERE strategy=%s AND mode='paper' LIMIT 1",
             (quality.STRATEGY,))
 
     rebal_d = _quality_rebalance_date(today)
     if rebal_d is None:
-        if not empty:
+        if not empty and not in_debt:
             print("리밸런싱일 아님 - 건너뜀")
             return
         rebal_d = _prev_trading_day(today)
         if rebal_d is None:
             print("직전 거래일 없음 - 건너뜀")
             return
-        print(f"리밸런싱일은 아니지만 보유가 없어 최초 편입을 진행한다 ({rebal_d} 기준)")
+        why = "미수 정리" if in_debt else "보유가 없어 최초 편입"
+        print(f"리밸런싱일은 아니지만 {why}를 진행한다 ({rebal_d} 기준)")
 
     def _op(v):
         return {k: v.get(k) for k in ("decision", "score", "rationale", "error")}
-
-    def name_of(code):
-        row = db.fetchone("SELECT name FROM instruments WHERE code=%s", (code,))
-        return row["name"] if row else code
 
     slots = config.get_setting("SLOTS")
     ranked = quality.get_targets(rebal_d, slots, limit=slots * 3)
@@ -258,7 +268,8 @@ def daily_job():
     if prev_day is None:
         print("펀더멘털 진입: 직전 거래일 없음 - 건너뜀")
     else:
-        from executor.paper import free_slots
+        from executor.paper import free_slots, buy
+        from agents.gate import decide_fundamental
         f_candidates = fundamental.get_entry_candidates(prev_day)
         print(f"펀더멘털 후보({prev_day} 공시 -> {today} 시가 체결): {len(f_candidates)}종목")
         for i, c in enumerate(f_candidates):
