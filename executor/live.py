@@ -295,6 +295,11 @@ def account_snapshot() -> dict:
 
     직접 장부를 굴리면 어긋난다 — 2026-08-21에 기록 없이 38주가 생기고 현금이
     97만원 부풀려진 적이 있다. 잔고를 조회하면 그런 종류의 불일치가 없다.
+
+    반환 값에 총자산(nass_amt), 유가증권 평가(scts_evlu_amt)를 함께 실어 준다.
+    KIS 모의는 매수해도 dnca_tot_amt가 그대로라 dnca + scts로 총자산을 구하면
+    실제(nass_amt)보다 훨씬 부풀려진다 (T+2 결제 대기분이 스냅샷에서 빠진다).
+    자산 곡선·자산배분은 KIS가 계산한 nass_amt를 그대로 써야 정확하다.
     """
     b = get_balance()
     if b.get("rt_cd") != "0":
@@ -309,10 +314,15 @@ def account_snapshot() -> dict:
             "qty": qty,
             "avg_px": float(_field(it, "pchs_avg_pric", it["pdno"])),
             "cur_px": float(_field(it, "prpr", it["pdno"])),
+            "evlu_amt": float(it.get("evlu_amt") or 0),
         }
     summary = (b.get("output2") or [{}])[0]
     cash = float(summary.get("dnca_tot_amt") or 0)
-    return {"holdings": holdings, "cash": cash, "raw_summary": summary}
+    positions_value = float(summary.get("scts_evlu_amt") or 0)
+    total_equity = float(summary.get("nass_amt") or (cash + positions_value))
+    return {"holdings": holdings, "cash": cash,
+            "positions_value": positions_value, "total_equity": total_equity,
+            "raw_summary": summary}
 
 
 MAX_FILL_ATTEMPTS = 3

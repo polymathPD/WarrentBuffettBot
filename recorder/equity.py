@@ -69,7 +69,13 @@ def cash_by_key(target_date: str = None) -> dict:
 
 
 def snapshot(target_date: str = None) -> int:
-    """기준일의 (mode, strategy)별 자산을 기록하고 기록한 행 수를 반환한다."""
+    """기준일의 (mode, strategy)별 자산을 기록하고 기록한 행 수를 반환한다.
+
+    live 모드는 KIS가 계산한 순자산(nass_amt)을 그대로 저장한다. 우리 장부로
+    현금을 재계산하면 매수 재실행으로 trades가 부풀려진 경우 왜곡되고, KIS
+    모의는 dnca_tot_amt가 매수 뒤에도 그대로라 dnca + scts로 총자산을 구하면
+    T+2 결제분이 빠져 실제보다 부풀려진다. 브로커 계산값이 유일한 진실이다.
+    """
     d = target_date or date.today().strftime("%Y-%m-%d")
     _, retired = _overrides()
 
@@ -82,6 +88,7 @@ def snapshot(target_date: str = None) -> int:
                WHERE code = p.code AND d <= %s::date
                ORDER BY d DESC LIMIT 1
            ) sd ON TRUE
+           WHERE p.mode <> 'live'
            GROUP BY p.mode, p.strategy""",
         (d,),
     )
@@ -91,11 +98,23 @@ def snapshot(target_date: str = None) -> int:
     rows = []
     for key in cash.keys() | held.keys():
         mode, strategy = key
-        if strategy in retired:
+        if strategy in retired or mode == "live":
             continue
         c = cash.get(key, capital_for(strategy))
         v = held.get(key, 0.0)
         rows.append((d, mode, strategy, c, v, c + v))
+
+    # live 모드는 KIS 스냅샷으로 별도 처리. 조회 실패 시 그 전략만 건너뛴다.
+    live_strategies = {s for (m, s) in cash.keys() if m == "live" and s not in retired}
+    if live_strategies:
+        try:
+            from executor.live import account_snapshot
+            snap = account_snapshot()
+            for strategy in live_strategies:
+                rows.append((d, "live", strategy,
+                             snap["cash"], snap["positions_value"], snap["total_equity"]))
+        except Exception as e:
+            print(f"[자산] live 스냅샷 실패 - 건너뜀: {type(e).__name__} {str(e)[:120]}")
 
     if rows:
         db.executemany(

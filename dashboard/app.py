@@ -266,7 +266,18 @@ def index(request: Request, mode: str = "paper"):
     """, (mode,))
     equity_chart = _equity_chart_data(equity_rows)
 
-    cash = sum(v for (m, _), v in cash_by_key().items() if m == mode)
+    # live 모드의 현금은 우리 장부(trades 합)로 계산하면 재실행으로 매수가 이중
+    # 기록될 때 크게 왜곡된다. 브로커가 관리하는 값을 그대로 쓴다 — 스냅샷 시점의
+    # KIS 예수금이 equity_daily.cash에 저장돼 있으므로 그 값을 읽어 온다.
+    if mode == "live":
+        row = db.fetchone(
+            """SELECT SUM(cash) AS cash FROM equity_daily
+               WHERE mode='live'
+                 AND d = (SELECT MAX(d) FROM equity_daily WHERE mode='live')"""
+        )
+        cash = float(row["cash"]) if row and row["cash"] is not None else 0.0
+    else:
+        cash = sum(v for (m, _), v in cash_by_key().items() if m == mode)
     allocation = _allocation_data(positions, cash)
 
     return templates.TemplateResponse(request, "index.html", {
