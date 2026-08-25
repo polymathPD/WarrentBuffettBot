@@ -118,3 +118,30 @@ def test_wait_for_fill_keeps_polling_until_the_target_is_reached(mocker):
     _holding, qty = live._wait_for_fill("000000", 14.0, timeout_s=5.0, poll_s=0.0)
 
     assert qty == 14.0
+
+
+def test_balance_retries_a_transient_server_error(mocker, capsys):
+    """증권사 500 한 번에 하루 리밸런싱을 통째로 버리면 안 된다.
+
+    2026-08-25 09:05, 계좌가 미수 -1,638만원인 채로 open_job이 떴는데
+    inquire-balance가 500을 냈고 '잔고 조회 실패 - 건너뜀'만 찍고 끝났다.
+    같은 요청이 몇 분 뒤에는 정상이었다.
+    """
+    mocker.patch("time.sleep", return_value=None)
+    ok = {"rt_cd": "0", "output1": [], "output2": [{}]}
+    mocker.patch.object(
+        live, "_get_balance_once",
+        side_effect=[RuntimeError("500 Server Error"), RuntimeError("500 Server Error"), ok])
+
+    assert live.get_balance() is ok
+    assert "잔고 조회 재시도" in capsys.readouterr().out
+
+
+def test_balance_gives_up_after_the_last_retry(mocker):
+    """계속 실패하면 마지막 예외를 그대로 올린다 - 조용히 넘어가지 않는다."""
+    mocker.patch("time.sleep", return_value=None)
+    mocker.patch.object(live, "_get_balance_once", side_effect=RuntimeError("500 Server Error"))
+
+    with pytest.raises(RuntimeError, match="500"):
+        live.get_balance()
+    assert live._get_balance_once.call_count == live._RETRIES

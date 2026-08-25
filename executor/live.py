@@ -27,6 +27,12 @@ _BASE_URL = _MOCK_BASE if _IS_MOCK else _LIVE_BASE
 # 토큰 캐시 (프로세스 수명 동안 재사용)
 _token_cache: dict = {"access_token": "", "expires_at": 0}
 
+# 증권사가 일시적으로 실패할 때 몇 번, 얼마 간격으로 다시 묻는지.
+# 토큰은 분당 1회 제한이라 간격이 길어야 한다.
+_RETRIES = 4
+_TOKEN_BACKOFF_S = 65.0
+_BALANCE_BACKOFF_S = 5.0
+
 
 def _get_token() -> str:
     if time.time() < _token_cache["expires_at"] - 60:
@@ -35,17 +41,30 @@ def _get_token() -> str:
     if not config.KIS_APP_KEY or not config.KIS_APP_SECRET:
         raise RuntimeError("KIS_APP_KEY 또는 KIS_APP_SECRET 미설정")
 
-    resp = requests.post(
-        f"{_BASE_URL}/oauth2/tokenP",
-        json={
-            "grant_type": "client_credentials",
-            "appkey": config.KIS_APP_KEY,
-            "appsecret": config.KIS_APP_SECRET,
-        },
-        timeout=10,
-    )
-    resp.raise_for_status()
-    data = resp.json()
+    # KIS는 토큰 발급을 분당 1회로 제한한다(403 EGW00133). 프로세스가 새로 뜬 직후나
+    # 앞선 실행이 방금 발급받았으면 첫 시도가 막히므로 간격을 두고 다시 묻는다.
+    data = None
+    for i in range(_RETRIES):
+        try:
+            resp = requests.post(
+                f"{_BASE_URL}/oauth2/tokenP",
+                json={
+                    "grant_type": "client_credentials",
+                    "appkey": config.KIS_APP_KEY,
+                    "appsecret": config.KIS_APP_SECRET,
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except Exception as e:
+            if i == _RETRIES - 1:
+                raise
+            wait = _TOKEN_BACKOFF_S * (i + 1)
+            print(f"[{MODE} 토큰 발급 재시도 {i+1}/{_RETRIES}] {type(e).__name__} "
+                  f"{str(e)[:70]} - {wait:.0f}초 뒤")
+            time.sleep(wait)
 
     if "access_token" not in data:
         raise RuntimeError(f"토큰 발급 실패: {data}")
@@ -106,8 +125,29 @@ def sell(code: str, qty: int) -> dict:
 
 
 def get_balance() -> dict:
-    """잔고 조회"""
+    """잔고 조회. 일시적 실패는 재시도한다.
+
+    KIS 모의 서버는 이 엔드포인트에서 간헐적으로 500을 낸다. 2026-08-25 09:05
+    리밸런싱이 그 500 한 번에 통째로 취소됐다 — 계좌가 미수 -1,638만원이었는데도
+    `잔고 조회 실패 - 건너뜀`만 찍고 끝났다. 같은 요청이 몇 분 뒤에는 정상이었다.
+    """
     tr_id = "VTTC8434R" if _IS_MOCK else "TTTC8434R"
+    last = None
+    for i in range(_RETRIES):
+        try:
+            return _get_balance_once(tr_id)
+        except Exception as e:
+            last = e
+            if i == _RETRIES - 1:
+                break
+            wait = _BALANCE_BACKOFF_S * (i + 1)
+            print(f"[{MODE} 잔고 조회 재시도 {i+1}/{_RETRIES}] {type(e).__name__} "
+                  f"{str(e)[:70]} - {wait:.0f}초 뒤")
+            time.sleep(wait)
+    raise last
+
+
+def _get_balance_once(tr_id: str) -> dict:
     resp = requests.get(
         f"{_BASE_URL}/uapi/domestic-stock/v1/trading/inquire-balance",
         headers=_headers(tr_id),
