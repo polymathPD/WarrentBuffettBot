@@ -86,6 +86,30 @@ def _quality_rebalance_date(today: str):
     return prev
 
 
+def _stored_targets(strategy: str) -> tuple[set, str | None]:
+    """직전 리밸런싱이 의도했던 종목 집합과 그때 쓴 기준일.
+
+    보정 실행이 '할 일이 남았는지'를 알려면 목표를 알아야 한다. 종목 수만 세는
+    것으로는 안 된다 — 2026-08-25 13:10에 팔았어야 할 3종목이 채웠어야 할 3종목의
+    자리를 차지한 채 정확히 10종목이라, 꽉 찬 것으로 보여 그냥 건너뛰었다.
+    """
+    import db.connection as db
+    rows = db.fetchall("SELECT key, value FROM settings WHERE key = ANY(%s)",
+                       ([f"TARGETS_{strategy}", f"TARGETS_D_{strategy}"],))
+    m = {r["key"]: r["value"] for r in rows}
+    codes = {c for c in (m.get(f"TARGETS_{strategy}") or "").split(",") if c}
+    return codes, m.get(f"TARGETS_D_{strategy}") or None
+
+
+def _store_targets(strategy: str, codes, rebal_d: str) -> None:
+    import db.connection as db
+    for k, v in ((f"TARGETS_{strategy}", ",".join(sorted(codes))),
+                 (f"TARGETS_D_{strategy}", rebal_d)):
+        db.execute("INSERT INTO settings (key, value) VALUES (%s, %s) "
+                   "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, "
+                   "updated_at = NOW()", (k, v))
+
+
 def open_job():
     """개장 직후 리밸런싱 — 결정은 직전 거래일 데이터로, 체결은 오늘 시가 근처로.
 
@@ -116,8 +140,8 @@ def open_job():
         except Exception as e:
             print(f"잔고 조회 실패 - 건너뜀: {type(e).__name__} {str(e)[:100]}")
             return
-        held = len(snap["holdings"])
-        empty = not held
+        codes = set(snap["holdings"])
+        empty = not codes
         # 미수(외상매수)는 T+2에 반대매매로 끝난다. 달력을 기다리면 늦는다.
         # 2026-08-24에 재실행이 겹쳐 10M 계좌가 26.7M을 들고 -16.4M 미수가 났는데,
         # 다음 리밸런싱일이 9월 1일이라 그때까지 방치될 뻔했다.
@@ -126,28 +150,36 @@ def open_job():
             print(f"  미수 {snap['settled_cash']:,.0f}원 - 달력과 무관하게 정리한다")
     else:
         in_debt = False
-        held = db.fetchone(
-            "SELECT COUNT(*) c FROM positions WHERE strategy=%s AND mode='paper'",
-            (quality.STRATEGY,))["c"]
-        empty = not held
+        codes = {r["code"] for r in db.fetchall(
+            "SELECT code FROM positions WHERE strategy=%s AND mode='paper'",
+            (quality.STRATEGY,))}
+        empty = not codes
 
-    # 슬롯이 비어 있으면 앞선 실행이 끝까지 가지 못한 것이다. 12:00 보정 실행이
-    # 있는 이유가 이것인데, 2026-08-25에는 게이트에 이 조건이 없어 그냥 건너뛰었다 —
-    # 아침 배치가 주문 500으로 죽어 5슬롯이 빈 채였고 미수는 이미 털린 뒤였다.
-    under_filled = 0 < held < slots
+    # 보유가 직전 리밸런싱의 목표와 다르면 그 실행이 끝까지 가지 못한 것이다.
+    # 종목 수를 세는 것으로는 판별되지 않는다 — 2026-08-25 13:10에 팔았어야 할
+    # 3종목이 채웠어야 할 3종목의 자리를 차지한 채 정확히 10종목이라, 슬롯이 꽉 찬
+    # 것으로 보여 그냥 건너뛰었다.
+    want, want_d = _stored_targets(quality.STRATEGY)
+    unfinished = bool(want) and codes != want
 
     rebal_d = _quality_rebalance_date(today)
     if rebal_d is None:
-        if not empty and not in_debt and not under_filled:
+        if not empty and not in_debt and not unfinished:
             print("리밸런싱일 아님 - 건너뜀")
             return
-        rebal_d = _prev_trading_day(today)
+        # 보정은 다시 랭킹하지 않는다. 직전 리밸런싱이 쓴 기준일을 그대로 써야
+        # 월 1회 회전율이 유지된다 — 매일 다시 매기면 그게 일간 리밸런싱이다.
+        rebal_d = want_d if (unfinished and want_d) else _prev_trading_day(today)
         if rebal_d is None:
             print("직전 거래일 없음 - 건너뜀")
             return
-        why = ("미수 정리" if in_debt
-               else "보유가 없어 최초 편입" if empty
-               else f"슬롯 {slots - held}개가 비어 보정")
+        if in_debt:
+            why = "미수 정리"
+        elif empty:
+            why = "보유가 없어 최초 편입"
+        else:
+            why = (f"목표와 어긋나 보정 (빠진 것 {sorted(want - codes)}, "
+                   f"남은 것 {sorted(codes - want)})")
         print(f"리밸런싱일은 아니지만 {why}를 진행한다 ({rebal_d} 기준)")
 
     def _op(v):
@@ -181,6 +213,7 @@ def open_job():
 
     tgt = {t["code"]: t for t in picked}
     print(f"목표 {len(tgt)}종목 ({rebal_d} 기준)")
+    _store_targets(quality.STRATEGY, tgt, rebal_d)
 
     if config.KIS_MODE == "live":
         from executor import live

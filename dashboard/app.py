@@ -269,7 +269,20 @@ def index(request: Request, mode: str = "paper"):
         SELECT side, code, name, qty, price, realized_pct, exit_reason, ts
         FROM trades WHERE ts::date = CURRENT_DATE AND mode = %s ORDER BY ts DESC
     """, (mode,))
-    total_unrealized = sum(float(p["unrealized"] or 0) for p in positions)
+    # 계좌 모드에서는 증권사가 계산한 평가손익을 그대로 쓴다. 우리 계산은 두 군데서
+    # 어긋난다 — positions 수량이 체결 반영보다 늦고(2026-08-25 일진홀딩스 DB 33주 /
+    # 실제 142주), 기준가가 stock_daily라 장중에는 전일 종가다. 예수금·순자산을 이미
+    # KIS 값으로 쓰기로 한 것과 같은 이유다.
+    if mode in ("live", "real"):
+        row = db.fetchone(
+            """SELECT SUM(unrealized) AS u FROM equity_daily
+               WHERE mode = %s AND unrealized IS NOT NULL
+                 AND d = (SELECT MAX(d) FROM equity_daily
+                           WHERE mode = %s AND unrealized IS NOT NULL)""",
+            (mode, mode))
+        total_unrealized = float(row["u"]) if row and row["u"] is not None else 0.0
+    else:
+        total_unrealized = sum(float(p["unrealized"] or 0) for p in positions)
 
     # 전략이 여럿이면 같은 날 행이 여러 개다 — 모드 전체 자산으로 합산한다.
     equity_rows = db.fetchall("""
@@ -284,12 +297,12 @@ def index(request: Request, mode: str = "paper"):
     # live 모드의 현금은 우리 장부(trades 합)로 계산하면 재실행으로 매수가 이중
     # 기록될 때 크게 왜곡된다. 브로커가 관리하는 값을 그대로 쓴다 — 스냅샷 시점의
     # KIS 예수금이 equity_daily.cash에 저장돼 있으므로 그 값을 읽어 온다.
-    if mode == "live":
+    if mode in ("live", "real"):
         row = db.fetchone(
             """SELECT SUM(cash) AS cash FROM equity_daily
-               WHERE mode='live'
-                 AND d = (SELECT MAX(d) FROM equity_daily WHERE mode='live')"""
-        )
+               WHERE mode = %s
+                 AND d = (SELECT MAX(d) FROM equity_daily WHERE mode = %s)""",
+            (mode, mode))
         cash = float(row["cash"]) if row and row["cash"] is not None else 0.0
     else:
         cash = sum(v for (m, _), v in cash_by_key().items() if m == mode)

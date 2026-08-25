@@ -108,3 +108,36 @@ def test_get_conn_reuses_existing_open_connection(mocker):
 
     assert c1 is c2
     connect_mock.assert_called_once()  # 두 번째 호출은 재연결하지 않아야 함
+
+
+def test_reads_close_their_transaction(mocker):
+    """SELECT도 트랜잭션을 연다. 안 닫으면 그 연결이 락을 쥔 채 남는다.
+
+    2026-08-25에 대시보드 연결이 한 시간, 진단 스크립트가 한 시간 반 동안
+    'idle in transaction'으로 있어서 ALTER TABLE이 10분 넘게 막혔다. 워커 시작 시
+    마이그레이션을 돌리게 바꾼 뒤라, 그대로 뒀으면 대시보드가 조회 한 번 한 것만으로
+    워커가 못 뜰 수 있었다.
+    """
+    conn = mocker.MagicMock()
+    mocker.patch.object(dbconn, "get_conn", return_value=conn)
+    conn.cursor.return_value.__enter__.return_value.fetchall.return_value = []
+    conn.cursor.return_value.__enter__.return_value.fetchone.return_value = None
+
+    dbconn.fetchall("SELECT 1")
+    assert conn.commit.called, "fetchall이 트랜잭션을 안 닫는다"
+
+    conn.commit.reset_mock()
+    dbconn.fetchone("SELECT 1")
+    assert conn.commit.called, "fetchone이 트랜잭션을 안 닫는다"
+
+
+def test_schema_migration_does_not_wait_forever_on_a_lock(mocker):
+    """워커가 뜰 때마다 도는 경로다. 락에 무한정 걸리면 조용히 멈춘다."""
+    conn = mocker.MagicMock()
+    mocker.patch.object(dbconn, "get_conn", return_value=conn)
+    cur = conn.cursor.return_value.__enter__.return_value
+
+    dbconn.init_schema()
+
+    stmts = [c[0][0] for c in cur.execute.call_args_list]
+    assert any("lock_timeout" in s and dbconn.SCHEMA_LOCK_TIMEOUT in s for s in stmts), stmts

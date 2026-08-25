@@ -102,7 +102,7 @@ def snapshot(target_date: str = None) -> int:
             continue
         c = cash.get(key, capital_for(strategy))
         v = held.get(key, 0.0)
-        rows.append((d, mode, strategy, c, v, c + v))
+        rows.append((d, mode, strategy, c, v, c + v, None))
 
     # live 모드는 KIS 스냅샷으로 별도 처리. 조회 실패 시 그 전략만 건너뛴다.
     #
@@ -117,23 +117,26 @@ def snapshot(target_date: str = None) -> int:
             snap = account_snapshot()
             settled_cash = snap["total_equity"] - snap["positions_value"]
             for strategy in live_strategies:
-                rows.append((d, "live", strategy,
-                             settled_cash, snap["positions_value"], snap["total_equity"]))
+                rows.append((d, "live", strategy, settled_cash,
+                             snap["positions_value"], snap["total_equity"],
+                             snap["unrealized"]))
         except Exception as e:
             print(f"[자산] live 스냅샷 실패 - 건너뜀: {type(e).__name__} {str(e)[:120]}")
 
     if rows:
         db.executemany(
-            """INSERT INTO equity_daily (d, mode, strategy, cash, positions_value, total_equity)
+            """INSERT INTO equity_daily (d, mode, strategy, cash, positions_value,
+                                        total_equity, unrealized)
                VALUES %s
                ON CONFLICT (d, mode, strategy) DO UPDATE
                SET cash = EXCLUDED.cash,
                    positions_value = EXCLUDED.positions_value,
-                   total_equity = EXCLUDED.total_equity""",
+                   total_equity = EXCLUDED.total_equity,
+                   unrealized = EXCLUDED.unrealized""",
             rows,
         )
 
-    for _, mode, strategy, c, v, total in rows:
+    for _, mode, strategy, c, v, total, _u in rows:
         print(f"[자산] {d} {mode}/{strategy}  현금 {c:,.0f}  평가 {v:,.0f}  총 {total:,.0f}")
     return len(rows)
 

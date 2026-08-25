@@ -427,9 +427,11 @@ def account_snapshot() -> dict:
     positions_value = float(summary.get("scts_evlu_amt") or 0)
     total_equity = float(summary.get("nass_amt") or (cash + positions_value))
     settled_cash = float(summary.get("prvs_rcdl_excc_amt") or cash)
+    unrealized = float(summary.get("evlu_pfls_smtl_amt") or 0)
     return {"holdings": holdings, "cash": cash,
             "positions_value": positions_value, "total_equity": total_equity,
-            "settled_cash": settled_cash, "raw_summary": summary}
+            "settled_cash": settled_cash, "unrealized": unrealized,
+            "raw_summary": summary}
 
 
 def reconcile_positions(snapshot: dict, strategy: str,

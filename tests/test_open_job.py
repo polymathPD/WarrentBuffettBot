@@ -55,6 +55,8 @@ def live_run(mocker, mock_db, mock_settings):
             "decision": "매수", "score": 8, "rationale": "테스트"})
 
     mocker.patch("recorder.equity.snapshot", return_value=None)
+    mocker.patch.object(scheduler, "_stored_targets", return_value=(set(), None))
+    mocker.patch.object(scheduler, "_store_targets")
 
     class Run:
         orders = None
@@ -220,32 +222,53 @@ def test_worker_refuses_to_start_when_the_schema_cannot_be_applied(mocker):
     assert not started.called
 
 
-def test_unfilled_slots_are_topped_up_outside_the_rebalance_calendar(live_run, capsys):
-    """슬롯이 비어 있으면 앞선 실행이 끝까지 못 간 것이다. 달력을 기다리지 않는다.
+def test_holdings_that_differ_from_the_target_are_corrected(live_run, mocker, capsys):
+    """보유가 직전 목표와 다르면 달력을 기다리지 않는다.
 
-    2026-08-25 12:00 보정 실행이 '리밸런싱일 아님 - 건너뜀'만 찍고 끝났다. 아침
-    배치가 주문 500으로 죽어 5슬롯이 빈 채였는데, 미수는 이미 털린 뒤라 게이트를
-    여는 조건이 하나도 안 걸렸다. 보정 실행을 붙여 놓고 정작 보정이 필요한 상황을
-    조건에 안 넣은 것이다.
+    2026-08-25 13:10 보정 실행이 '리밸런싱일 아님 - 건너뜀'만 찍고 끝났다. 팔았어야
+    할 3종목이 채웠어야 할 3종목의 자리를 차지해 보유가 정확히 10종목이었고, 게이트가
+    종목 수만 세고 있어서 꽉 찬 것으로 봤다. 개수가 아니라 어떤 종목인지를 봐야 한다.
     """
+    mocker.patch.object(scheduler, "_stored_targets",
+                        return_value=({f"00{i:04d}" for i in range(SLOTS)}, "2026-08-21"))
+    store = mocker.patch.object(scheduler, "_store_targets")
+    # 목표 10종목 중 7개만 맞고 3개는 엉뚱한 종목을 들고 있다 - 개수는 10으로 같다.
     holdings = {f"00{i:04d}": {"name": f"종목{i}", "qty": 100.0, "cur_px": 10_000.0}
-                for i in range(SLOTS // 2)}          # 10슬롯 중 5개만 차 있다
-    snap = _snapshot(holdings, 5_000_000, 5_000_000, 10_000_000, settled_cash=5_000_000)
+                for i in range(SLOTS - 3)}
+    holdings.update({f"99{i:04d}": {"name": f"잔여{i}", "qty": 100.0, "cur_px": 10_000.0}
+                     for i in range(3)})
+    snap = _snapshot(holdings, 0, 10_000_000, 10_000_000, settled_cash=1_000_000)
 
-    live_run(snap, rebal_d=None)                     # 리밸런싱일이 아니다
+    live_run(snap, rebal_d=None)
 
     out = capsys.readouterr().out
-    assert "슬롯 5개가 비어 보정" in out, out
-    assert len(live_run.orders) == SLOTS
+    assert "목표와 어긋나 보정" in out, out
+    assert store.called, "이번 실행의 목표를 저장해야 다음 보정이 판단할 수 있다"
 
 
-def test_a_full_portfolio_still_skips_outside_the_calendar(live_run, capsys):
-    """슬롯이 다 찼으면 월 1회 규칙대로 건너뛴다 - 보정이 매일 리밸런싱이 되면 안 된다."""
-    holdings = {f"00{i:04d}": {"name": f"종목{i}", "qty": 100.0, "cur_px": 10_000.0}
-                for i in range(SLOTS)}
+def test_matching_holdings_skip_outside_the_calendar(live_run, mocker, capsys):
+    """보유가 목표와 같으면 건너뛴다 - 보정이 매일 리밸런싱이 되면 안 된다."""
+    targets = {f"00{i:04d}" for i in range(SLOTS)}
+    mocker.patch.object(scheduler, "_stored_targets", return_value=(targets, "2026-08-21"))
+    holdings = {c: {"name": c, "qty": 100.0, "cur_px": 10_000.0} for c in targets}
     snap = _snapshot(holdings, 0, 10_000_000, 10_000_000, settled_cash=0)
 
     live_run(snap, rebal_d=None)
 
     assert "건너뜀" in capsys.readouterr().out
     assert live_run.orders == []
+
+
+def test_correction_reuses_the_ranking_date_of_the_last_rebalance(live_run, mocker):
+    """보정은 다시 랭킹하지 않는다 - 매일 다시 매기면 일간 리밸런싱이 된다."""
+    from strategy import quality
+
+    mocker.patch.object(scheduler, "_stored_targets", return_value=({"999999"}, "2026-08-03"))
+    mocker.patch.object(scheduler, "_store_targets")
+    holdings = {"000000": {"name": "종목", "qty": 100.0, "cur_px": 10_000.0}}
+    snap = _snapshot(holdings, 0, 1_000_000, 10_000_000, settled_cash=1_000_000)
+
+    live_run(snap, rebal_d=None)
+
+    assert quality.get_targets.call_args[0][0] == "2026-08-03", (
+        "직전 거래일이 아니라 직전 리밸런싱 기준일을 써야 한다")

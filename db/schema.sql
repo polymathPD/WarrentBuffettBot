@@ -122,6 +122,7 @@ ALTER TABLE positions ADD COLUMN IF NOT EXISTS strategy TEXT NOT NULL DEFAULT 'c
 -- 진입 판단은 포지션에 붙는다. trades에만 두면 체결을 못 본 날 판단까지 사라진다
 -- (2026-08-24 오리온홀딩스·영원무역홀딩스: 실제로 샀는데 기록이 통째로 없었다).
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS agents JSONB;
+ALTER TABLE equity_daily ADD COLUMN IF NOT EXISTS unrealized NUMERIC;
 DO $$
 DECLARE
     pk_cols TEXT;
@@ -207,6 +208,7 @@ CREATE TABLE IF NOT EXISTS equity_daily (
     cash            NUMERIC,   -- CAPITAL - 매수금액 + 매도금액
     positions_value NUMERIC,   -- 보유수량 × 기준일 종가
     total_equity    NUMERIC,
+    unrealized      NUMERIC,   -- 증권사가 계산한 평가손익 (live/real). paper는 NULL
     PRIMARY KEY (d, mode, strategy)
 );
 
