@@ -111,16 +111,6 @@ def test_debt_is_unwound_outside_the_rebalance_calendar(live_run, capsys):
         "260주 → 100주로 줄이는 매도 주문이 나가야 한다"
 
 
-def test_non_rebalance_day_is_skipped_when_the_account_is_healthy(live_run, capsys):
-    holdings = {"000000": {"name": "종목0", "qty": 100.0, "cur_px": 10_000.0}}
-    snap = _snapshot(holdings, 0, 10_000_000, 10_000_000, settled_cash=0)
-
-    live_run(snap, rebal_d=None)
-
-    assert "건너뜀" in capsys.readouterr().out
-    assert live_run.orders == []
-
-
 def test_sells_are_all_placed_before_buys(live_run, mocker):
     """매도 대금이 잡히기 전에 매수를 내면 미수 가드에 걸려 슬롯이 빈 채로 끝난다.
 
@@ -228,3 +218,34 @@ def test_worker_refuses_to_start_when_the_schema_cannot_be_applied(mocker):
     with pytest.raises(RuntimeError, match="연결 실패"):
         scheduler.main(["--open"])
     assert not started.called
+
+
+def test_unfilled_slots_are_topped_up_outside_the_rebalance_calendar(live_run, capsys):
+    """슬롯이 비어 있으면 앞선 실행이 끝까지 못 간 것이다. 달력을 기다리지 않는다.
+
+    2026-08-25 12:00 보정 실행이 '리밸런싱일 아님 - 건너뜀'만 찍고 끝났다. 아침
+    배치가 주문 500으로 죽어 5슬롯이 빈 채였는데, 미수는 이미 털린 뒤라 게이트를
+    여는 조건이 하나도 안 걸렸다. 보정 실행을 붙여 놓고 정작 보정이 필요한 상황을
+    조건에 안 넣은 것이다.
+    """
+    holdings = {f"00{i:04d}": {"name": f"종목{i}", "qty": 100.0, "cur_px": 10_000.0}
+                for i in range(SLOTS // 2)}          # 10슬롯 중 5개만 차 있다
+    snap = _snapshot(holdings, 5_000_000, 5_000_000, 10_000_000, settled_cash=5_000_000)
+
+    live_run(snap, rebal_d=None)                     # 리밸런싱일이 아니다
+
+    out = capsys.readouterr().out
+    assert "슬롯 5개가 비어 보정" in out, out
+    assert len(live_run.orders) == SLOTS
+
+
+def test_a_full_portfolio_still_skips_outside_the_calendar(live_run, capsys):
+    """슬롯이 다 찼으면 월 1회 규칙대로 건너뛴다 - 보정이 매일 리밸런싱이 되면 안 된다."""
+    holdings = {f"00{i:04d}": {"name": f"종목{i}", "qty": 100.0, "cur_px": 10_000.0}
+                for i in range(SLOTS)}
+    snap = _snapshot(holdings, 0, 10_000_000, 10_000_000, settled_cash=0)
+
+    live_run(snap, rebal_d=None)
+
+    assert "건너뜀" in capsys.readouterr().out
+    assert live_run.orders == []

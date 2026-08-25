@@ -107,6 +107,7 @@ def open_job():
     # 계좌가 비어 있으면 달력을 기다리지 않는다. 월 첫 거래일 규칙은 회전율을
     # 낮추려는 것이지 빈 계좌를 놀리려는 게 아니다 — 전략을 새로 붙이거나 계좌를
     # 옮긴 직후에는 다음 리밸런싱까지 몇 주가 빌 수 있다.
+    slots = config.get_setting("SLOTS")
     snap = None
     if config.KIS_MODE == "live":
         from executor import live
@@ -115,7 +116,8 @@ def open_job():
         except Exception as e:
             print(f"잔고 조회 실패 - 건너뜀: {type(e).__name__} {str(e)[:100]}")
             return
-        empty = not snap["holdings"]
+        held = len(snap["holdings"])
+        empty = not held
         # 미수(외상매수)는 T+2에 반대매매로 끝난다. 달력을 기다리면 늦는다.
         # 2026-08-24에 재실행이 겹쳐 10M 계좌가 26.7M을 들고 -16.4M 미수가 났는데,
         # 다음 리밸런싱일이 9월 1일이라 그때까지 방치될 뻔했다.
@@ -124,26 +126,33 @@ def open_job():
             print(f"  미수 {snap['settled_cash']:,.0f}원 - 달력과 무관하게 정리한다")
     else:
         in_debt = False
-        empty = not db.fetchone(
-            "SELECT 1 FROM positions WHERE strategy=%s AND mode='paper' LIMIT 1",
-            (quality.STRATEGY,))
+        held = db.fetchone(
+            "SELECT COUNT(*) c FROM positions WHERE strategy=%s AND mode='paper'",
+            (quality.STRATEGY,))["c"]
+        empty = not held
+
+    # 슬롯이 비어 있으면 앞선 실행이 끝까지 가지 못한 것이다. 12:00 보정 실행이
+    # 있는 이유가 이것인데, 2026-08-25에는 게이트에 이 조건이 없어 그냥 건너뛰었다 —
+    # 아침 배치가 주문 500으로 죽어 5슬롯이 빈 채였고 미수는 이미 털린 뒤였다.
+    under_filled = 0 < held < slots
 
     rebal_d = _quality_rebalance_date(today)
     if rebal_d is None:
-        if not empty and not in_debt:
+        if not empty and not in_debt and not under_filled:
             print("리밸런싱일 아님 - 건너뜀")
             return
         rebal_d = _prev_trading_day(today)
         if rebal_d is None:
             print("직전 거래일 없음 - 건너뜀")
             return
-        why = "미수 정리" if in_debt else "보유가 없어 최초 편입"
+        why = ("미수 정리" if in_debt
+               else "보유가 없어 최초 편입" if empty
+               else f"슬롯 {slots - held}개가 비어 보정")
         print(f"리밸런싱일은 아니지만 {why}를 진행한다 ({rebal_d} 기준)")
 
     def _op(v):
         return {k: v.get(k) for k in ("decision", "score", "rationale", "error")}
 
-    slots = config.get_setting("SLOTS")
     ranked = quality.get_targets(rebal_d, slots, limit=slots * 3)
     picked, rejected = [], []
     for t in ranked:
