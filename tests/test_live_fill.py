@@ -145,3 +145,23 @@ def test_balance_gives_up_after_the_last_retry(mocker):
     with pytest.raises(RuntimeError, match="500"):
         live.get_balance()
     assert live._get_balance_once.call_count == live._RETRIES
+
+
+def test_order_retries_a_transient_server_error(mocker, capsys):
+    """주문 전송 500 하나가 리밸런싱 전체를 죽이면 안 된다 (2026-08-25)."""
+    mocker.patch("time.sleep", return_value=None)
+    ok = {"rt_cd": "0", "msg1": "주문 전송 완료"}
+    mocker.patch.object(live, "_order_once",
+                        side_effect=[RuntimeError("500 Server Error"), ok])
+
+    assert live.sell("000000", 10) is ok
+    assert "주문 전송 재시도" in capsys.readouterr().out
+
+
+def test_order_gives_up_after_the_last_retry(mocker):
+    mocker.patch("time.sleep", return_value=None)
+    mocker.patch.object(live, "_order_once", side_effect=RuntimeError("500 Server Error"))
+
+    with pytest.raises(RuntimeError, match="500"):
+        live.buy("000000", 10)
+    assert live._order_once.call_count == live._RETRIES

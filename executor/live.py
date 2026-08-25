@@ -84,9 +84,34 @@ def _headers(tr_id: str) -> dict:
     }
 
 
-def buy(code: str, qty: int) -> dict:
-    """시장가 매수 주문"""
-    tr_id = "VTTC0802U" if _IS_MOCK else "TTTC0802U"
+def _order(tr_id: str, code: str, qty: int) -> dict:
+    """주문 전송. 일시적 실패는 재시도한다.
+
+    2026-08-25 리밸런싱이 여기서 죽었다. 매도 8건을 낸 뒤 다음 종목 주문이 500을
+    받았고, 예외가 adjust()를 뚫고 open_job까지 올라가 남은 매도와 매수 5건,
+    그리고 equity_daily 기록까지 통째로 날아갔다. 잔고 조회에는 재시도를 붙이면서
+    주문 전송에는 안 붙인 것이 이유다 - 같은 서버이고 같은 방식으로 실패한다.
+
+    주의: 재시도는 '전송 실패'에만 안전하다. 접수된 주문이 응답만 못 돌아온
+    경우까지 다시 보내면 두 번 산다. 여기서는 HTTP 오류(5xx)와 연결 실패만
+    다시 보내고, 응답이 온 경우(rt_cd != 0)는 호출자가 판단한다.
+    """
+    last = None
+    for i in range(_RETRIES):
+        try:
+            return _order_once(tr_id, code, qty)
+        except Exception as e:
+            last = e
+            if i == _RETRIES - 1:
+                break
+            wait = _BALANCE_BACKOFF_S * (i + 1)
+            print(f"[{MODE} 주문 전송 재시도 {i+1}/{_RETRIES}] {code} "
+                  f"{type(e).__name__} {str(e)[:60]} - {wait:.0f}초 뒤")
+            time.sleep(wait)
+    raise last
+
+
+def _order_once(tr_id: str, code: str, qty: int) -> dict:
     resp = requests.post(
         f"{_BASE_URL}/uapi/domestic-stock/v1/trading/order-cash",
         headers=_headers(tr_id),
@@ -102,26 +127,16 @@ def buy(code: str, qty: int) -> dict:
     )
     resp.raise_for_status()
     return resp.json()
+
+
+def buy(code: str, qty: int) -> dict:
+    """시장가 매수 주문"""
+    return _order("VTTC0802U" if _IS_MOCK else "TTTC0802U", code, qty)
 
 
 def sell(code: str, qty: int) -> dict:
     """시장가 매도 주문"""
-    tr_id = "VTTC0801U" if _IS_MOCK else "TTTC0801U"
-    resp = requests.post(
-        f"{_BASE_URL}/uapi/domestic-stock/v1/trading/order-cash",
-        headers=_headers(tr_id),
-        json={
-            "CANO": config.KIS_ACCOUNT,
-            "ACNT_PRDT_CD": config.KIS_ACCOUNT_SUFFIX,
-            "PDNO": code,
-            "ORD_DVSN": "01",   # 시장가
-            "ORD_QTY": str(qty),
-            "ORD_UNPR": "0",
-        },
-        timeout=10,
-    )
-    resp.raise_for_status()
-    return resp.json()
+    return _order("VTTC0801U" if _IS_MOCK else "TTTC0801U", code, qty)
 
 
 def get_balance() -> dict:

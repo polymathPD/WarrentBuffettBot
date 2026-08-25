@@ -146,3 +146,34 @@ def test_sells_are_all_placed_before_buys(live_run, mocker):
     last_sell = max(i for i, d in enumerate(deltas) if d < 0)
     first_buy = min(i for i, d in enumerate(deltas) if d > 0)
     assert last_sell < first_buy, f"매도/매수가 섞였다: {deltas}"
+
+
+def test_one_failing_order_does_not_abort_the_rest(live_run, mocker, capsys):
+    """종목 하나가 터져도 나머지 주문과 자산 스냅샷은 나가야 한다.
+
+    2026-08-25 리밸런싱이 이걸 못 해서 계좌가 위험한 중간 상태로 남았다. 매도 8건을
+    낸 뒤 다음 주문이 KIS 500을 받았고, 예외가 adjust()를 뚫고 open_job까지 올라와
+    남은 매도와 매수 5건, equity_daily 기록이 전부 사라졌다. 미수는 절반만 털렸다.
+
+    이 테스트가 없었던 이유는 fixture가 live.adjust를 리스트에 append하는 람다로
+    갈아 끼워서 - 절대 예외를 내지 않는 것으로 - 루프의 내성을 한 번도 시험하지
+    않았기 때문이다.
+    """
+    from executor import live
+
+    eq = mocker.patch("recorder.equity.snapshot")
+    calls = []
+
+    def _boom(code, name, target_qty, *a, **kw):
+        calls.append(code)
+        if len(calls) == 2:
+            raise RuntimeError("500 Server Error")
+
+    mocker.patch.object(live, "adjust", side_effect=_boom)
+
+    live_run(_snapshot({}, 10_000_000, 0, 10_000_000, 10_000_000))
+
+    assert len(calls) == SLOTS, f"두 번째에서 멈췄다: {calls}"
+    out = capsys.readouterr().out
+    assert "주문 실패" in out
+    assert eq.called, "자산 스냅샷이 기록되지 않았다"

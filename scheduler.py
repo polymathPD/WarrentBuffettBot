@@ -205,8 +205,19 @@ def open_job():
             px = h.get("cur_px") or (tgt[code]["close"] if code in tgt else 0.0)
             return (qty - h.get("qty", 0.0)) * px
 
+        # 종목 하나가 실패해도 나머지는 낸다. 2026-08-25에 매도 8건을 낸 뒤
+        # 다음 주문이 500을 받았고, 그 예외가 여기까지 올라와 남은 매도와 매수
+        # 5건이 통째로 사라졌다. 계좌는 미수를 절반만 턴 채로 남았다.
+        # 수집기(collector/investor_flow.py)가 종목별로 격리하는 것과 같은 이유다.
+        failed = []
         for code, nm, qty, agents in sorted(plan, key=_delta_amount):
-            live.adjust(code, nm, qty, quality.STRATEGY, snap, agents)
+            try:
+                live.adjust(code, nm, qty, quality.STRATEGY, snap, agents)
+            except Exception as e:
+                failed.append(code)
+                print(f"  [주문 실패] {code} {nm} - {type(e).__name__} {str(e)[:100]}")
+        if failed:
+            print(f"  {len(failed)}종목 실패: {', '.join(failed)} - 다음 실행에서 다시 맞춘다")
     else:
         from executor.paper import adjust, current_equity
         opens = {r["code"]: float(r["o"]) for r in db.fetchall(
@@ -227,8 +238,12 @@ def open_job():
                 adjust(code, name_of(code), qty, opens[code], quality.STRATEGY,
                        dict(t["agents"], _metrics=t["metrics"]))
 
-    from recorder.equity import snapshot as eq_snapshot
-    eq_snapshot(today)
+    # 자산 스냅샷 실패가 주문 결과까지 실패로 보이게 하면 안 된다.
+    try:
+        from recorder.equity import snapshot as eq_snapshot
+        eq_snapshot(today)
+    except Exception as e:
+        print(f"  [자산 스냅샷 실패] {type(e).__name__} {str(e)[:100]}")
 
 
 def daily_job():
