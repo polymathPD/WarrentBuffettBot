@@ -237,56 +237,25 @@ def _settled_cash() -> float:
 _WAIT_S = 45.0
 
 
-def _outstanding_qty(code: str) -> int | None:
-    """오늘 낸 주문 중 아직 체결되지 않은 순수량. 매수는 +, 매도는 -.
-    조회에 실패했거나 이 종목 주문 내역이 한 건도 안 오면 None — 모르는 것과 0은 다르다.
+def _pending_sell_qty(code: str) -> float | None:
+    """아직 체결되지 않은 매도 주문에 묶인 수량. 조회에 실패하면 None.
 
-    잔고(hldg_qty)만 보고 '덜 붙었으니 더 주문'하면 이미 나가 있는 주문 위에
-    겹쳐서 산다. 2026-08-24에 그렇게 됐다: 그날 체결된 2,097주 중 우리가 폴링으로
-    본 것은 793주(38%)뿐이었고, 못 본 1,304주만큼을 다시 주문했다.
+    모의계좌에는 주문 내역 조회가 없다(일별주문체결조회는 빈 응답, 정정취소가능주문은
+    미지원). 하지만 잔고의 ord_psbl_qty는 '지금 주문 낼 수 있는 수량'이라, 매도 주문이
+    걸려 있으면 hldg_qty보다 그만큼 적다. 이 차이가 곧 매도 대기 수량이다.
+
+    2026-08-25에 이걸 몰라서 반대로 갔다. 부분 체결된 잔량이 아직 살아 있을까 봐
+    재주문을 막았는데, 실제로는 묶인 수량이 0이었다 — 모의 서버는 시장가 잔량을
+    체결시키지 않고 종료시킨다. 막을 대상이 없는데 막느라 슬롯 3개가 비었다.
     """
-    tr_id = "VTTC8001R" if _IS_MOCK else "TTTC8001R"
-    today = date.today().strftime("%Y%m%d")
     try:
-        resp = requests.get(
-            f"{_BASE_URL}/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
-            headers=_headers(tr_id),
-            params={
-                "CANO": config.KIS_ACCOUNT,
-                "ACNT_PRDT_CD": config.KIS_ACCOUNT_SUFFIX,
-                "INQR_STRT_DT": today, "INQR_END_DT": today,
-                "SLL_BUY_DVSN_CD": "00", "INQR_DVSN": "00", "PDNO": code,
-                "CCLD_DVSN": "00", "ORD_GNO_BRNO": "", "ODNO": "",
-                "INQR_DVSN_3": "00", "INQR_DVSN_1": "",
-                "CTX_AREA_FK100": "", "CTX_AREA_NK100": "",
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        body = resp.json()
+        h = _find_holding(code)
     except Exception as e:
-        print(f"[{MODE} 미체결 조회 실패] {code} - {type(e).__name__} {str(e)[:80]}")
+        print(f"[{MODE} 대기수량 조회 실패] {code} - {type(e).__name__} {str(e)[:60]}")
         return None
-    if body.get("rt_cd") != "0":
-        print(f"[{MODE} 미체결 조회 실패] {code} - {body.get('msg1')}")
-        return None
-
-    net, rows = 0, 0
-    for it in body.get("output1") or []:
-        if it.get("pdno") != code:
-            continue
-        rows += 1
-        left = int(it.get("ord_qty") or 0) - int(it.get("tot_ccld_qty") or 0)
-        if left <= 0:
-            continue
-        # 01 매도 / 02 매수
-        net += -left if str(it.get("sll_buy_dvsn_cd")) == "01" else left
-    if rows == 0:
-        # 오늘 이 종목을 주문한 적이 없거나, 모의 서버가 내역을 안 준다.
-        # 2026-08-25 새벽에 직접 호출해 보니 rt_cd=0에 output1이 비어 있었다 —
-        # 방금 낸 주문조차 안 보일 수 있으므로 '미체결 0'으로 단정하면 안 된다.
-        return None
-    return net
+    if h is None:
+        return 0.0
+    return float(_field(h, "hldg_qty", code)) - float(h.get("ord_psbl_qty") or 0)
 
 
 def _wait_for_fill(code: str, expected_qty: float,
@@ -297,7 +266,7 @@ def _wait_for_fill(code: str, expected_qty: float,
     예전 판은 수량이 '조금이라도' 바뀌면 곧바로 빠져나왔다. 시장가 주문이 15주 중
     3주만 붙은 순간에 폴링을 끝내고 남은 12주를 다시 주문했는데, 원주문의 12주는
     아직 살아 있었다 — 같은 물량을 두 번 산 것이다. 목표 수량에 닿을 때까지 기다리고,
-    못 닿으면 재주문 여부는 _outstanding_qty()가 결정한다.
+    못 닿으면 재주문 여부는 _pending_sell_qty()가 결정한다.
     """
     deadline = time.time() + timeout_s
     holding, qty = _find_holding(code), None
@@ -524,22 +493,30 @@ def adjust(code: str, name: str, target_qty: int, strategy: str,
     cur_qty = cur
     traded_before = _today_traded()
     for attempt in range(1, MAX_FILL_ATTEMPTS + 1):
-        # 재주문 전에는 앞선 주문이 확실히 끝났는지부터 본다. 잔고만 보고 '덜 붙었으니
-        # 더 주문'하면 아직 살아 있는 주문 위에 겹쳐 산다 — 2026-08-24에 그날 체결된
-        # 2,097주 중 793주(38%)만 폴링으로 보고 나머지를 다시 주문했다.
-        if attempt > 1:
-            outstanding = _outstanding_qty(code)
-            if outstanding is None:
-                print(f"[{MODE} {side} 중단] {code} {name} - 앞선 주문이 끝났는지 확인할 "
-                      f"수 없어 추가 주문하지 않는다 (시도 {attempt}/{MAX_FILL_ATTEMPTS})")
-                break
-            if outstanding != 0:
-                print(f"[{MODE} {side} 대기] {code} {name} - 미체결 {outstanding:+d}주가 "
-                      f"아직 살아 있다. 추가 주문 없음")
-                break
         remaining = int(target_qty - cur_qty)
         if remaining == 0:
             break
+        # 재주문 전에는 앞선 주문이 끝났는지부터 본다. 살아 있는 주문 위에 겹쳐 내면
+        # 같은 물량을 두 번 산다 — 2026-08-24에 그날 체결된 2,097주 중 793주(38%)만
+        # 폴링으로 보고 나머지를 다시 주문했다.
+        if attempt > 1:
+            if remaining > 0:
+                # 매수는 대기 수량을 셀 방법이 없다. 잔고의 ord_psbl_qty는 매도 쪽만
+                # 알려주고, 체결은 폴링보다 늦게 잡힌다 - 2026-08-25 일진홀딩스는
+                # 32주로 보였지만 실제로는 142주가 체결됐다. 그 시점에 부족분을 다시
+                # 냈다면 목표의 네 배를 샀을 것이다.
+                print(f"[{MODE} 매수 중단] {code} {name} - 대기 수량을 셀 수 없어 "
+                      f"추가 주문하지 않는다 (시도 {attempt}/{MAX_FILL_ATTEMPTS})")
+                break
+            pending = _pending_sell_qty(code)
+            if pending is None:
+                print(f"[{MODE} 매도 중단] {code} {name} - 대기 수량을 확인할 수 없어 "
+                      f"추가 주문하지 않는다 (시도 {attempt}/{MAX_FILL_ATTEMPTS})")
+                break
+            if pending > 0:
+                print(f"[{MODE} 매도 대기] {code} {name} - {pending:.0f}주가 아직 "
+                      f"주문에 묶여 있다. 추가 주문 없음")
+                break
         if remaining > 0:
             # 미수 방지: 이 매수 대금이 결제 예정 예수금을 음수로 만들면 넘긴다.
             # 시장가라 정확한 체결가는 알 수 없어 현재가 + 슬리피지·수수료 여유로 잡는다.

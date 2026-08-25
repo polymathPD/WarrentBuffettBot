@@ -53,59 +53,54 @@ def _snap(qty=0.0):
             "total_equity": 10_000_000.0, "settled_cash": 10_000_000.0}
 
 
-def test_no_reorder_while_the_first_order_is_still_alive(broker, mocker):
-    """원주문 11주가 미체결로 남아 있으면 추가 주문을 내지 않는다."""
-    broker["qty"] = 3.0                       # 14주 중 3주만 잔고에 잡혔다
-    mocker.patch.object(live, "_outstanding_qty", return_value=11)
-
-    live.adjust("000000", "테스트", 14, "quality_v1", _snap())
-
-    assert broker["orders"] == [("buy", 14)], "재주문이 나갔다"
-
-
-def test_no_reorder_when_the_broker_will_not_say(broker, mocker):
-    """미체결 조회가 안 되면 모르는 것이다 - 주문하지 않는다.
-
-    KIS 모의는 rt_cd=0에 빈 output1을 주기도 한다. 이걸 '미체결 0'으로 읽으면
-    지연된 체결을 미체결로 오해해 그대로 겹쳐 산다.
-    """
-    broker["qty"] = 3.0
-    mocker.patch.object(live, "_outstanding_qty", return_value=None)
-
-    live.adjust("000000", "테스트", 14, "quality_v1", _snap())
-
-    assert broker["orders"] == [("buy", 14)], "확인도 없이 재주문이 나갔다"
-
-
-def test_tops_up_only_after_the_order_is_confirmed_done(broker, mocker):
-    """앞선 주문이 끝났고(미체결 0) 아직 목표에 못 미치면 그때만 부족분을 낸다."""
-    broker["qty"] = 3.0
-    mocker.patch.object(live, "_outstanding_qty", return_value=0)
-
-    live.adjust("000000", "테스트", 14, "quality_v1", _snap())
-
-    assert broker["orders"][0] == ("buy", 14)
-    assert broker["orders"][1] == ("buy", 11), broker["orders"]
-
-
-def test_sell_side_is_guarded_the_same_way(broker, mocker):
-    """오늘 리밸런싱은 대부분 매도다. 매도도 겹쳐 내면 안 된다."""
+def test_no_reorder_while_shares_are_locked_in_a_live_sell(broker, mocker):
+    """매도 주문에 묶인 주식이 있으면 추가로 내지 않는다 - 겹쳐 팔면 안 된다."""
     broker["qty"] = 90.0                      # 100 → 10 목표인데 아직 90
-    mocker.patch.object(live, "_outstanding_qty", return_value=-80)
+    mocker.patch.object(live, "_pending_sell_qty", return_value=80.0)
 
     live.adjust("000000", "테스트", 10, "quality_v1", _snap(100.0))
 
     assert broker["orders"] == [("sell", 90)], broker["orders"]
 
 
-def test_no_rows_means_unknown_not_zero(mocker):
-    """rt_cd=0인데 내역이 비어 있으면 None(모름)이어야 한다."""
-    mocker.patch.object(live, "_headers", return_value={})
-    resp = mocker.MagicMock()
-    resp.json.return_value = {"rt_cd": "0", "output1": []}
-    mocker.patch("requests.get", return_value=resp)
+def test_no_reorder_when_the_balance_will_not_answer(broker, mocker):
+    """대기 수량을 못 읽으면 모르는 것이다 - 매도를 겹쳐 내지 않는다."""
+    broker["qty"] = 90.0
+    mocker.patch.object(live, "_pending_sell_qty", return_value=None)
 
-    assert live._outstanding_qty("000000") is None
+    live.adjust("000000", "테스트", 10, "quality_v1", _snap(100.0))
+
+    assert broker["orders"] == [("sell", 90)], "확인도 없이 재주문이 나갔다"
+
+
+def test_sells_the_shortfall_when_nothing_is_locked(broker, mocker):
+    """묶인 수량이 0이면 앞선 주문은 끝난 것이다. 부족분을 다시 낸다.
+
+    2026-08-25에 오리온홀딩스 78주 매도가 40주만 체결되고 잔량이 종료됐는데,
+    묶인 수량이 0인데도 재주문을 막아 38주가 남았다. 그 미청산이 현금을 묶어
+    신규 편입 3종목이 통째로 빠졌다.
+    """
+    broker["qty"] = 60.0                      # 100 → 0 목표인데 40주만 팔렸다
+    mocker.patch.object(live, "_pending_sell_qty", return_value=0.0)
+
+    live.adjust("000000", "테스트", 0, "quality_v1", _snap(100.0))
+
+    assert broker["orders"][0] == ("sell", 100)
+    assert broker["orders"][1] == ("sell", 60), broker["orders"]
+
+
+def test_pending_sell_qty_reads_the_gap_in_the_balance(mocker):
+    """주문 내역 API가 없어도 잔고가 알려준다: 보유 - 주문가능 = 매도 대기."""
+    mocker.patch.object(live, "_find_holding",
+                        return_value={"pdno": "000000", "hldg_qty": "78",
+                                      "ord_psbl_qty": "38"})
+    assert live._pending_sell_qty("000000") == 40.0
+
+    mocker.patch.object(live, "_find_holding", return_value=None)
+    assert live._pending_sell_qty("000000") == 0.0
+
+    mocker.patch.object(live, "_find_holding", side_effect=RuntimeError("500"))
+    assert live._pending_sell_qty("000000") is None
 
 
 def test_wait_for_fill_keeps_polling_until_the_target_is_reached(mocker):
@@ -177,7 +172,7 @@ def test_short_cash_buys_fewer_shares_instead_of_skipping(broker, mocker, capsys
     남았다. 목표 비중에서 보면 '조금 덜 채운 것'보다 '아예 안 산 것'이 더 멀다.
     """
     mocker.patch.object(live, "_settled_cash", return_value=520_000.0)
-    mocker.patch.object(live, "_outstanding_qty", return_value=None)
+    mocker.patch.object(live, "_pending_sell_qty", return_value=0.0)
     #                                10,000원 × 1.005 = 10,050 → 520,000 // 10,050 = 51주
     live.adjust("000000", "테스트", 100, "quality_v1", _snap())
 
@@ -203,7 +198,7 @@ def test_fill_price_comes_from_the_brokers_daily_total(broker, mocker):
     '없는 서비스 코드'), 오늘 누적 매도대금의 증분에서 역산한다.
     """
     broker["qty"] = 100.0
-    mocker.patch.object(live, "_outstanding_qty", return_value=None)
+    mocker.patch.object(live, "_pending_sell_qty", return_value=0.0)
     #                  주문 전 (매수 0, 매도 0) → 주문 후 (매수 0, 매도 1,530,000)
     mocker.patch.object(live, "_today_traded", side_effect=[(0.0, 0.0), (0.0, 1_530_000.0)])
 
@@ -251,3 +246,19 @@ def test_reconcile_drops_a_position_the_broker_no_longer_shows(mocker, mock_db):
     assert changed == ["010780"]
     sql, _ = mock_db.execute.call_args[0]
     assert "DELETE FROM positions" in sql
+
+
+def test_buys_are_never_re_ordered(broker, mocker, capsys):
+    """매수 부족분은 다시 내지 않는다 - 대기 수량을 셀 방법이 없다.
+
+    2026-08-25 일진홀딩스는 폴링으로 32주만 보였는데 실제로는 142주가 체결됐다.
+    그 시점에 부족분 110주를 다시 냈다면 목표의 네 배를 샀을 것이다. 매도는
+    잔고의 ord_psbl_qty로 대기 수량을 알 수 있지만 매수는 그런 신호가 없다.
+    """
+    broker["qty"] = 32.0                      # 143주 목표인데 32주만 보인다
+    mocker.patch.object(live, "_pending_sell_qty", return_value=0.0)
+
+    live.adjust("000000", "테스트", 143, "quality_v1", _snap())
+
+    assert broker["orders"] == [("buy", 143)], broker["orders"]
+    assert "매수 중단" in capsys.readouterr().out
