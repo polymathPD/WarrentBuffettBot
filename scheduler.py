@@ -160,7 +160,9 @@ def open_job():
     # 3종목이 채웠어야 할 3종목의 자리를 차지한 채 정확히 10종목이라, 슬롯이 꽉 찬
     # 것으로 보여 그냥 건너뛰었다.
     want, want_d = _stored_targets(quality.STRATEGY)
-    unfinished = bool(want) and codes != want
+    # 목표를 모르면 '할 일 없음'이 아니라 '확인 필요'다. 기록이 비어 있을 때
+    # 건너뛰면 이 기능을 처음 배포한 다음 날 아침이 통째로 조용히 지나간다.
+    unfinished = codes != want
 
     rebal_d = _quality_rebalance_date(today)
     if rebal_d is None:
@@ -177,6 +179,8 @@ def open_job():
             why = "미수 정리"
         elif empty:
             why = "보유가 없어 최초 편입"
+        elif not want:
+            why = "직전 목표 기록이 없어 확인"
         else:
             why = (f"목표와 어긋나 보정 (빠진 것 {sorted(want - codes)}, "
                    f"남은 것 {sorted(codes - want)})")

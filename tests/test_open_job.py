@@ -272,3 +272,21 @@ def test_correction_reuses_the_ranking_date_of_the_last_rebalance(live_run, mock
 
     assert quality.get_targets.call_args[0][0] == "2026-08-03", (
         "직전 거래일이 아니라 직전 리밸런싱 기준일을 써야 한다")
+
+
+def test_missing_target_record_is_treated_as_work_to_do(live_run, mocker, capsys):
+    """목표 기록이 없으면 확인한다 - 없다는 것이 '할 일 없음'은 아니다.
+
+    이 기능을 배포한 다음 날 아침이 그대로 조용히 지나갈 뻔했다. settings에 목표가
+    아직 없어서 unfinished가 False가 됐고, 리밸런싱일도 아니고 미수도 아니라
+    게이트가 닫혔다.
+    """
+    mocker.patch.object(scheduler, "_stored_targets", return_value=(set(), None))
+    mocker.patch.object(scheduler, "_store_targets")
+    holdings = {f"00{i:04d}": {"name": f"종목{i}", "qty": 100.0, "cur_px": 10_000.0}
+                for i in range(SLOTS)}
+    snap = _snapshot(holdings, 0, 10_000_000, 10_000_000, settled_cash=1_000_000)
+
+    live_run(snap, rebal_d=None)
+
+    assert "직전 목표 기록이 없어 확인" in capsys.readouterr().out
