@@ -229,12 +229,14 @@ def index(request: Request, mode: str = "paper"):
     mode = mode if mode in MODES else "paper"
     # 진입할 때 에이전트가 무슨 판단을 했는지 함께 본다. 지금까지는 거래내역에만
     # 있어서 '왜 이걸 들고 있는지'를 보려면 다른 화면으로 가야 했다.
+    # positions.agents를 먼저 본다 - 체결을 못 본 날은 매수 기록 자체가 없어서
+    # trades만 보면 의견란이 빈다(2026-08-24 오리온홀딩스·영원무역홀딩스).
     positions = db.fetchall("""
         SELECT p.code, p.name, p.entry_date, p.entry_px, p.qty, p.stop_px,
                sd.c AS current_px,
                ROUND((sd.c / p.entry_px - 1) * 100, 2) AS pct,
                ROUND((sd.c - p.entry_px) * p.qty, 0) AS unrealized,
-               t.agents
+               COALESCE(p.agents, t.agents) AS agents
         FROM positions p
         LEFT JOIN stock_daily sd ON sd.code = p.code
           AND sd.d = (SELECT MAX(d) FROM stock_daily WHERE code = p.code)

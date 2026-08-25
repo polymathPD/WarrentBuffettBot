@@ -218,6 +218,17 @@ def open_job():
                 print(f"  [주문 실패] {code} {nm} - {type(e).__name__} {str(e)[:100]}")
         if failed:
             print(f"  {len(failed)}종목 실패: {', '.join(failed)} - 다음 실행에서 다시 맞춘다")
+
+        # 주문을 다 낸 뒤 증권사 잔고로 positions를 맞춘다. adjust()는 체결을 못 보면
+        # 아무것도 기록하지 않고 끝나므로, 산 종목이 DB에서 통째로 빠질 수 있다.
+        try:
+            fixed = live.reconcile_positions(
+                live.account_snapshot(), quality.STRATEGY,
+                {c: dict(t["agents"], _metrics=t["metrics"]) for c, t in tgt.items()})
+            if fixed:
+                print(f"  잔고와 어긋나 바로잡음: {', '.join(fixed)}")
+        except Exception as e:
+            print(f"  [잔고 대조 실패] {type(e).__name__} {str(e)[:100]}")
     else:
         from executor.paper import adjust, current_equity
         opens = {r["code"]: float(r["o"]) for r in db.fetchall(

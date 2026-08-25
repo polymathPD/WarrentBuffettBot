@@ -218,3 +218,36 @@ def test_fill_price_comes_from_the_brokers_daily_total(broker, mocker):
     assert ins, "매매 기록이 없다"
     price = ins[0][0][1][4]          # (mode, code, name, qty, price, amount, strategy)
     assert price == 15_300.0, f"매입평균가 11,111이 아니라 매도가 15,300이어야 한다: {price}"
+
+
+def test_reconcile_recovers_a_position_that_was_never_recorded(mocker, mock_db):
+    """체결을 못 본 종목도 잔고에는 있다. 그 사실이 DB에 남아야 한다.
+
+    2026-08-24에 오리온홀딩스 78주와 영원무역홀딩스 11주를 실제로 샀는데, 체결이
+    폴링 뒤에 잡혀 adjust()가 filled==0으로 끝났다. positions에도 trades에도 아무것도
+    안 남아서 대시보드의 진입 판단이 빈칸이었다 - 게이트는 통과했는데도.
+    """
+    mock_db.fetchone.return_value = None          # DB에 그 포지션이 없다
+    mock_db.fetchall.return_value = []
+    snap = {"holdings": {"001800": {"name": "오리온홀딩스", "qty": 78.0,
+                                    "avg_px": 25_425.0, "cur_px": 25_650.0}}}
+
+    changed = live.reconcile_positions(snap, "quality_v1",
+                                       {"001800": {"value_trap": {"decision": "매수"}}})
+
+    assert changed == ["001800"]
+    sql, params = mock_db.execute.call_args[0]
+    assert "INSERT INTO positions" in sql
+    assert params[5] == 78.0                       # 잔고 수량 그대로
+    assert "value_trap" in params[7]               # 판단도 함께 남는다
+
+
+def test_reconcile_drops_a_position_the_broker_no_longer_shows(mocker, mock_db):
+    mock_db.fetchone.return_value = {"qty": 100.0}
+    mock_db.fetchall.return_value = [{"code": "010780"}]
+
+    changed = live.reconcile_positions({"holdings": {}}, "quality_v1")
+
+    assert changed == ["010780"]
+    sql, _ = mock_db.execute.call_args[0]
+    assert "DELETE FROM positions" in sql

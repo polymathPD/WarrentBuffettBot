@@ -177,3 +177,23 @@ def test_one_failing_order_does_not_abort_the_rest(live_run, mocker, capsys):
     out = capsys.readouterr().out
     assert "주문 실패" in out
     assert eq.called, "자산 스냅샷이 기록되지 않았다"
+
+
+def test_positions_are_reconciled_against_the_broker_after_ordering(live_run, mocker):
+    """주문을 다 낸 뒤 잔고를 정답으로 삼아 DB를 맞춰야 한다.
+
+    adjust()는 체결을 못 보면 아무것도 기록하지 않고 끝난다. 2026-08-24에 실제로
+    산 오리온홀딩스 78주와 영원무역홀딩스 11주가 positions에도 trades에도 없었고,
+    게이트를 통과했는데도 대시보드의 진입 판단이 빈칸이었다.
+    """
+    from executor import live
+
+    rec = mocker.patch.object(live, "reconcile_positions", return_value=[])
+    mocker.patch("recorder.equity.snapshot")
+
+    live_run(_snapshot({}, 10_000_000, 0, 10_000_000, 10_000_000))
+
+    assert rec.called, "주문 뒤 잔고 대조가 없다"
+    _snap_arg, strategy, agents = rec.call_args[0]
+    assert strategy == "quality_v1"
+    assert len(agents) == SLOTS, "종목별 에이전트 판단이 함께 넘어가야 한다"

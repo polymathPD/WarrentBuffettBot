@@ -119,6 +119,9 @@ CREATE TABLE IF NOT EXISTS positions (
 -- 기존 DB의 positions를 (code) → (code, strategy) → (code, strategy, mode)로
 -- 점진 전환 (멱등). 현재 PK 컬럼 조합을 읽어 부족하면 재설치한다.
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS strategy TEXT NOT NULL DEFAULT 'contrarian_v1';
+-- 진입 판단은 포지션에 붙는다. trades에만 두면 체결을 못 본 날 판단까지 사라진다
+-- (2026-08-24 오리온홀딩스·영원무역홀딩스: 실제로 샀는데 기록이 통째로 없었다).
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS agents JSONB;
 DO $$
 DECLARE
     pk_cols TEXT;

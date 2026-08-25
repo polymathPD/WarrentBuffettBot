@@ -463,6 +463,46 @@ def account_snapshot() -> dict:
             "settled_cash": settled_cash, "raw_summary": summary}
 
 
+def reconcile_positions(snapshot: dict, strategy: str,
+                        agents_by_code: dict | None = None) -> list[str]:
+    """증권사 잔고를 정답으로 삼아 positions를 맞춘다. 어긋났던 종목코드를 돌려준다.
+
+    adjust()는 체결을 못 보면(filled == 0) 아무것도 기록하지 않고 끝난다. 주문은
+    나갔고 증권사는 체결시켰는데 우리 DB에는 그 종목이 아예 없는 상태가 된다 —
+    2026-08-24에 오리온홀딩스 78주와 영원무역홀딩스 11주가 그랬고, 매수 기록이
+    없으니 대시보드의 진입 판단도 빈칸이었다. 주문을 다 낸 뒤 잔고를 다시 읽어
+    맞춘다.
+    """
+    held = snapshot["holdings"]
+    agents_by_code = agents_by_code or {}
+    changed = []
+    for code, h in held.items():
+        row = db.fetchone(
+            "SELECT qty FROM positions WHERE code=%s AND strategy=%s AND mode=%s",
+            (code, strategy, MODE))
+        if row is None or float(row["qty"]) != h["qty"]:
+            changed.append(code)
+        db.execute(
+            """INSERT INTO positions (code, strategy, name, entry_date, entry_px, qty,
+                                      stop_px, max_hold_days, mode, agents)
+               VALUES (%s,%s,%s,%s,%s,%s,0,99999,%s,%s::jsonb)
+               ON CONFLICT (code, strategy, mode) DO UPDATE
+                 SET qty = EXCLUDED.qty, entry_px = EXCLUDED.entry_px,
+                     agents = COALESCE(EXCLUDED.agents, positions.agents)""",
+            (code, strategy, h["name"], date.today(), h["avg_px"], h["qty"], MODE,
+             json.dumps(agents_by_code[code], ensure_ascii=False)
+             if code in agents_by_code else None))
+    gone = db.fetchall(
+        "SELECT code FROM positions WHERE strategy=%s AND mode=%s AND NOT (code = ANY(%s))",
+        (strategy, MODE, list(held)))
+    if gone:
+        changed += [r["code"] for r in gone]
+        db.execute(
+            "DELETE FROM positions WHERE strategy=%s AND mode=%s AND NOT (code = ANY(%s))",
+            (strategy, MODE, list(held)))
+    return changed
+
+
 MAX_FILL_ATTEMPTS = 3
 
 
@@ -556,11 +596,13 @@ def adjust(code: str, name: str, target_qty: int, strategy: str,
     if new_qty > 0:
         db.execute(
             """INSERT INTO positions (code, strategy, name, entry_date, entry_px, qty,
-                                      stop_px, max_hold_days, mode)
-               VALUES (%s,%s,%s,%s,%s,%s,0,99999,%s)
+                                      stop_px, max_hold_days, mode, agents)
+               VALUES (%s,%s,%s,%s,%s,%s,0,99999,%s,%s::jsonb)
                ON CONFLICT (code, strategy, mode) DO UPDATE
-                 SET qty = EXCLUDED.qty, entry_px = EXCLUDED.entry_px""",
-            (code, strategy, name, date.today(), px, new_qty, MODE))
+                 SET qty = EXCLUDED.qty, entry_px = EXCLUDED.entry_px,
+                     agents = COALESCE(EXCLUDED.agents, positions.agents)""",
+            (code, strategy, name, date.today(), px, new_qty, MODE,
+             json.dumps(agents_summary, ensure_ascii=False) if agents_summary else None))
     else:
         db.execute("DELETE FROM positions WHERE code=%s AND strategy=%s AND mode=%s",
                    (code, strategy, MODE))
