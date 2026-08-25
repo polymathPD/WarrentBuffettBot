@@ -18,7 +18,9 @@ from executor import live
 def broker(mocker, mock_db):
     """주문 API와 잔고를 갈아 끼운다. .orders에 (side, qty)가 쌓인다."""
     mocker.patch.object(live, "guard", return_value=None)
-    mocker.patch.object(live, "_settled_cash_after", return_value=10_000_000.0)
+    mocker.patch.object(live, "_settled_cash", return_value=10_000_000.0)
+    # 미보유 종목의 매수 단가는 stock_daily 종가에서 온다 (snapshot에 현재가가 없으므로).
+    mock_db.fetchone.return_value = {"c": 10_000.0}
 
     state = {"qty": 0.0, "orders": []}
 
@@ -165,3 +167,27 @@ def test_order_gives_up_after_the_last_retry(mocker):
     with pytest.raises(RuntimeError, match="500"):
         live.buy("000000", 10)
     assert live._order_once.call_count == live._RETRIES
+
+
+def test_short_cash_buys_fewer_shares_instead_of_skipping(broker, mocker, capsys):
+    """돈이 모자라면 슬롯을 통째로 비우지 말고 살 수 있는 만큼 산다.
+
+    예전 판은 주문 전액이 결제 예정 예수금을 넘으면 그대로 break해서 슬롯이 0주로
+    남았다. 목표 비중에서 보면 '조금 덜 채운 것'보다 '아예 안 산 것'이 더 멀다.
+    """
+    mocker.patch.object(live, "_settled_cash", return_value=520_000.0)
+    mocker.patch.object(live, "_outstanding_qty", return_value=None)
+    #                                10,000원 × 1.005 = 10,050 → 520,000 // 10,050 = 51주
+    live.adjust("000000", "테스트", 100, "quality_v1", _snap())
+
+    assert broker["orders"] == [("buy", 51)], broker["orders"]
+    assert "수량 축소" in capsys.readouterr().out
+
+
+def test_one_share_unaffordable_still_skips(broker, mocker, capsys):
+    mocker.patch.object(live, "_settled_cash", return_value=5_000.0)
+
+    live.adjust("000000", "테스트", 100, "quality_v1", _snap())
+
+    assert broker["orders"] == []
+    assert "1주도 못 산다" in capsys.readouterr().out

@@ -290,7 +290,7 @@ def daily_job():
 
     # 6. 퀄리티 리밸런싱은 여기서 하지 않는다.
     #    체결 규칙이 '신호일 다음 거래일 시가'인데 이 배치는 16:10, 장 마감 뒤다.
-    #    open_job()이 다음 거래일 10:20에 직전 거래일 데이터로 결정하고 주문한다.
+    #    open_job()이 다음 거래일 09:05에 직전 거래일 데이터로 결정하고 주문한다.
 
     # 6-2. 펀더멘털 진입: 직전 거래일 공시를 오늘 시가로 체결
     prev_day = _prev_trading_day(today)
@@ -334,16 +334,22 @@ if __name__ == "__main__":
         scheduler.add_job(daily_job, CronTrigger(
             day_of_week="mon-fri", hour=16, minute=10, timezone="Asia/Seoul"
         ))
-        # 평일 10:20 — 리밸런싱 주문 (장중에만 체결되므로)
-        #
-        # 09:05였는데 10:20으로 미뤘다. 개장 직후는 호가가 벌어져 있어 시장가
-        # 주문이 불리하게 체결된다. 대신 검증한 체결 규칙("기준일 다음 거래일
-        # 시가")과 어긋나므로, 실측 수익률을 백테스트와 직접 비교할 수 없다.
-        # research/README.md의 "운용과 백테스트가 다른 점"에 기록돼 있다.
+        # 평일 09:05 — 리밸런싱 주문. 검증한 체결 규칙이 "기준일 다음 거래일
+        # 시가"이므로 개장에 최대한 붙인다.
         scheduler.add_job(open_job, CronTrigger(
-            day_of_week="mon-fri", hour=10, minute=20, timezone="Asia/Seoul"
+            day_of_week="mon-fri", hour=9, minute=5, timezone="Asia/Seoul"
         ))
-        print("스케줄러 시작 — 평일 10:20 리밸런싱 / 16:10 수집 (Ctrl+C로 종료)")
+        # 평일 12:00 — 보정 실행. 하는 일은 같고, 이미 목표에 맞으면 주문이 나가지
+        # 않는다(adjust가 차이만 낸다).
+        #
+        # 하루 한 번으로는 부족하다는 것이 이틀 연속 확인됐다. 2026-08-24는 미수로,
+        # 2026-08-25는 주문 500 예외로 배치가 중간에 죽어 포트폴리오가 반쯤 완성된
+        # 채 남았다. 에이전트 판단은 입력 해시로 캐시되므로 같은 날 두 번째 실행에
+        # 추가 API 비용은 들지 않는다.
+        scheduler.add_job(open_job, CronTrigger(
+            day_of_week="mon-fri", hour=12, minute=0, timezone="Asia/Seoul"
+        ))
+        print("스케줄러 시작 — 평일 09:05·12:00 리밸런싱 / 16:10 수집 (Ctrl+C로 종료)")
         try:
             scheduler.start()
         except KeyboardInterrupt:

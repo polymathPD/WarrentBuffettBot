@@ -14,12 +14,12 @@
 
 주문과 수집을 같은 시각에 돌릴 수 없습니다. 검증한 체결 규칙이 **"기준일 다음 거래일 시가"**인데
 모의투자·실전 주문은 장중에만 체결되므로, 결정은 직전 거래일 데이터로 하고 주문은 다음 거래일 장중에 냅니다.
-체결 시각은 10:20입니다 — 개장 직후는 호가가 벌어져 시장가가 불리하게 체결됩니다. 대신 백테스트가
-가정한 시가 체결과 어긋나므로, 실측 수익률을 백테스트와 직접 비교할 수 없습니다.
+09:05에 한 번 내고 12:00에 한 번 더 확인합니다. 두 번째 실행은 목표와 실제가 어긋난 만큼만
+주문하므로, 이미 맞으면 아무것도 하지 않습니다 — 배치가 중간에 죽어도 같은 날 복구됩니다.
 
 ```mermaid
 flowchart TD
-    OPEN["⏰ 평일 10:20\nopen_job()"]
+    OPEN["⏰ 평일 09:05·12:00\nopen_job()"]
     CLOSE["⏰ 평일 16:10\ndaily_job()"]
 
     subgraph REBAL["개장 직후 — 퀄리티 리밸런싱"]
@@ -156,6 +156,9 @@ flowchart TD
 > 남았습니다. `get_balance()`는 5·10·15초 간격으로 최대 4회, 토큰 발급은 분당 1회 제한에 맞춰
 > 65초 간격으로 다시 묻습니다. 주문 전송(`order-cash`)도 같은 서버라 같은 재시도를 씁니다.
 
+> **매수 자금이 모자라면 슬롯을 비우지 않고 살 수 있는 만큼 삽니다.** 목표 비중에서 보면 덜 채운
+> 것보다 아예 안 산 것이 더 멉니다. 1주도 못 사는 경우에만 넘깁니다.
+
 > **한 종목이 실패해도 나머지는 냅니다.** 2026-08-25 리밸런싱이 매도 8건 뒤 다음 주문의 500에
 > 예외로 죽어, 남은 매도와 매수 5건과 자산 스냅샷이 통째로 사라졌습니다. 계좌는 미수를 절반만
 > 턴 중간 상태로 남았습니다. `open_job`은 이제 종목별로 예외를 잡아 로그에 남기고 계속 진행합니다
@@ -178,7 +181,7 @@ flowchart TD
 | 주문 실행 | 한국투자증권 KIS OpenAPI |
 | AI 판단 | Anthropic Claude API (claude-sonnet-4-6) |
 | DB | Railway PostgreSQL (16개 테이블, Raw SQL) |
-| 스케줄러 | APScheduler (평일 10:20 / 16:10 KST) |
+| 스케줄러 | APScheduler (평일 09:05·12:00 / 16:10 KST) |
 | 웹 대시보드 | FastAPI + Jinja2 |
 | 배포 | Railway (web + worker) |
 
@@ -200,7 +203,7 @@ flowchart TD
 ## 단위 테스트
 
 DB / Claude API / KIS API / DART API를 전부 mock으로 격리한 순수 단위 테스트입니다
-(실제 네트워크·DB 연결 없이 수 초 내 완료). **28개 파일 270건.**
+(실제 네트워크·DB 연결 없이 수 초 내 완료). **28개 파일 272건.**
 
 ```bash
 pip install -r requirements-dev.txt
@@ -244,7 +247,7 @@ python processor/signals.py
 uvicorn dashboard.app:app --reload --port 8000
 
 # 배치 즉시 실행 (테스트)
-python scheduler.py --open   # 리밸런싱 (10:20 배치)
+python scheduler.py --open   # 리밸런싱 (09:05·12:00 배치)
 python scheduler.py --now    # 수집·기록 (16:10 배치)
 ```
 

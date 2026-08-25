@@ -207,18 +207,17 @@ def _find_holding(code: str) -> dict | None:
     return None
 
 
-def _settled_cash_after(order_amount: float) -> float:
-    """이 매수 주문 뒤 T+2 결제 예정 예수금. 음수면 미수(외상매수)가 된다.
+def _settled_cash() -> float:
+    """지금 시점의 T+2 결제 예정 예수금. 매수는 이 범위 안에서만 낸다.
 
     KIS 모의는 기본 위탁증거금율(대개 40%)까지 미수를 허용한다 — 10M 계좌로
-    26.7M어치를 사서 -16.4M 미수가 나기 전에 여기서 막는다. output2의
-    prvs_rcdl_excc_amt는 오늘까지 접수된 모든 매수를 반영한 뒤의 예상 예수금이라,
-    이 값에서 새 주문 대금을 빼 보면 이 주문이 미수를 만드는지 알 수 있다.
+    26.7M어치를 사서 -16.4M 미수가 난 뒤에 붙인 방어선이다. output2의
+    prvs_rcdl_excc_amt는 오늘까지 접수된 모든 주문을 반영한 뒤의 예상 예수금이라,
+    이 값이 곧 '외상 없이 쓸 수 있는 돈'이다.
     """
     b = get_balance()
     summary = (b.get("output2") or [{}])[0]
-    settled = float(summary.get("prvs_rcdl_excc_amt") or 0)
-    return settled - order_amount
+    return float(summary.get("prvs_rcdl_excc_amt") or 0)
 
 
 # 체결이 잔고에 반영되기까지 기다리는 시간. KIS 모의는 15초로는 한참 모자랐다.
@@ -495,18 +494,24 @@ def adjust(code: str, name: str, target_qty: int, strategy: str,
                 last = db.fetchone(
                     "SELECT c FROM stock_daily WHERE code=%s ORDER BY d DESC LIMIT 1", (code,))
                 est_px = float(last["c"]) if last else 0.0
-            est_cost = remaining * est_px * 1.005
-            after_settled = _settled_cash_after(est_cost)
-            if after_settled < 0:
-                print(f"[{MODE} 미수 방지] {code} {name} - "
-                      f"이 주문({est_cost:,.0f})이 T+2 결제 예수금을 "
-                      f"{after_settled:,.0f}로 떨어뜨림 - 넘김")
+            # 돈이 모자라면 건너뛰지 말고 살 수 있는 만큼만 산다. 슬롯 하나를
+            # 통째로 비우는 것보다 덜 채우는 편이 목표 비중에 가깝다.
+            unit = est_px * 1.005          # 시장가라 슬리피지·수수료 여유를 얹는다
+            settled = _settled_cash()
+            if unit <= 0 or settled < unit:
+                print(f"[{MODE} 미수 방지] {code} {name} - 결제 예정 예수금 "
+                      f"{settled:,.0f}으로는 1주도 못 산다 - 넘김")
                 break
+            if remaining * unit > settled:
+                cut = int(settled // unit)
+                print(f"[{MODE} 수량 축소] {code} {name} - 결제 예정 예수금 "
+                      f"{settled:,.0f} → {remaining}주에서 {cut}주로 줄인다")
+                remaining = cut
         result = (buy if remaining > 0 else sell)(code, abs(remaining))
         if result.get("rt_cd") != "0":
             print(f"[{MODE} {side} 실패] {code} {name} - {result.get('msg1')}")
             break
-        after, new_qty = _wait_for_fill(code, target_qty)
+        after, new_qty = _wait_for_fill(code, cur_qty + remaining)
         if new_qty == cur_qty:
             print(f"[{MODE} {side} 지연] {code} {name} - {int(_WAIT_S)}초 안에 잔고에 "
                   f"안 잡혔다 (시도 {attempt}/{MAX_FILL_ATTEMPTS})")
