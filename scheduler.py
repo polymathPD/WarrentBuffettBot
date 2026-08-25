@@ -375,7 +375,7 @@ def main(argv: list[str] | None = None) -> None:
     scheduler.add_job(open_job, CronTrigger(
         day_of_week="mon-fri", hour=9, minute=5, timezone="Asia/Seoul"
     ))
-    # 평일 12:30 — 보정 실행. 하는 일은 같고, 이미 목표에 맞으면 주문이 나가지
+    # 평일 13:10 — 보정 실행. 하는 일은 같고, 이미 목표에 맞으면 주문이 나가지
     # 않는다(adjust가 차이만 낸다).
     #
     # 하루 한 번으로는 부족하다는 것이 이틀 연속 확인됐다. 2026-08-24는 미수로,
@@ -383,9 +383,9 @@ def main(argv: list[str] | None = None) -> None:
     # 채 남았다. 에이전트 판단은 입력 해시로 캐시되므로 같은 날 두 번째 실행에
     # 추가 API 비용은 들지 않는다.
     scheduler.add_job(open_job, CronTrigger(
-        day_of_week="mon-fri", hour=12, minute=30, timezone="Asia/Seoul"
+        day_of_week="mon-fri", hour=13, minute=10, timezone="Asia/Seoul"
     ))
-    print("스케줄러 시작 — 평일 09:05·12:30 리밸런싱 / 16:10 수집 (Ctrl+C로 종료)")
+    print("스케줄러 시작 — 평일 09:05·13:10 리밸런싱 / 16:10 수집 (Ctrl+C로 종료)")
     try:
         scheduler.start()
     except KeyboardInterrupt:

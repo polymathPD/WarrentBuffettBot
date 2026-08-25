@@ -14,13 +14,13 @@
 
 주문과 수집을 같은 시각에 돌릴 수 없습니다. 검증한 체결 규칙이 **"기준일 다음 거래일 시가"**인데
 모의투자·실전 주문은 장중에만 체결되므로, 결정은 직전 거래일 데이터로 하고 주문은 다음 거래일 장중에 냅니다.
-09:05에 한 번 내고 12:30에 한 번 더 확인합니다. 달력상 리밸런싱일이 아니어도 **슬롯이 비어
+09:05에 한 번 내고 13:10에 한 번 더 확인합니다. 달력상 리밸런싱일이 아니어도 **슬롯이 비어
 있으면**(앞선 실행이 끝까지 못 갔다는 뜻) 채웁니다. 슬롯이 다 차 있으면 건너뛰므로 보정 실행이
 매일 리밸런싱이 되지는 않습니다.
 
 ```mermaid
 flowchart TD
-    OPEN["⏰ 평일 09:05·12:30\nopen_job()"]
+    OPEN["⏰ 평일 09:05·13:10\nopen_job()"]
     CLOSE["⏰ 평일 16:10\ndaily_job()"]
 
     subgraph REBAL["개장 직후 — 퀄리티 리밸런싱"]
@@ -189,7 +189,7 @@ flowchart TD
 | 주문 실행 | 한국투자증권 KIS OpenAPI |
 | AI 판단 | Anthropic Claude API (claude-sonnet-4-6) |
 | DB | Railway PostgreSQL (16개 테이블, Raw SQL) |
-| 스케줄러 | APScheduler (평일 09:05·12:30 / 16:10 KST) |
+| 스케줄러 | APScheduler (평일 09:05·13:10 / 16:10 KST) |
 | 웹 대시보드 | FastAPI + Jinja2 |
 | 배포 | Railway (web + worker) |
 
@@ -255,7 +255,7 @@ python processor/signals.py
 uvicorn dashboard.app:app --reload --port 8000
 
 # 배치 즉시 실행 (테스트)
-python scheduler.py --open   # 리밸런싱 (09:05·12:30 배치)
+python scheduler.py --open   # 리밸런싱 (09:05·13:10 배치)
 #
 # 어느 경로로 실행하든 db.init_schema()가 먼저 돕니다. schema.sql은 전부
 # IF NOT EXISTS라 멱등이고, 컬럼을 추가한 뒤 배포만 하고 마이그레이션을

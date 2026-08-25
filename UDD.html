@@ -134,7 +134,7 @@
     <p>
       <strong>WarrenBuffett Bot</strong>은 DART 분기 재무로 종목을 고르고 Claude 에이전트가 공시 텍스트로
       가치 함정을 걸러내는 자동매매 시스템입니다. 운용 전략은 <code>quality_v1</code>(퀄리티/가치, 월별
-      리밸런싱, 손절 없음) 하나이며, 평일 09:05과 12:30에 리밸런싱 주문을 내고 16:10에 데이터를 수집·기록합니다.
+      리밸런싱, 손절 없음) 하나이며, 평일 09:05과 13:10에 리밸런싱 주문을 내고 16:10에 데이터를 수집·기록합니다.
       Railway PostgreSQL에 모든 상태를 저장하고 FastAPI 대시보드로 포지션·거래·백테스트를 확인합니다.
     </p>
 
@@ -195,7 +195,7 @@
     <h2>2. 디렉터리 구조</h2>
     <pre><code>WarrenBuffett/
 ├── config.py               # 전역 설정, DB 기반 런타임 파라미터
-├── scheduler.py            # APScheduler 엔트리 (09:05·12:30 open_job / 16:10 daily_job)
+├── scheduler.py            # APScheduler 엔트리 (09:05·13:10 open_job / 16:10 daily_job)
 ├── setup_db.py             # DB 초기화 스크립트
 ├── requirements.txt / requirements-dev.txt / pytest.ini
 ├── runtime.txt             # Python 3.11
@@ -285,7 +285,7 @@
       체결됩니다. 그래서 <strong>결정은 직전 거래일 데이터로, 주문은 다음 날 개장 직후</strong>에 냅니다.
     </div>
 
-    <h3>09:05 · 12:30 <code>open_job()</code> — 퀄리티 리밸런싱</h3>
+    <h3>09:05 · 13:10 <code>open_job()</code> — 퀄리티 리밸런싱</h3>
     <div class="flow">
       <div class="flow-step">
         <div class="num">1</div>
@@ -1311,7 +1311,7 @@ net_return = exit_px / entry_px - 1</code></pre>
 web:    uvicorn dashboard.app:app --host 0.0.0.0 --port $PORT
 worker: python scheduler.py</code></pre>
     <p><code>web</code>(FastAPI)과 <code>worker</code>(APScheduler)가 분리된 dyno에서 독립 실행됩니다.
-    스케줄러는 <code>Asia/Seoul</code> 타임존으로 평일 09:05·12:30 / 16:10 세 작업을 등록합니다.</p>
+    스케줄러는 <code>Asia/Seoul</code> 타임존으로 평일 09:05·13:10 / 16:10 세 작업을 등록합니다.</p>
 
     <h3>로컬 개발</h3>
     <pre><code>pip install -r requirements.txt
