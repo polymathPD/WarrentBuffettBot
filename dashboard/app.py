@@ -229,14 +229,16 @@ def index(request: Request, mode: str = "paper"):
     mode = mode if mode in MODES else "paper"
     # 진입할 때 에이전트가 무슨 판단을 했는지 함께 본다. 지금까지는 거래내역에만
     # 있어서 '왜 이걸 들고 있는지'를 보려면 다른 화면으로 가야 했다.
-    # positions.agents를 먼저 본다 - 체결을 못 본 날은 매수 기록 자체가 없어서
-    # trades만 보면 의견란이 빈다(2026-08-24 오리온홀딩스·영원무역홀딩스).
+    # 판단은 세 곳에서 찾는다: positions.agents(진입 시 사본) → trades.agents(옛 기록)
+    # → agent_decisions(원본). 앞의 둘은 체결을 봐야 남지만 원본은 에이전트가 답한
+    # 순간 기록되므로 비지 않는다. 2026-08-24 오리온홀딩스·영원무역홀딩스가 그 경우로,
+    # 게이트를 통과하고 실제로 샀는데 체결을 못 봐서 두 사본이 다 없었다.
     positions = db.fetchall("""
         SELECT p.code, p.name, p.entry_date, p.entry_px, p.qty, p.stop_px,
                sd.c AS current_px,
                ROUND((sd.c / p.entry_px - 1) * 100, 2) AS pct,
                ROUND((sd.c - p.entry_px) * p.qty, 0) AS unrealized,
-               COALESCE(p.agents, t.agents) AS agents
+               COALESCE(p.agents, t.agents, ad.agents) AS agents
         FROM positions p
         LEFT JOIN stock_daily sd ON sd.code = p.code
           AND sd.d = (SELECT MAX(d) FROM stock_daily WHERE code = p.code)
@@ -249,6 +251,17 @@ def index(request: Request, mode: str = "paper"):
                AND side = 'buy' AND agents IS NOT NULL AND agents <> '{}'::jsonb
              ORDER BY (agents ? 'value_trap') DESC, ts DESC LIMIT 1
         ) t ON TRUE
+        LEFT JOIN LATERAL (
+            -- 마지막 방어선: 판단의 원본은 agent_decisions다. 여기에는 에이전트가
+            -- 답한 순간 기록되므로 체결을 봤는지, 주문이 성공했는지와 무관하게 남는다.
+            -- positions/trades의 사본이 없어도 화면은 비지 않는다.
+            SELECT jsonb_object_agg(agent, jsonb_build_object(
+                       'decision', decision, 'score', score, 'rationale', rationale)) AS agents
+              FROM (SELECT DISTINCT ON (agent) agent, decision, score, rationale
+                      FROM agent_decisions
+                     WHERE code = p.code AND ts::date = p.entry_date
+                     ORDER BY agent, ts DESC) latest
+        ) ad ON TRUE
         WHERE p.mode = %s
         ORDER BY p.entry_date DESC
     """, (mode,))
