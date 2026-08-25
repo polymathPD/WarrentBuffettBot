@@ -207,6 +207,19 @@ def _find_holding(code: str) -> dict | None:
     return None
 
 
+def _today_traded() -> tuple[float, float]:
+    """오늘 누적 매수대금·매도대금. 주문 전후로 읽으면 그 주문의 실제 대금이 나온다.
+
+    모의계좌에는 체결 단가를 주는 API가 없다 — 일별주문체결조회는 rt_cd=0에 빈
+    응답이고, 실현손익·기간별매매손익은 '없는 서비스 코드'다. 잔고 요약의 이
+    두 값만이 증권사가 계산한 실제 체결 금액이다.
+    """
+    b = get_balance()
+    summary = (b.get("output2") or [{}])[0]
+    return (float(summary.get("thdt_buy_amt") or 0),
+            float(summary.get("thdt_sll_amt") or 0))
+
+
 def _settled_cash() -> float:
     """지금 시점의 T+2 결제 예정 예수금. 매수는 이 범위 안에서만 낸다.
 
@@ -469,6 +482,7 @@ def adjust(code: str, name: str, target_qty: int, strategy: str,
     side = "buy" if target_qty > cur else "sell"
     after = None
     cur_qty = cur
+    traded_before = _today_traded()
     for attempt in range(1, MAX_FILL_ATTEMPTS + 1):
         # 재주문 전에는 앞선 주문이 확실히 끝났는지부터 본다. 잔고만 보고 '덜 붙었으니
         # 더 주문'하면 아직 살아 있는 주문 위에 겹쳐 산다 — 2026-08-24에 그날 체결된
@@ -520,8 +534,22 @@ def adjust(code: str, name: str, target_qty: int, strategy: str,
     filled = cur_qty - cur
     if filled == 0:
         return
-    px = (float(_field(after, "pchs_avg_pric", code)) if after
-          else snapshot["holdings"].get(code, {}).get("cur_px", 0.0))
+
+    # 체결 단가는 증권사가 집계한 오늘 누적 대금의 증분에서 구한다.
+    # 예전에는 잔고의 pchs_avg_pric을 썼는데 그건 매입평균가다 - 매도 기록의
+    # 단가가 매도가가 아니라 산 가격이었다(2026-08-25 확인, 8건 중 7건이
+    # 소수점까지 일치). 실현손익이 통째로 0으로 보이던 이유다.
+    traded_after = _today_traded()
+    delta = (traded_after[0] - traded_before[0] if filled > 0
+             else traded_after[1] - traded_before[1])
+    if delta > 0:
+        px = delta / abs(filled)
+    else:
+        # 체결이 폴링 뒤에 잡혔거나 집계가 늦은 경우. 근사치임을 남긴다.
+        px = (snapshot["holdings"].get(code, {}).get("cur_px")
+              or (float(_field(after, "pchs_avg_pric", code)) if after else 0.0))
+        print(f"[{MODE} 단가 추정] {code} {name} - 오늘 누적 대금이 안 움직여 "
+              f"{px:,.0f}원으로 기록한다 (실제 체결가 아님)")
     new_qty = cur_qty
     delta = int(target_qty - cur)
 

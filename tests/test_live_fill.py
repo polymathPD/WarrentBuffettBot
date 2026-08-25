@@ -22,7 +22,8 @@ def broker(mocker, mock_db):
     # 미보유 종목의 매수 단가는 stock_daily 종가에서 온다 (snapshot에 현재가가 없으므로).
     mock_db.fetchone.return_value = {"c": 10_000.0}
 
-    state = {"qty": 0.0, "orders": []}
+    state = {"qty": 0.0, "orders": [], "db": mock_db}
+    mocker.patch.object(live, "_today_traded", return_value=(0.0, 0.0))
 
     # 폴링 자체는 여기서 검증하지 않는다 - 잔고가 얼마로 보이는지만 준다.
     mocker.patch.object(
@@ -191,3 +192,29 @@ def test_one_share_unaffordable_still_skips(broker, mocker, capsys):
 
     assert broker["orders"] == []
     assert "1주도 못 산다" in capsys.readouterr().out
+
+
+def test_fill_price_comes_from_the_brokers_daily_total(broker, mocker):
+    """매도 기록의 단가가 매도가여야 한다.
+
+    2026-08-25까지는 잔고의 pchs_avg_pric(매입평균가)을 기록했다. 그날 매도 8건 중
+    7건이 KIS 매입평균가와 소수점까지 일치했다 - 실현손익이 구조적으로 0이 된다.
+    모의계좌에는 체결 단가 API가 없으므로(일별주문체결조회는 빈 응답, 실현손익은
+    '없는 서비스 코드'), 오늘 누적 매도대금의 증분에서 역산한다.
+    """
+    broker["qty"] = 100.0
+    mocker.patch.object(live, "_outstanding_qty", return_value=None)
+    #                  주문 전 (매수 0, 매도 0) → 주문 후 (매수 0, 매도 1,530,000)
+    mocker.patch.object(live, "_today_traded", side_effect=[(0.0, 0.0), (0.0, 1_530_000.0)])
+
+    def _after(code, expected):
+        broker["qty"] = 0.0
+        return {"pdno": code, "hldg_qty": "0", "pchs_avg_pric": "11111"}, 0.0
+    mocker.patch.object(live, "_wait_for_fill", side_effect=_after)
+
+    live.adjust("000000", "테스트", 0, "quality_v1", _snap(100.0))
+
+    ins = [c for c in broker["db"].execute.call_args_list if "INSERT INTO trades" in c[0][0]]
+    assert ins, "매매 기록이 없다"
+    price = ins[0][0][1][4]          # (mode, code, name, qty, price, amount, strategy)
+    assert price == 15_300.0, f"매입평균가 11,111이 아니라 매도가 15,300이어야 한다: {price}"

@@ -203,7 +203,7 @@ flowchart TD
 ## 단위 테스트
 
 DB / Claude API / KIS API / DART API를 전부 mock으로 격리한 순수 단위 테스트입니다
-(실제 네트워크·DB 연결 없이 수 초 내 완료). **28개 파일 272건.**
+(실제 네트워크·DB 연결 없이 수 초 내 완료). **28개 파일 273건.**
 
 ```bash
 pip install -r requirements-dev.txt

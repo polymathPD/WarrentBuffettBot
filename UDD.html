@@ -268,7 +268,7 @@
 ├── run_backtest_local.py   # 로컬 백테스트 + 검증
 ├── decile_analysis.py      # 분위수 분석
 ├── migrate_from_ref.py     # 외부 참조 DB 이관 (1회성)
-└── tests/                  # pytest 28개 파일 272건 (DB·API 전부 mock)</code></pre>
+└── tests/                  # pytest 28개 파일 273건 (DB·API 전부 mock)</code></pre>
   </section>
 
   <hr class="divider" />
@@ -1187,7 +1187,7 @@ net_return     = sell_price(exit) / buy_price(entry) - 1</code></pre>
 
     <p>DB(<code>db.connection</code>) · Claude API · KIS API · DART API를 전부 mock으로 격리한 순수
     단위 테스트입니다. 실제 네트워크·DB 연결 없이 수 초 내 완료되므로 백필이나 스케줄러가 도는
-    중에도 안전하게 실행할 수 있습니다. <strong>28개 파일 272건.</strong></p>
+    중에도 안전하게 실행할 수 있습니다. <strong>28개 파일 273건.</strong></p>
 
     <pre><code>pip install -r requirements-dev.txt
 pytest tests/ -v</code></pre>
@@ -1395,7 +1395,7 @@ uvicorn dashboard.app:app --reload        # 대시보드 개발 서버</code></p
       <tr><td>백테스터 · 결과 저장</td><td>backtester/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>연구 스크립트</td><td>research/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>웹 대시보드</td><td>dashboard/app.py</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>단위 테스트</td><td>tests/ (272건)</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>단위 테스트</td><td>tests/ (273건)</td><td><span class="status-prod">운영 중</span></td></tr>
     </table>
   </section>
 
