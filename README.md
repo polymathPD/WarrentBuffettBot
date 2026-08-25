@@ -13,11 +13,13 @@
 ## 두 개의 배치
 
 주문과 수집을 같은 시각에 돌릴 수 없습니다. 검증한 체결 규칙이 **"기준일 다음 거래일 시가"**인데
-모의투자·실전 주문은 장중에만 체결되므로, 결정은 직전 거래일 데이터로 하고 주문은 개장 직후에 냅니다.
+모의투자·실전 주문은 장중에만 체결되므로, 결정은 직전 거래일 데이터로 하고 주문은 다음 거래일 장중에 냅니다.
+체결 시각은 10:20입니다 — 개장 직후는 호가가 벌어져 시장가가 불리하게 체결됩니다. 대신 백테스트가
+가정한 시가 체결과 어긋나므로, 실측 수익률을 백테스트와 직접 비교할 수 없습니다.
 
 ```mermaid
 flowchart TD
-    OPEN["⏰ 평일 09:05\nopen_job()"]
+    OPEN["⏰ 평일 10:20\nopen_job()"]
     CLOSE["⏰ 평일 16:10\ndaily_job()"]
 
     subgraph REBAL["개장 직후 — 퀄리티 리밸런싱"]
@@ -171,7 +173,7 @@ flowchart TD
 | 주문 실행 | 한국투자증권 KIS OpenAPI |
 | AI 판단 | Anthropic Claude API (claude-sonnet-4-6) |
 | DB | Railway PostgreSQL (16개 테이블, Raw SQL) |
-| 스케줄러 | APScheduler (평일 09:05 / 16:10 KST) |
+| 스케줄러 | APScheduler (평일 10:20 / 16:10 KST) |
 | 웹 대시보드 | FastAPI + Jinja2 |
 | 배포 | Railway (web + worker) |
 
@@ -237,7 +239,7 @@ python processor/signals.py
 uvicorn dashboard.app:app --reload --port 8000
 
 # 배치 즉시 실행 (테스트)
-python scheduler.py --open   # 리밸런싱 (09:05 배치)
+python scheduler.py --open   # 리밸런싱 (10:20 배치)
 python scheduler.py --now    # 수집·기록 (16:10 배치)
 ```
 
