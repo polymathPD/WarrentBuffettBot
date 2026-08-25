@@ -210,7 +210,7 @@ flowchart TD
 ## 단위 테스트
 
 DB / Claude API / KIS API / DART API를 전부 mock으로 격리한 순수 단위 테스트입니다
-(실제 네트워크·DB 연결 없이 수 초 내 완료). **28개 파일 277건.**
+(실제 네트워크·DB 연결 없이 수 초 내 완료). **28개 파일 279건.**
 
 ```bash
 pip install -r requirements-dev.txt
@@ -255,6 +255,10 @@ uvicorn dashboard.app:app --reload --port 8000
 
 # 배치 즉시 실행 (테스트)
 python scheduler.py --open   # 리밸런싱 (09:05·12:00 배치)
+#
+# 어느 경로로 실행하든 db.init_schema()가 먼저 돕니다. schema.sql은 전부
+# IF NOT EXISTS라 멱등이고, 컬럼을 추가한 뒤 배포만 하고 마이그레이션을
+# 잊는 사고를 막습니다.
 python scheduler.py --now    # 수집·기록 (16:10 배치)
 ```
 

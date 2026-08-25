@@ -197,3 +197,34 @@ def test_positions_are_reconciled_against_the_broker_after_ordering(live_run, mo
     _snap_arg, strategy, agents = rec.call_args[0]
     assert strategy == "quality_v1"
     assert len(agents) == SLOTS, "종목별 에이전트 판단이 함께 넘어가야 한다"
+
+
+def test_worker_migrates_the_schema_before_doing_anything(mocker):
+    """배포만으로 스키마가 안 맞으면 그날 배치가 통째로 실패한다.
+
+    init_schema()는 setup_db.py에서만 불렸다 - 손으로 돌리는 스크립트라 배포
+    경로에 없다. 2026-08-25에 positions.agents를 추가하고 배포했을 때 운영 DB에는
+    컬럼이 없었고, 손으로 돌리지 않았다면 그날 12:00 배치의 포지션 기록이 전부
+    깨졌을 것이다.
+    """
+    order = []
+    mocker.patch("db.connection.init_schema", side_effect=lambda: order.append("schema"))
+    mocker.patch.object(scheduler, "open_job", side_effect=lambda: order.append("open"))
+    mocker.patch.object(scheduler, "daily_job", side_effect=lambda: order.append("daily"))
+
+    scheduler.main(["--open"])
+    assert order == ["schema", "open"], order
+
+    order.clear()
+    scheduler.main(["--now"])
+    assert order == ["schema", "daily"], order
+
+
+def test_worker_refuses_to_start_when_the_schema_cannot_be_applied(mocker):
+    """스키마를 보장 못 하는 워커가 주문을 내면 안 된다."""
+    mocker.patch("db.connection.init_schema", side_effect=RuntimeError("연결 실패"))
+    started = mocker.patch.object(scheduler, "open_job")
+
+    with pytest.raises(RuntimeError, match="연결 실패"):
+        scheduler.main(["--open"])
+    assert not started.called

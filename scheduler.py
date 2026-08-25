@@ -332,36 +332,56 @@ def daily_job():
     summary()
 
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> None:
+    """워커 진입점. 무슨 일을 하든 스키마부터 맞춘다.
+
+    db.init_schema()는 setup_db.py에서만 불렸다 — 손으로 돌리는 스크립트라
+    배포에는 끼어들지 않는다. 2026-08-25에 positions.agents 컬럼을 추가하고
+    배포했더니 운영 DB에는 그 컬럼이 없어서, 손으로 setup_db.py를 돌리지
+    않았다면 그날 12:00 배치의 모든 포지션 기록이 실패할 뻔했다.
+    schema.sql은 전부 IF NOT EXISTS라 매번 돌려도 안전하다.
+
+    실패하면 그대로 죽인다. 스키마를 보장 못 하는 워커가 주문을 내면 안 된다.
+    """
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "--now":
-        # 즉시 한 번 실행 (테스트용)
-        daily_job()
-    elif len(sys.argv) > 1 and sys.argv[1] == "--open":
+    import db.connection as db
+
+    argv = sys.argv[1:] if argv is None else argv
+    db.init_schema()
+
+    if argv and argv[0] == "--now":
+        daily_job()                      # 즉시 한 번 실행 (테스트용)
+        return
+    if argv and argv[0] == "--open":
         open_job()
-    else:
-        scheduler = BlockingScheduler(timezone="Asia/Seoul")
-        # 평일 16:10 — 수집·신호 계산 (장 마감 뒤)
-        scheduler.add_job(daily_job, CronTrigger(
-            day_of_week="mon-fri", hour=16, minute=10, timezone="Asia/Seoul"
-        ))
-        # 평일 09:05 — 리밸런싱 주문. 검증한 체결 규칙이 "기준일 다음 거래일
-        # 시가"이므로 개장에 최대한 붙인다.
-        scheduler.add_job(open_job, CronTrigger(
-            day_of_week="mon-fri", hour=9, minute=5, timezone="Asia/Seoul"
-        ))
-        # 평일 12:00 — 보정 실행. 하는 일은 같고, 이미 목표에 맞으면 주문이 나가지
-        # 않는다(adjust가 차이만 낸다).
-        #
-        # 하루 한 번으로는 부족하다는 것이 이틀 연속 확인됐다. 2026-08-24는 미수로,
-        # 2026-08-25는 주문 500 예외로 배치가 중간에 죽어 포트폴리오가 반쯤 완성된
-        # 채 남았다. 에이전트 판단은 입력 해시로 캐시되므로 같은 날 두 번째 실행에
-        # 추가 API 비용은 들지 않는다.
-        scheduler.add_job(open_job, CronTrigger(
-            day_of_week="mon-fri", hour=12, minute=0, timezone="Asia/Seoul"
-        ))
-        print("스케줄러 시작 — 평일 09:05·12:00 리밸런싱 / 16:10 수집 (Ctrl+C로 종료)")
-        try:
-            scheduler.start()
-        except KeyboardInterrupt:
-            print("스케줄러 종료")
+        return
+
+    scheduler = BlockingScheduler(timezone="Asia/Seoul")
+    # 평일 16:10 — 수집·신호 계산 (장 마감 뒤)
+    scheduler.add_job(daily_job, CronTrigger(
+        day_of_week="mon-fri", hour=16, minute=10, timezone="Asia/Seoul"
+    ))
+    # 평일 09:05 — 리밸런싱 주문. 검증한 체결 규칙이 "기준일 다음 거래일
+    # 시가"이므로 개장에 최대한 붙인다.
+    scheduler.add_job(open_job, CronTrigger(
+        day_of_week="mon-fri", hour=9, minute=5, timezone="Asia/Seoul"
+    ))
+    # 평일 12:00 — 보정 실행. 하는 일은 같고, 이미 목표에 맞으면 주문이 나가지
+    # 않는다(adjust가 차이만 낸다).
+    #
+    # 하루 한 번으로는 부족하다는 것이 이틀 연속 확인됐다. 2026-08-24는 미수로,
+    # 2026-08-25는 주문 500 예외로 배치가 중간에 죽어 포트폴리오가 반쯤 완성된
+    # 채 남았다. 에이전트 판단은 입력 해시로 캐시되므로 같은 날 두 번째 실행에
+    # 추가 API 비용은 들지 않는다.
+    scheduler.add_job(open_job, CronTrigger(
+        day_of_week="mon-fri", hour=12, minute=0, timezone="Asia/Seoul"
+    ))
+    print("스케줄러 시작 — 평일 09:05·12:00 리밸런싱 / 16:10 수집 (Ctrl+C로 종료)")
+    try:
+        scheduler.start()
+    except KeyboardInterrupt:
+        print("스케줄러 종료")
+
+
+if __name__ == "__main__":
+    main()
