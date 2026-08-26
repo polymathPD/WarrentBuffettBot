@@ -362,3 +362,33 @@ def test_ledger_check_passes_when_totals_agree(mocker, mock_db, capsys):
 
     assert live.check_today_ledger() is True
     assert "장부 확인" in capsys.readouterr().out
+
+
+def test_token_waits_long_only_for_the_rate_limit(mocker):
+    """65초 백오프는 발급 분당 1회 제한(403) 때문이다. 네트워크 실패에는 쓰지 않는다.
+
+    2026-08-26에 KIS가 ReadTimeout을 내자 잔고 조회 한 번이 4회 x (65+130+195초)로
+    26분을 썼다. open_job은 종목마다 잔고를 보므로 아침 잡이 오후 회차까지 이어진다.
+    """
+    import requests
+
+    resp = mocker.Mock(status_code=403)
+    assert live._rate_limited(requests.HTTPError(response=resp)) is True
+    assert live._rate_limited(requests.exceptions.ReadTimeout("timed out")) is False
+    assert live._rate_limited(requests.HTTPError(response=mocker.Mock(status_code=500))) is False
+
+
+def test_token_retry_backoff_is_short_for_a_timeout(mocker):
+    import requests
+
+    slept = []
+    mocker.patch("time.sleep", side_effect=slept.append)
+    live._token_cache["expires_at"] = 0
+    ok = mocker.Mock()
+    ok.json.return_value = {"access_token": "t", "expires_in": 86400}
+    mocker.patch("requests.post",
+                 side_effect=[requests.exceptions.ReadTimeout("timed out"), ok])
+
+    live._get_token()
+
+    assert slept == [live._TOKEN_NET_BACKOFF_S], slept

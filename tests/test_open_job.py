@@ -60,6 +60,10 @@ def live_run(mocker, mock_db, mock_settings):
     # 가로채지 않으면 증권사에 실제로 붙는다. open_job이 예외를 삼키므로 테스트는
     # 실패하지 않고 토큰 재시도(65+130+195초)에 걸려 멈춘다.
     mocker.patch.object(live, "check_today_ledger", return_value=True)
+    # 잠금은 여기서 검증하지 않는다 (test_open_job_lock_* 참고). mock_db.fetchone이
+    # 기본 None이라 가로채지 않으면 모든 회차가 건너뛰기로 끝난다.
+    mocker.patch.object(scheduler, "_acquire_open_lock", return_value=True)
+    mocker.patch.object(scheduler, "_release_open_lock")
 
     class Run:
         orders = None
@@ -293,3 +297,31 @@ def test_missing_target_record_is_treated_as_work_to_do(live_run, mocker, capsys
     live_run(snap, rebal_d=None)
 
     assert "직전 목표 기록이 없어 확인" in capsys.readouterr().out
+
+
+def test_open_job_skips_when_a_previous_run_still_holds_the_lock(mocker, mock_db, capsys):
+    """09:05이 아직 돌고 있으면 13:10은 주문을 내지 않는다.
+
+    두 회차는 add_job을 두 번 부른 것이라 APScheduler id가 다르고, max_instances는
+    잡 하나당 적용된다. 배타 제어가 없으면 같은 계좌에 두 잡이 동시에 주문을 낸다 -
+    한쪽은 몇 시간 묵은 스냅샷으로. 미수 -1,640만원을 만든 것과 같은 조건이다.
+    """
+    mock_db.fetchone.return_value = {"ok": False}
+    body = mocker.patch.object(scheduler, "_open_job")
+
+    scheduler.open_job()
+
+    assert body.call_count == 0, "앞선 회차가 도는데 본체가 실행됐다"
+    assert "건너뜀" in capsys.readouterr().out
+
+
+def test_open_job_releases_the_lock_even_when_it_raises(mocker, mock_db):
+    """본체가 죽어도 잠금은 놓아야 한다. 안 그러면 다음 회차가 영영 막힌다."""
+    mock_db.fetchone.return_value = {"ok": True}
+    mocker.patch.object(scheduler, "_open_job", side_effect=RuntimeError("펑"))
+    rel = mocker.patch.object(scheduler, "_release_open_lock")
+
+    with pytest.raises(RuntimeError):
+        scheduler.open_job()
+
+    assert rel.call_count == 1

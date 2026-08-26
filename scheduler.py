@@ -110,7 +110,42 @@ def _store_targets(strategy: str, codes, rebal_d: str) -> None:
                    "updated_at = NOW()", (k, v))
 
 
+# 09:05과 13:10은 add_job을 두 번 부른 것이라 APScheduler가 서로 다른 id를 붙인다.
+# max_instances(기본 1)는 잡 하나당 적용되므로 두 회차 사이에는 아무 배타 제어가 없고,
+# 기본 executor는 스레드 10개짜리 풀이다. 앞 회차가 증권사 응답을 기다리며 물려 있는
+# 동안 다음 회차가 시작되면 같은 계좌에 두 번 주문이 나간다 - 2026-08-26에 잔고 조회
+# 한 번이 재시도를 다 소진하는 데 26분이 걸렸으니 09:05이 13:10까지 이어질 수 있다.
+_OPEN_JOB_LOCK = 8260905
+
+
+def _acquire_open_lock() -> bool:
+    """세션 수준 권고 잠금. 프로세스가 죽으면 연결이 끊기며 PG가 자동으로 놓는다.
+
+    트랜잭션 수준(pg_advisory_xact_lock)이 아니라 세션 수준이어야 한다 - 이 저장소의
+    fetchall/fetchone은 조회마다 커밋하므로 트랜잭션 잠금은 즉시 풀린다.
+    """
+    import db.connection as db
+    row = db.fetchone("SELECT pg_try_advisory_lock(%s) AS ok", (_OPEN_JOB_LOCK,))
+    return bool(row and row["ok"])
+
+
+def _release_open_lock() -> None:
+    import db.connection as db
+    db.execute("SELECT pg_advisory_unlock(%s)", (_OPEN_JOB_LOCK,))
+
+
 def open_job():
+    """앞선 회차가 아직 돌고 있으면 건너뛴다. 본체는 _open_job()."""
+    if not _acquire_open_lock():
+        print("=== 개장 리밸런싱 건너뜀 - 앞선 회차가 아직 끝나지 않았다 ===")
+        return
+    try:
+        _open_job()
+    finally:
+        _release_open_lock()
+
+
+def _open_job():
     """개장 직후 리밸런싱 — 결정은 직전 거래일 데이터로, 체결은 오늘 시가 근처로.
 
     16:10 배치에서 떼어낸 이유는 체결 시각 때문이다. 검증한 규칙이 '신호일 다음

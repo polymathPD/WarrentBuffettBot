@@ -30,8 +30,20 @@ _token_cache: dict = {"access_token": "", "expires_at": 0}
 # 증권사가 일시적으로 실패할 때 몇 번, 얼마 간격으로 다시 묻는지.
 # 토큰은 분당 1회 제한이라 간격이 길어야 한다.
 _RETRIES = 4
-_TOKEN_BACKOFF_S = 65.0
+_TOKEN_BACKOFF_S = 65.0        # 발급 분당 1회 제한(403 EGW00133)에 걸렸을 때
+_TOKEN_NET_BACKOFF_S = 3.0     # 네트워크 실패는 제한과 무관하므로 길게 기다릴 이유가 없다
 _BALANCE_BACKOFF_S = 5.0
+
+
+def _rate_limited(e: Exception) -> bool:
+    """토큰 발급이 분당 1회 제한에 걸린 것인지. 그 외(타임아웃·연결 실패)와 구분한다.
+
+    65초 백오프는 오직 이 제한 때문에 넣었는데 모든 실패에 똑같이 걸렸다.
+    2026-08-26에 KIS가 ReadTimeout을 내자 잔고 조회 한 번이 4회 x (65+130+195초)로
+    26분을 썼다. open_job은 종목마다 잔고를 보므로 아침 잡이 오후까지 이어진다.
+    """
+    r = getattr(e, "response", None)
+    return r is not None and r.status_code == 403
 
 
 def _get_token() -> str:
@@ -61,7 +73,8 @@ def _get_token() -> str:
         except Exception as e:
             if i == _RETRIES - 1:
                 raise
-            wait = _TOKEN_BACKOFF_S * (i + 1)
+            base = _TOKEN_BACKOFF_S if _rate_limited(e) else _TOKEN_NET_BACKOFF_S
+            wait = base * (i + 1)
             print(f"[{MODE} 토큰 발급 재시도 {i+1}/{_RETRIES}] {type(e).__name__} "
                   f"{str(e)[:70]} - {wait:.0f}초 뒤")
             time.sleep(wait)
