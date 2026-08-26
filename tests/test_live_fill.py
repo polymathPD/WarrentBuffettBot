@@ -339,3 +339,26 @@ def test_impossible_price_is_rejected(broker, mocker, capsys):
            if "INSERT INTO trades" in c[0][0]]
     price = ins[0][0][1][4]
     assert price == 10_000.0, f"33,700이 아니라 현재가 10,000으로 대체해야 한다: {price}"
+
+
+def test_ledger_check_flags_a_mismatch(mocker, mock_db, capsys):
+    """장부 합계가 증권사 집계와 다르면 그날 안에 알려야 한다.
+
+    2026-08-25(매도가가 매입평균가)도 2026-08-26(앞 종목 체결이 섞임)도 이틀 뒤에
+    손으로 대조해서 찾았다. 두 번 다 이 비교 하나로 그날 걸렸을 것이다.
+    """
+    mocker.patch.object(live, "_today_traded", return_value=(70_760.0, 48_000.0))
+    mock_db.fetchone.return_value = {"b": 43_620.0, "s": 48_000.0}
+
+    assert live.check_today_ledger() is False
+    out = capsys.readouterr().out
+    assert "장부 불일치" in out
+    assert "-27,140" in out, out
+
+
+def test_ledger_check_passes_when_totals_agree(mocker, mock_db, capsys):
+    mocker.patch.object(live, "_today_traded", return_value=(70_760.0, 48_000.0))
+    mock_db.fetchone.return_value = {"b": 70_760.0, "s": 48_000.0}
+
+    assert live.check_today_ledger() is True
+    assert "장부 확인" in capsys.readouterr().out

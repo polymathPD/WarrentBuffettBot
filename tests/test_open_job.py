@@ -57,6 +57,9 @@ def live_run(mocker, mock_db, mock_settings):
     mocker.patch("recorder.equity.snapshot", return_value=None)
     mocker.patch.object(scheduler, "_stored_targets", return_value=(set(), None))
     mocker.patch.object(scheduler, "_store_targets")
+    # 가로채지 않으면 증권사에 실제로 붙는다. open_job이 예외를 삼키므로 테스트는
+    # 실패하지 않고 토큰 재시도(65+130+195초)에 걸려 멈춘다.
+    mocker.patch.object(live, "check_today_ledger", return_value=True)
 
     class Run:
         orders = None

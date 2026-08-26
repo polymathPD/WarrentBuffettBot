@@ -275,6 +275,13 @@ def open_job():
                 print(f"  잔고와 어긋나 바로잡음: {', '.join(fixed)}")
         except Exception as e:
             print(f"  [잔고 대조 실패] {type(e).__name__} {str(e)[:100]}")
+
+        # 장부가 증권사 집계와 맞는지 그 자리에서 확인한다. 단가 산출식이 틀리면
+        # 여기서 걸린다 - 이틀 뒤 손으로 대조해서 찾는 일을 없애려는 것이다.
+        try:
+            live.check_today_ledger()
+        except Exception as e:
+            print(f"  [장부 대조 실패] {type(e).__name__} {str(e)[:100]}")
     else:
         from executor.paper import adjust, current_equity
         opens = {r["code"]: float(r["o"]) for r in db.fetchall(

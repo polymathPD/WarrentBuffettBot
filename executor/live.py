@@ -438,6 +438,34 @@ def account_snapshot() -> dict:
             "raw_summary": summary}
 
 
+def check_today_ledger(tol: float = 1.0) -> bool:
+    """우리 장부의 오늘 합계를 증권사 집계와 맞춰 본다. 어긋나면 그날 안에 알린다.
+
+    체결 단가를 우리가 만들어 쓰는 한, 그 산출식이 어떻게 깨지는지는 다음 실전에서야
+    드러난다. 2026-08-25에는 매도 단가가 매입평균가로 기록됐고(8건 중 7건이 소수점까지
+    일치), 2026-08-26에는 앞 종목의 뒤늦은 체결이 다음 종목 매수액에 섞여 대한해운이
+    그날 상한가보다 높은 값으로 남았다. 두 번 다 이틀 뒤에 손으로 대조해서 찾았다.
+
+    thdt_buy_amt / thdt_sll_amt는 증권사가 집계한 값이라 우리 계산이 아니다.
+    산출식이 또 틀려도 이 한 줄 비교에는 걸린다.
+    """
+    buy_amt, sell_amt = _today_traded()
+    row = db.fetchone(
+        """SELECT COALESCE(SUM(CASE WHEN side='buy' THEN amount END), 0) AS b,
+                  COALESCE(SUM(CASE WHEN side='sell' THEN amount END), 0) AS s
+             FROM trades WHERE mode = %s AND ts::date = CURRENT_DATE""", (MODE,))
+    ours_b, ours_s = float(row["b"] or 0), float(row["s"] or 0)
+    ok = abs(ours_b - buy_amt) <= tol and abs(ours_s - sell_amt) <= tol
+    if ok:
+        print(f"[{MODE} 장부 확인] 매수 {ours_b:,.0f}  매도 {ours_s:,.0f} "
+              f"- 증권사 집계와 일치")
+    else:
+        print(f"[{MODE} 장부 불일치] 매수 장부 {ours_b:,.0f} vs 증권사 {buy_amt:,.0f} "
+              f"({ours_b - buy_amt:+,.0f}) / 매도 장부 {ours_s:,.0f} vs 증권사 "
+              f"{sell_amt:,.0f} ({ours_s - sell_amt:+,.0f})")
+    return ok
+
+
 def reconcile_positions(snapshot: dict, strategy: str,
                         agents_by_code: dict | None = None) -> list[str]:
     """증권사 잔고를 정답으로 삼아 positions를 맞춘다. 어긋났던 종목코드를 돌려준다.
