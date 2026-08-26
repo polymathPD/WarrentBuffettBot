@@ -236,6 +236,10 @@ def _settled_cash() -> float:
 # 체결이 잔고에 반영되기까지 기다리는 시간. KIS 모의는 15초로는 한참 모자랐다.
 _WAIT_S = 45.0
 
+# 산출한 체결가가 현재가에서 이만큼 벗어나면 믿지 않는다. 국내 주식은 하루
+# 등락이 ±30%로 제한되므로 그보다 먼 값은 체결가일 수 없다.
+_PX_SANITY = 0.3
+
 
 def _pending_sell_qty(code: str) -> float | None:
     """아직 체결되지 않은 매도 주문에 묶인 수량. 조회에 실패하면 None.
@@ -487,6 +491,7 @@ def adjust(code: str, name: str, target_qty: int, strategy: str,
     """
     guard()
     cur = snapshot["holdings"].get(code, {}).get("qty", 0.0)
+    avg_before = float(snapshot["holdings"].get(code, {}).get("avg_px") or 0.0)
     if int(target_qty - cur) == 0:
         return
 
@@ -554,21 +559,30 @@ def adjust(code: str, name: str, target_qty: int, strategy: str,
     if filled == 0:
         return
 
-    # 체결 단가는 증권사가 집계한 오늘 누적 대금의 증분에서 구한다.
-    # 예전에는 잔고의 pchs_avg_pric을 썼는데 그건 매입평균가다 - 매도 기록의
-    # 단가가 매도가가 아니라 산 가격이었다(2026-08-25 확인, 8건 중 7건이
-    # 소수점까지 일치). 실현손익이 통째로 0으로 보이던 이유다.
-    traded_after = _today_traded()
-    delta = (traded_after[0] - traded_before[0] if filled > 0
-             else traded_after[1] - traded_before[1])
-    if delta > 0:
-        px = delta / abs(filled)
+    # 매수 대금은 이 종목의 매입금액(수량 x 매입평균) 차분에서 구한다. 계좌 전체
+    # 누적(thdt_buy_amt)의 증분은 종목 귀속이 보장되지 않는다 - 2026-08-26에
+    # 앞선 종목(일진홀딩스)의 뒤늦은 체결이 증분에 섞여, 대한해운 매수가 그날
+    # 상한가 2,795보다 높은 3,370으로 기록되고 일진홀딩스 4주는 통째로 누락됐다.
+    # 매도는 매입평균이 바뀌지 않아 이 차분이 0이므로 계좌 전체 매도 증분을 쓴다.
+    # 양쪽 다 pchs_avg_pric을 쓰던 시절에는 매도 기록의 단가가 산 가격이었다
+    # (2026-08-25 확인, 8건 중 7건이 소수점까지 일치).
+    if filled > 0:
+        avg_after = float(_field(after, "pchs_avg_pric", code)) if after else 0.0
+        delta = cur_qty * avg_after - cur * avg_before
     else:
+        delta = _today_traded()[1] - traded_before[1]
+
+    ref_px = float(snapshot["holdings"].get(code, {}).get("cur_px") or 0.0)
+    px = delta / abs(filled) if delta > 0 else 0.0
+    if px > 0 and ref_px > 0 and abs(px / ref_px - 1) > _PX_SANITY:
+        print(f"[{MODE} 단가 이상] {code} {name} - 산출가 {px:,.0f}이 현재가 "
+              f"{ref_px:,.0f}에서 {_PX_SANITY:.0%} 넘게 벗어나 버린다")
+        px = 0.0
+    if px <= 0:
         # 체결이 폴링 뒤에 잡혔거나 집계가 늦은 경우. 근사치임을 남긴다.
-        px = (snapshot["holdings"].get(code, {}).get("cur_px")
-              or (float(_field(after, "pchs_avg_pric", code)) if after else 0.0))
-        print(f"[{MODE} 단가 추정] {code} {name} - 오늘 누적 대금이 안 움직여 "
-              f"{px:,.0f}원으로 기록한다 (실제 체결가 아님)")
+        px = ref_px or (float(_field(after, "pchs_avg_pric", code)) if after else 0.0)
+        print(f"[{MODE} 단가 추정] {code} {name} - {px:,.0f}원으로 기록한다 "
+              f"(실제 체결가 아님)")
     new_qty = cur_qty
     delta = int(target_qty - cur)
 

@@ -47,8 +47,9 @@ def broker(mocker, mock_db):
     return state
 
 
-def _snap(qty=0.0):
-    h = {"000000": {"name": "테스트", "qty": qty, "cur_px": 10_000.0}} if qty else {}
+def _snap(qty=0.0, avg=10_000.0):
+    h = {"000000": {"name": "테스트", "qty": qty, "cur_px": 10_000.0,
+                    "avg_px": avg}} if qty else {}
     return {"holdings": h, "cash": 0.0, "positions_value": 0.0,
             "total_equity": 10_000_000.0, "settled_cash": 10_000_000.0}
 
@@ -199,8 +200,10 @@ def test_fill_price_comes_from_the_brokers_daily_total(broker, mocker):
     """
     broker["qty"] = 100.0
     mocker.patch.object(live, "_pending_sell_qty", return_value=0.0)
-    #                  주문 전 (매수 0, 매도 0) → 주문 후 (매수 0, 매도 1,530,000)
-    mocker.patch.object(live, "_today_traded", side_effect=[(0.0, 0.0), (0.0, 1_530_000.0)])
+    # 주문 전 (매수 0, 매도 0) → 주문 후 (매수 0, 매도 1,030,000). 현재가 10,000
+    # 대비 +3%다 - 국내 주식은 하루 ±30%가 한도라 그 밖의 값은 체결가일 수 없고
+    # _PX_SANITY에 걸린다.
+    mocker.patch.object(live, "_today_traded", side_effect=[(0.0, 0.0), (0.0, 1_030_000.0)])
 
     def _after(code, expected):
         broker["qty"] = 0.0
@@ -212,7 +215,7 @@ def test_fill_price_comes_from_the_brokers_daily_total(broker, mocker):
     ins = [c for c in broker["db"].execute.call_args_list if "INSERT INTO trades" in c[0][0]]
     assert ins, "매매 기록이 없다"
     price = ins[0][0][1][4]          # (mode, code, name, qty, price, amount, strategy)
-    assert price == 15_300.0, f"매입평균가 11,111이 아니라 매도가 15,300이어야 한다: {price}"
+    assert price == 10_300.0, f"매입평균가 11,111이 아니라 매도가 10,300이어야 한다: {price}"
 
 
 def test_reconcile_recovers_a_position_that_was_never_recorded(mocker, mock_db):
@@ -262,3 +265,77 @@ def test_buys_are_never_re_ordered(broker, mocker, capsys):
 
     assert broker["orders"] == [("buy", 143)], broker["orders"]
     assert "매수 중단" in capsys.readouterr().out
+
+
+def test_buy_price_ignores_another_stocks_fill(broker, mocker):
+    """매수 단가가 계좌 전체 누적이 아니라 이 종목의 매입금액에서 나와야 한다.
+
+    2026-08-26에 일진홀딩스 4주가 _wait_for_fill 타임아웃 뒤에 체결되면서, 그
+    대금 27,143원이 다음 종목인 대한해운의 thdt_buy_amt 증분에 섞였다. 대한해운
+    21주가 그날 상한가 2,795보다 높은 3,370원에 기록되고 일진홀딩스는 아예
+    누락됐다. 종목별 매입금액 차분은 이런 끼어듦에 오염되지 않는다.
+    """
+    mocker.patch.object(live, "_today_traded",
+                        side_effect=[(0.0, 0.0), (3_000_000.0, 0.0)])
+
+    def _after(code, expected):
+        broker["qty"] = 100.0
+        return {"pdno": code, "hldg_qty": "100", "pchs_avg_pric": "10200"}, 100.0
+    mocker.patch.object(live, "_wait_for_fill", side_effect=_after)
+
+    live.adjust("000000", "테스트", 100, "quality_v1", _snap())
+
+    ins = [c for c in broker["db"].execute.call_args_list
+           if "INSERT INTO trades" in c[0][0]]
+    assert ins, "매매 기록이 없다"
+    price = ins[0][0][1][4]
+    assert price == 10_200.0, (
+        f"계좌 누적이 섞인 30,000이 아니라 매입평균 10,200이어야 한다: {price}")
+
+
+def test_topping_up_prices_only_the_new_shares(broker, mocker):
+    """이미 들고 있는 종목을 더 살 때, 기존 보유분의 매입금액을 빼야 한다."""
+    broker["qty"] = 100.0
+    mocker.patch.object(live, "_today_traded", return_value=(0.0, 0.0))
+
+    def _after(code, expected):
+        broker["qty"] = 120.0
+        return {"pdno": code, "hldg_qty": "120", "pchs_avg_pric": "10100"}, 120.0
+    mocker.patch.object(live, "_wait_for_fill", side_effect=_after)
+
+    # 120주 x 10,100 - 100주 x 10,000 = 212,000, 새로 산 20주로 나누면 10,600
+    live.adjust("000000", "테스트", 120, "quality_v1", _snap(100.0, avg=10_000.0))
+
+    ins = [c for c in broker["db"].execute.call_args_list
+           if "INSERT INTO trades" in c[0][0]]
+    assert ins, "매매 기록이 없다"
+    qty, price = ins[0][0][1][3], ins[0][0][1][4]
+    assert qty == 20.0, f"새로 산 20주만 기록해야 한다: {qty}"
+    assert price == 10_600.0, (
+        f"기존 보유분을 안 뺀 60,600이 아니라 10,600이어야 한다: {price}")
+
+
+def test_impossible_price_is_rejected(broker, mocker, capsys):
+    """산출가가 하루 등락 한도 밖이면 기록하지 않고 현재가로 대체한다.
+
+    국내 주식은 ±30%가 한도라 현재가에서 그보다 먼 값은 체결가일 수 없다.
+    매도는 매입평균이 안 바뀌어 계좌 전체 증분에 기댈 수밖에 없으므로, 이
+    검사가 잘못된 귀속을 잡는 마지막 그물이다.
+    """
+    broker["qty"] = 100.0
+    mocker.patch.object(live, "_pending_sell_qty", return_value=0.0)
+    mocker.patch.object(live, "_today_traded",
+                        side_effect=[(0.0, 0.0), (0.0, 3_370_000.0)])
+
+    def _after(code, expected):
+        broker["qty"] = 0.0
+        return {"pdno": code, "hldg_qty": "0", "pchs_avg_pric": "11111"}, 0.0
+    mocker.patch.object(live, "_wait_for_fill", side_effect=_after)
+
+    live.adjust("000000", "테스트", 0, "quality_v1", _snap(100.0))
+
+    assert "단가 이상" in capsys.readouterr().out
+    ins = [c for c in broker["db"].execute.call_args_list
+           if "INSERT INTO trades" in c[0][0]]
+    price = ins[0][0][1][4]
+    assert price == 10_000.0, f"33,700이 아니라 현재가 10,000으로 대체해야 한다: {price}"
