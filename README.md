@@ -212,7 +212,7 @@ flowchart TD
 ## 단위 테스트
 
 DB / Claude API / KIS API / DART API를 전부 mock으로 격리한 순수 단위 테스트입니다
-(실제 네트워크·DB 연결 없이 수 초 내 완료). **29개 파일 299건.**
+(실제 네트워크·DB 연결 없이 수 초 내 완료). **30개 파일 302건.**
 
 ```bash
 pip install -r requirements-dev.txt
@@ -225,7 +225,7 @@ pytest tests/ -v
 | 에이전트 | `test_agents_base.py`, `test_gate.py`, `test_value_trap.py`, `test_market_state.py`, `test_fundamental_agents.py` |
 | 수집 | `test_universe.py`, `test_investor_flow.py`, `test_credit_balance.py`, `test_disclosure.py`, `test_financials.py`, `test_shares.py`, `test_dart_corp_code.py` |
 | 계산 | `test_signals.py`, `test_valuation.py`, `test_cost_model.py` |
-| 실행·기록 | `test_paper.py`, `test_scheduler.py`, `test_open_job.py`, `test_live_fill.py`, `test_connection.py`, `test_engine.py` |
+| 실행·기록 | `test_paper.py`, `test_scheduler.py`, `test_open_job.py`, `test_live_fill.py`, `test_connection.py`, `test_engine.py`, `test_equity_snapshot.py` |
 | 정적 검사 | `test_no_undefined_names.py` — pyflakes로 트리 전체의 미정의 이름을 잡는다 |
 | 대시보드 | `test_backtest_view.py`, `test_settings_view.py`, `test_dashboard_alerts.py`, `test_equity_curve.py` |
 
@@ -291,6 +291,12 @@ DART_API_KEY=...     # opendart.fss.or.kr 무료 발급
 > 2026-08-24라, 원금 대비 +0.28%인 계좌가 누적 -1.94%로 찍혔습니다. 증권사도 이 값을 주지
 > 않습니다: KIS 잔고의 `asst_icdc_amt`·`asst_icdc_erng_rt`는 전일 대비 증감입니다. 새 모드로
 > 계좌를 열면 첫 거래 전에 이 키를 넣으세요. 없으면 전역 `CAPITAL`로 떨어집니다.
+
+> **장중 스냅샷은 평가금액을 만들지 않습니다.** `open_job`은 09:05·13:10에도 자산을 찍는데
+> 그 시각에는 오늘 일봉이 없습니다. 종목별 폴백(거래정지 대비 직전 종가)이 시장 전체 미수집에도
+> 걸리면 전일 스냅샷이 오늘 것으로 복제되고, 16:10 배치가 덮어쓰기 전에 죽으면 그대로 굳습니다
+> — 2026-08-25 시뮬레이션 스냅샷이 08-24와 평가금액까지 같았습니다. 그날 일봉이 없으면
+> `live` 외 모드는 기록하지 않습니다.
 
 > 전략을 갈아탈 때는 이전 전략의 최종 자산을 새 전략의 `CAPITAL_<전략명>`으로 넘기고
 > 이전 전략을 `RETIRED_STRATEGIES`에 넣으세요. 그러지 않으면 새 전략이 전역 `CAPITAL`을

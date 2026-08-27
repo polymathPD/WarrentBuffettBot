@@ -103,6 +103,18 @@ def snapshot(target_date: str = None) -> int:
     d = target_date or date.today().strftime("%Y-%m-%d")
     _, retired = _overrides()
 
+    # 그날 일봉이 아직 없으면 평가금액을 만들 수 없다. 아래 LATERAL은 종목별로
+    # 직전 거래일 종가로 물러서는데, 그건 거래정지처럼 그 종목만 봉이 없을 때를
+    # 위한 것이다. 시장 전체가 아직 수집되지 않은 상태에서 물러서면 전일 스냅샷이
+    # 오늘 것으로 복제된다 — open_job은 09:05·13:10 장중에 이 함수를 부르고,
+    # 그 시각에는 오늘 봉이 없다. 16:10 배치가 덮어쓰기 전에 죽으면 그 복제본이
+    # 그대로 굳는다. 2026-08-25 paper 스냅샷이 08-24와 총자산·평가금액까지
+    # 똑같았던 것이 그 경우다(실제 08-25 종가로는 9,929,300이었다).
+    #
+    # live는 KIS가 실시간으로 계산한 순자산이라 일봉과 무관하게 기록한다.
+    priced = db.fetchone(
+        "SELECT 1 AS ok FROM stock_daily WHERE d = %s::date LIMIT 1", (d,))
+
     cash = cash_by_key(d)
     values = db.fetchall(
         """SELECT p.mode, p.strategy, SUM(p.qty * sd.c) AS v
@@ -120,13 +132,16 @@ def snapshot(target_date: str = None) -> int:
     held = {(r["mode"], r["strategy"]): float(r["v"] or 0) for r in values}
 
     rows = []
-    for key in cash.keys() | held.keys():
-        mode, strategy = key
-        if strategy in retired or mode == "live":
-            continue
-        c = cash.get(key, capital_for(strategy))
-        v = held.get(key, 0.0)
-        rows.append((d, mode, strategy, c, v, c + v, None))
+    if not priced:
+        print(f"[자산] {d} 일봉 미수집 - 평가금액을 만들 수 없어 live 외 모드를 건너뛴다")
+    else:
+        for key in cash.keys() | held.keys():
+            mode, strategy = key
+            if strategy in retired or mode == "live":
+                continue
+            c = cash.get(key, capital_for(strategy))
+            v = held.get(key, 0.0)
+            rows.append((d, mode, strategy, c, v, c + v, None))
 
     # live 모드는 KIS 스냅샷으로 별도 처리. 조회 실패 시 그 전략만 건너뛴다.
     #

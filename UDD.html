@@ -268,7 +268,7 @@
 ├── run_backtest_local.py   # 로컬 백테스트 + 검증
 ├── decile_analysis.py      # 분위수 분석
 ├── migrate_from_ref.py     # 외부 참조 DB 이관 (1회성)
-└── tests/                  # pytest 29개 파일 299건 (DB·API 전부 mock)</code></pre>
+└── tests/                  # pytest 30개 파일 302건 (DB·API 전부 mock)</code></pre>
   </section>
 
   <hr class="divider" />
@@ -1002,6 +1002,9 @@ score ≥ 8.5        → "sell"    (청산 신호)</code></pre>
 총자산   = 현금 + 평가금액</code></pre>
     <p><code>(d, mode, strategy)</code> 단위로 <code>equity_daily</code>에 기록합니다.
     <code>RETIRED_STRATEGIES</code>에 든 전략은 자금을 넘겼으므로 집계에서 뺍니다(과거 기록은 남습니다).
+    기준일 일봉이 아직 수집되지 않았으면 <code>live</code> 외 모드는 기록하지 않습니다.
+    종목별 폴백(직전 거래일 종가)은 거래정지 대비용이라, 시장 전체가 미수집인 장중에 그대로 두면
+    전일 스냅샷이 오늘 행으로 복제됩니다. <code>live</code>는 KIS 순자산이라 일봉과 무관합니다.
     <code>positions</code>는 현재 상태만 갖고 있어 과거 날짜를 소급 기록할 수는 없습니다.</p>
     <div class="callout callout-warn">
       <strong>live 모드는 우리 장부로 계산하지 않습니다</strong>
@@ -1192,7 +1195,7 @@ net_return     = sell_price(exit) / buy_price(entry) - 1</code></pre>
 
     <p>DB(<code>db.connection</code>) · Claude API · KIS API · DART API를 전부 mock으로 격리한 순수
     단위 테스트입니다. 실제 네트워크·DB 연결 없이 수 초 내 완료되므로 백필이나 스케줄러가 도는
-    중에도 안전하게 실행할 수 있습니다. <strong>29개 파일 299건.</strong></p>
+    중에도 안전하게 실행할 수 있습니다. <strong>30개 파일 302건.</strong></p>
 
     <pre><code>pip install -r requirements-dev.txt
 pytest tests/ -v</code></pre>
@@ -1400,7 +1403,7 @@ uvicorn dashboard.app:app --reload        # 대시보드 개발 서버</code></p
       <tr><td>백테스터 · 결과 저장</td><td>backtester/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>연구 스크립트</td><td>research/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>웹 대시보드</td><td>dashboard/app.py</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>단위 테스트</td><td>tests/ (299건)</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>단위 테스트</td><td>tests/ (302건)</td><td><span class="status-prod">운영 중</span></td></tr>
     </table>
   </section>
 
