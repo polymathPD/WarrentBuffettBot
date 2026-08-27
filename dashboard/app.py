@@ -10,7 +10,7 @@ import json
 
 import db.connection as db
 import config
-from recorder.equity import cash_by_key
+from recorder.equity import cash_by_key, initial_capital
 from agents.base import ERROR_DECISION, ERROR_SEP
 
 app = FastAPI()
@@ -135,13 +135,18 @@ def _line_chart_data(rows, width=720, height=260, pad_x=10, pad_top=18,
     }
 
 
-def _equity_chart_data(rows):
-    """equity_daily 행(날짜 오름차순) → 자산곡선. 막대는 전일 대비 일별 수익률."""
+def _equity_chart_data(rows, base):
+    """equity_daily 행(날짜 오름차순) → 자산곡선. 막대는 전일 대비 일별 수익률.
+
+    누적 수익률의 분모(base)는 계좌에 처음 넣은 원금이다. 첫 스냅샷의 총자산을
+    쓰면 스냅샷을 언제부터 찍었느냐가 수익률을 바꾼다 — live의 첫 스냅샷은 미수가
+    난 2026-08-24라, 그 값을 분모로 쓴 화면은 원금 대비 +0.28%인 계좌를 누적
+    -1.94%로 보여 줬다.
+    """
     if not rows:
         return None
 
     values = [float(r["total_equity"]) for r in rows]
-    base = values[0]
     day_rets = [None] + [values[i] / values[i - 1] - 1 for i in range(1, len(values))]
 
     points = []
@@ -292,7 +297,7 @@ def index(request: Request, mode: str = "paper"):
         FROM equity_daily WHERE mode = %s
         GROUP BY d ORDER BY d ASC
     """, (mode,))
-    equity_chart = _equity_chart_data(equity_rows)
+    equity_chart = _equity_chart_data(equity_rows, initial_capital(mode))
 
     # live 모드의 현금은 우리 장부(trades 합)로 계산하면 재실행으로 매수가 이중
     # 기록될 때 크게 왜곡된다. 브로커가 관리하는 값을 그대로 쓴다 — 스냅샷 시점의

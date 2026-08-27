@@ -212,7 +212,7 @@ flowchart TD
 ## 단위 테스트
 
 DB / Claude API / KIS API / DART API를 전부 mock으로 격리한 순수 단위 테스트입니다
-(실제 네트워크·DB 연결 없이 수 초 내 완료). **28개 파일 284건.**
+(실제 네트워크·DB 연결 없이 수 초 내 완료). **29개 파일 299건.**
 
 ```bash
 pip install -r requirements-dev.txt
@@ -227,7 +227,7 @@ pytest tests/ -v
 | 계산 | `test_signals.py`, `test_valuation.py`, `test_cost_model.py` |
 | 실행·기록 | `test_paper.py`, `test_scheduler.py`, `test_open_job.py`, `test_live_fill.py`, `test_connection.py`, `test_engine.py` |
 | 정적 검사 | `test_no_undefined_names.py` — pyflakes로 트리 전체의 미정의 이름을 잡는다 |
-| 대시보드 | `test_backtest_view.py`, `test_settings_view.py`, `test_dashboard_alerts.py` |
+| 대시보드 | `test_backtest_view.py`, `test_settings_view.py`, `test_dashboard_alerts.py`, `test_equity_curve.py` |
 
 ---
 
@@ -283,7 +283,14 @@ DART_API_KEY=...     # opendart.fss.or.kr 무료 발급
 런타임 파라미터(`SLOTS`, `CAPITAL`, `HEAT_AVOID`, `HEAT_SELL`, `STOP_PCT`, `MAX_HOLD_DAYS`)는
 `settings` 테이블에서 60초 캐시로 읽습니다. 대시보드에서 바꾸면 즉시 반영됩니다.
 `settings`에는 폼에 없는 키도 둡니다 — `CAPITAL_<전략명>`(전략별 자본금),
-`RETIRED_STRATEGIES`(자산 집계에서 제외할 전략, 쉼표 구분), `LIVE_ENABLED`(실계좌 주문 허용).
+`INIT_CAPITAL_<모드명>`(계좌에 처음 넣은 원금), `RETIRED_STRATEGIES`(자산 집계에서 제외할 전략,
+쉼표 구분), `LIVE_ENABLED`(실계좌 주문 허용).
+
+> **누적 수익률의 분모는 계좌에 처음 넣은 원금(`INIT_CAPITAL_<모드명>`)입니다.** 첫 스냅샷의
+> 총자산을 쓰면 스냅샷을 언제부터 찍었느냐가 수익률을 바꿉니다 — live의 첫 스냅샷은 미수가 난
+> 2026-08-24라, 원금 대비 +0.28%인 계좌가 누적 -1.94%로 찍혔습니다. 증권사도 이 값을 주지
+> 않습니다: KIS 잔고의 `asst_icdc_amt`·`asst_icdc_erng_rt`는 전일 대비 증감입니다. 새 모드로
+> 계좌를 열면 첫 거래 전에 이 키를 넣으세요. 없으면 전역 `CAPITAL`로 떨어집니다.
 
 > 전략을 갈아탈 때는 이전 전략의 최종 자산을 새 전략의 `CAPITAL_<전략명>`으로 넘기고
 > 이전 전략을 `RETIRED_STRATEGIES`에 넣으세요. 그러지 않으면 새 전략이 전역 `CAPITAL`을

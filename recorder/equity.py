@@ -49,6 +49,30 @@ def capital_for(strategy: str) -> float:
     return caps.get(strategy, float(config.get_setting("CAPITAL")))
 
 
+def initial_capital(mode: str) -> float:
+    """그 모드의 계좌에 처음 넣은 원금. 누적 수익률의 분모다.
+
+    첫 스냅샷의 총자산으로 대신할 수 없다. 스냅샷을 언제부터 찍었느냐에 따라 값이
+    달라지기 때문이다 — live의 첫 스냅샷은 2026-08-24인데 그날은 미수 -16,376,832원에
+    2.6배 레버리지가 걸린 상태였다. 그 값을 분모로 쓰면 원금 대비 +0.28%인 계좌가
+    누적 -1.94%로 찍힌다.
+
+    증권사에 물어볼 수도 없다. KIS 잔고의 asst_icdc_amt / asst_icdc_erng_rt는
+    전일 대비 증감이지 개설 이후 증감이 아니다 (bfdy_tot_asst_evlu_amt 기준).
+
+    CAPITAL_<전략명>과 다른 값이다. 그쪽은 전략이 이어받은 자본이라 갈아탈 때마다
+    바뀌지만, 이 값은 계좌에 처음 넣은 돈이라 전략이 바뀌어도 그대로다.
+    """
+    row = db.fetchone("SELECT value FROM settings WHERE key = %s",
+                      (f"INIT_CAPITAL_{mode}",))
+    if row and row["value"]:
+        try:
+            return float(row["value"])
+        except (TypeError, ValueError):
+            pass
+    return float(config.get_setting("CAPITAL"))
+
+
 def cash_by_key(target_date: str = None) -> dict:
     """(mode, strategy) -> 현금. 기준일까지의 매수금액을 빼고 매도금액을 더한다.
     은퇴한 전략은 자금을 넘겼으므로 제외한다."""

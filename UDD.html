@@ -268,7 +268,7 @@
 ├── run_backtest_local.py   # 로컬 백테스트 + 검증
 ├── decile_analysis.py      # 분위수 분석
 ├── migrate_from_ref.py     # 외부 참조 DB 이관 (1회성)
-└── tests/                  # pytest 28개 파일 284건 (DB·API 전부 mock)</code></pre>
+└── tests/                  # pytest 29개 파일 299건 (DB·API 전부 mock)</code></pre>
   </section>
 
   <hr class="divider" />
@@ -467,6 +467,7 @@
     <table>
       <tr><th>키</th><th>읽는 곳</th><th>용도</th></tr>
       <tr><td><code>CAPITAL_&lt;전략명&gt;</code></td><td><code>recorder/equity.py</code></td><td>전략별 자본금. 전략을 갈아탈 때 이전 전략의 최종 자산을 넘긴다</td></tr>
+      <tr><td><code>INIT_CAPITAL_&lt;모드명&gt;</code></td><td><code>recorder/equity.py</code></td><td>그 계좌에 처음 넣은 원금. 누적 수익률의 분모다. 전략이 바뀌어도 그대로다</td></tr>
       <tr><td><code>RETIRED_STRATEGIES</code></td><td><code>recorder/equity.py</code></td><td>자산 집계에서 제외할 전략(쉼표 구분). 과거 기록은 남는다</td></tr>
       <tr><td><code>LIVE_ENABLED</code></td><td><code>executor/live.guard()</code></td><td>실전 서버 주문 허용 스위치</td></tr>
     </table>
@@ -1131,6 +1132,10 @@ net_return     = sell_price(exit) / buy_price(entry) - 1</code></pre>
       <li>모드 탭: <strong>시뮬레이션</strong>(주문 없음) / <strong>계좌</strong>(모의투자) / <strong>계좌</strong>(실전계좌)</li>
       <li>통계 카드: 보유 종목 수, 총 평가손익, 오늘 거래 수</li>
       <li>자산 곡선(<code>equity_daily</code> 합산) · 자산 배분 누적 막대(초과분은 '기타'로 접음)</li>
+      <li>누적 수익률의 분모는 <code>INIT_CAPITAL_&lt;모드명&gt;</code>(계좌에 처음 넣은 원금)입니다.
+      첫 스냅샷의 총자산을 분모로 쓰면 스냅샷을 언제부터 찍었느냐가 수익률을 바꾸고, 전략을 갈아탈 때마다
+      기준이 리셋됩니다. KIS도 이 값을 주지 않습니다 — <code>asst_icdc_amt</code>·
+      <code>asst_icdc_erng_rt</code>는 전일 대비 증감입니다.</li>
       <li>포지션 테이블: 진입가·현재가·수익률·평가손익·손절가 + <strong>진입 시 에이전트 의견</strong></li>
       <li>오늘의 거래 테이블</li>
     </ul>
@@ -1187,7 +1192,7 @@ net_return     = sell_price(exit) / buy_price(entry) - 1</code></pre>
 
     <p>DB(<code>db.connection</code>) · Claude API · KIS API · DART API를 전부 mock으로 격리한 순수
     단위 테스트입니다. 실제 네트워크·DB 연결 없이 수 초 내 완료되므로 백필이나 스케줄러가 도는
-    중에도 안전하게 실행할 수 있습니다. <strong>28개 파일 284건.</strong></p>
+    중에도 안전하게 실행할 수 있습니다. <strong>29개 파일 299건.</strong></p>
 
     <pre><code>pip install -r requirements-dev.txt
 pytest tests/ -v</code></pre>
@@ -1395,7 +1400,7 @@ uvicorn dashboard.app:app --reload        # 대시보드 개발 서버</code></p
       <tr><td>백테스터 · 결과 저장</td><td>backtester/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>연구 스크립트</td><td>research/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>웹 대시보드</td><td>dashboard/app.py</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>단위 테스트</td><td>tests/ (284건)</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>단위 테스트</td><td>tests/ (299건)</td><td><span class="status-prod">운영 중</span></td></tr>
     </table>
   </section>
 
