@@ -14,11 +14,19 @@
     <div class="stat-value">{{ positions | length }}종목</div>
   </div>
   <div class="stat-card">
-    <div class="stat-label">총 평가손익</div>
+    <div class="stat-label">평가손익 (보유 중)</div>
     <div class="stat-value {% if total_unrealized >= 0 %}text-profit{% else %}text-loss{% endif %}">
       {% if total_unrealized >= 0 %}+{% endif %}{{ "{:,.0f}".format(total_unrealized) }}원
     </div>
   </div>
+  {% if total_realized is not none %}
+  <div class="stat-card">
+    <div class="stat-label">실현손익 (누적)</div>
+    <div class="stat-value {% if total_realized >= 0 %}text-profit{% else %}text-loss{% endif %}">
+      {% if total_realized >= 0 %}+{% endif %}{{ "{:,.0f}".format(total_realized) }}원
+    </div>
+  </div>
+  {% endif %}
   <div class="stat-card">
     <div class="stat-label">오늘 거래</div>
     <div class="stat-value">{{ today_trades | length }}건</div>

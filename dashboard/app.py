@@ -135,6 +135,23 @@ def _line_chart_data(rows, width=720, height=260, pad_x=10, pad_top=18,
     }
 
 
+def _realized_pl(total_equity, capital, unrealized):
+    """이미 확정된 손익. 거래 장부를 합치지 않고 잔고에서 역산한다.
+
+    장부로는 못 만든다. live의 trades에는 2026-08-24 매수와 그것을 정리한 매도가
+    통째로 빠져 있고(주문 도중 예외로 죽었다), KIS 모의는 과거 체결을 돌려주지
+    않는다 — 일별주문체결조회가 빈 응답이고 실현손익은 없는 서비스 코드다
+    (executor/live.py의 _today_traded 참고).
+
+    역산은 그 결손과 무관하게 맞는다. 원금에서 지금 총자산까지의 거리가 그 계좌가
+    번 전부이고, 그중 아직 안 판 몫이 평가손익이니, 나머지가 확정된 몫이다.
+    화면의 네 숫자는 이 항등식으로 닫힌다:
+
+        원금 + 평가손익 + 실현손익 = 총자산
+    """
+    return total_equity - capital - unrealized
+
+
 def _equity_chart_data(rows, base):
     """equity_daily 행(날짜 오름차순) → 자산곡선. 막대는 전일 대비 일별 수익률.
 
@@ -299,6 +316,11 @@ def index(request: Request, mode: str = "paper"):
     """, (mode,))
     equity_chart = _equity_chart_data(equity_rows, initial_capital(mode))
 
+    total_realized = (
+        _realized_pl(equity_chart["total_equity"], initial_capital(mode),
+                     total_unrealized)
+        if equity_chart else None)
+
     # live 모드의 현금은 우리 장부(trades 합)로 계산하면 재실행으로 매수가 이중
     # 기록될 때 크게 왜곡된다. 브로커가 관리하는 값을 그대로 쓴다 — 스냅샷 시점의
     # KIS 예수금이 equity_daily.cash에 저장돼 있으므로 그 값을 읽어 온다.
@@ -317,6 +339,7 @@ def index(request: Request, mode: str = "paper"):
         "positions": positions,
         "today_trades": today_trades,
         "total_unrealized": total_unrealized,
+        "total_realized": total_realized,
         "equity_chart": equity_chart,
         "allocation": allocation,
         "mode": mode,

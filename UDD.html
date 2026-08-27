@@ -268,7 +268,7 @@
 ├── run_backtest_local.py   # 로컬 백테스트 + 검증
 ├── decile_analysis.py      # 분위수 분석
 ├── migrate_from_ref.py     # 외부 참조 DB 이관 (1회성)
-└── tests/                  # pytest 30개 파일 302건 (DB·API 전부 mock)</code></pre>
+└── tests/                  # pytest 30개 파일 304건 (DB·API 전부 mock)</code></pre>
   </section>
 
   <hr class="divider" />
@@ -1134,6 +1134,10 @@ net_return     = sell_price(exit) / buy_price(entry) - 1</code></pre>
     <ul style="margin: 6px 0 12px 20px; line-height: 2;">
       <li>모드 탭: <strong>시뮬레이션</strong>(주문 없음) / <strong>계좌</strong>(모의투자) / <strong>계좌</strong>(실전계좌)</li>
       <li>통계 카드: 보유 종목 수, 총 평가손익, 오늘 거래 수</li>
+      <li>평가손익(보유 중 · 현재 시점)과 실현손익(누적)을 따로 적습니다. 실현손익은 거래 장부를
+      합치지 않고 <code>총자산 - 원금 - 평가손익</code>으로 역산합니다 — KIS 모의는 과거 체결을
+      돌려주지 않으므로(일별주문체결조회 빈 응답, 실현손익 미지원) 잔고가 유일한 근거입니다.
+      화면은 <code>원금 + 평가손익 + 실현손익 = 총자산</code>으로 닫힙니다.</li>
       <li>자산 곡선(<code>equity_daily</code> 합산) · 자산 배분 누적 막대(초과분은 '기타'로 접음)</li>
       <li>누적 수익률의 분모는 <code>INIT_CAPITAL_&lt;모드명&gt;</code>(계좌에 처음 넣은 원금)입니다.
       첫 스냅샷의 총자산을 분모로 쓰면 스냅샷을 언제부터 찍었느냐가 수익률을 바꾸고, 전략을 갈아탈 때마다
@@ -1195,7 +1199,7 @@ net_return     = sell_price(exit) / buy_price(entry) - 1</code></pre>
 
     <p>DB(<code>db.connection</code>) · Claude API · KIS API · DART API를 전부 mock으로 격리한 순수
     단위 테스트입니다. 실제 네트워크·DB 연결 없이 수 초 내 완료되므로 백필이나 스케줄러가 도는
-    중에도 안전하게 실행할 수 있습니다. <strong>30개 파일 302건.</strong></p>
+    중에도 안전하게 실행할 수 있습니다. <strong>30개 파일 304건.</strong></p>
 
     <pre><code>pip install -r requirements-dev.txt
 pytest tests/ -v</code></pre>
@@ -1403,7 +1407,7 @@ uvicorn dashboard.app:app --reload        # 대시보드 개발 서버</code></p
       <tr><td>백테스터 · 결과 저장</td><td>backtester/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>연구 스크립트</td><td>research/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>웹 대시보드</td><td>dashboard/app.py</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>단위 테스트</td><td>tests/ (302건)</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>단위 테스트</td><td>tests/ (304건)</td><td><span class="status-prod">운영 중</span></td></tr>
     </table>
   </section>
 

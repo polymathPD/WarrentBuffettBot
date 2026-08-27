@@ -52,3 +52,22 @@ def test_initial_capital_falls_back_to_the_global_capital(mock_db, mock_settings
     """모드별 값을 안 넣었으면 전역 CAPITAL을 쓴다."""
     mock_db.fetchone.return_value = None
     assert initial_capital("paper") == 10_000_000.0
+
+
+def test_the_four_numbers_on_screen_close():
+    """원금 + 평가손익 + 실현손익 = 총자산. 화면이 이 항등식으로 닫혀야 한다."""
+    from dashboard.app import _realized_pl
+
+    capital, total_equity, unrealized = 10_000_000, 10_027_898, 188_392
+    realized = _realized_pl(total_equity, capital, unrealized)
+
+    assert realized == -160_494
+    assert capital + unrealized + realized == total_equity
+
+
+def test_realized_is_not_read_from_the_trade_ledger():
+    """live 장부에는 2026-08-24 매수와 그 정리 매도가 빠져 있다. 장부를 합치면
+    -161,537이 나오지만 잔고 역산은 -160,494로 맞는다."""
+    from dashboard.app import _realized_pl
+
+    assert _realized_pl(10_027_898, 10_000_000, 188_392) == -160_494
