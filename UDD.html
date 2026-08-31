@@ -195,7 +195,8 @@
   <section id="structure">
     <h2>2. 디렉터리 구조</h2>
     <pre><code>WarrenBuffett/
-├── config.py               # 전역 설정, DB 기반 런타임 파라미터
+├── config.py               # 환경변수 + config.json 로드, DB 기반 런타임 파라미터
+├── config.json             # 운용 파라미터 (비용 모델 · settings 기본값)
 ├── scheduler.py            # APScheduler 엔트리 (10:00 평가 / 10:30·13:10 리밸런싱 / 15:40 정산 / 16:10 수집)
 ├── setup_db.py             # DB 초기화 스크립트
 ├── requirements.txt / requirements-dev.txt / pytest.ini
@@ -461,11 +462,20 @@
 
   <!-- ───── CONFIG ───── -->
   <section id="config">
-    <h2>5. Config 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">config.py</small></h2>
+    <h2>5. Config 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">config.py · config.json</small></h2>
 
-    <h3>하드코딩 상수 / 기본값</h3>
+    <h3>운용 파라미터 (config.json)</h3>
+    <p>코드에는 값이 없습니다. <code>config.py</code>가 임포트 시점에 <code>config.json</code>을 한 번
+    읽어 모듈 속성으로 노출하므로, 워커가 뜨는 시점에 로드됩니다. 값을 바꾸려면 JSON을 고치고
+    스케줄러를 재시작합니다. <code>costs</code>는 백테스트와 실행이 같은 값을 봐야 해서 런타임
+    변경 대상이 아니고, <code>defaults</code> 6개는 <code>settings</code> 테이블로 덮어쓸 수 있습니다.</p>
+    <div class="callout callout-warn">
+      <strong>파일이 없거나 깨지면 그대로 죽입니다</strong>
+      슬리피지나 자본금을 코드 기본값으로 조용히 대신하면 그 값으로 주문이 나가고 백테스트가
+      돌아갑니다. "설정을 못 읽은 것"과 "설정이 그 값인 것"은 구별돼야 합니다.
+    </div>
     <table>
-      <tr><th>상수</th><th>값</th><th>설명</th><th>런타임 변경</th></tr>
+      <tr><th>키</th><th>값</th><th>설명</th><th>런타임 변경</th></tr>
       <tr><td><code>SLIP_BPS</code></td><td>20</td><td>슬리피지 0.20% (편도)</td><td>—</td></tr>
       <tr><td><code>FEE_BPS</code></td><td>1.5</td><td>수수료 0.015%</td><td>—</td></tr>
       <tr><td><code>TAX_BPS</code></td><td>20</td><td>증권거래세 0.20% (매도 시)</td><td>—</td></tr>

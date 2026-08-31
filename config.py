@@ -1,8 +1,33 @@
+"""전역 설정.
+
+비밀값(키·계좌·DB 접속)은 환경변수에서, 운용 파라미터는 config.json에서 읽는다.
+JSON은 이 모듈을 임포트할 때 한 번 읽히므로, 워커가 뜨는 시점에 로드된다.
+파라미터를 바꾸려면 config.json을 고치고 스케줄러를 재시작한다 — 코드는 건드리지
+않는다. defaults 쪽 6개는 settings 테이블로 런타임 변경도 가능하다(get_setting).
+"""
+import json
 import os
 import time
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
+
+PARAMS_PATH = Path(__file__).parent / "config.json"
+
+
+def load_params(path=None) -> dict:
+    """운용 파라미터 JSON을 읽는다.
+
+    없거나 깨졌으면 그대로 죽인다. 슬리피지나 자본금을 코드 기본값으로 조용히
+    대신하면 그 값으로 주문이 나가고 백테스트가 돌아간다 — 설정을 못 읽은 것과
+    설정이 0인 것은 구별돼야 한다.
+    """
+    with open(path or PARAMS_PATH, encoding="utf-8") as f:
+        return json.load(f)
+
+
+_params = load_params()
 
 DB_URL = os.environ.get("DB_URL", "")
 CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
@@ -14,28 +39,21 @@ KIS_MODE = os.environ.get("KIS_MODE", "paper")
 DART_API_KEY = os.environ.get("DART_API_KEY", "")
 KRX_OPEN_API_KEY = os.environ.get("KRX_OPEN_API_KEY", "")
 
-# review : 환경변수가 아닌 아래의 값들은 json에 저장을하고, 스케쥴러 시작 시 이를 load하도록 변경 필요
-# review : 코드엔 하드코드 값이 없어야함
-SLIP_BPS = 20       # 슬리피지 편도 0.20%
-FEE_BPS = 1.5       # 수수료 0.015%
-TAX_BPS = 20        # 거래세 0.20% (매도 시)
+# 비용 모델. 런타임 변경 대상이 아니다 — 백테스트와 실행이 같은 값을 봐야 한다.
+SLIP_BPS = _params["costs"]["SLIP_BPS"]   # 슬리피지 편도
+FEE_BPS = _params["costs"]["FEE_BPS"]     # 수수료
+TAX_BPS = _params["costs"]["TAX_BPS"]     # 거래세 (매도 시)
 
-# 기본값 (DB settings 테이블로 런타임 변경 가능)
-SLOTS = 10
-HEAT_AVOID = 7.0
-HEAT_SELL = 8.5
-MAX_HOLD_DAYS = 20
-STOP_PCT = 0.07
-CAPITAL = 10_000_000   # 전략 하나가 굴리는 자금. 1슬롯 = CAPITAL / SLOTS
+# settings 테이블로 런타임 변경 가능한 값들의 기본값.
+# CAPITAL은 전략 하나가 굴리는 자금이다. 1슬롯 = CAPITAL / SLOTS
+_DEFAULTS = dict(_params["defaults"])
 
-_DEFAULTS = {
-    "SLOTS": SLOTS,
-    "HEAT_AVOID": HEAT_AVOID,
-    "HEAT_SELL": HEAT_SELL,
-    "MAX_HOLD_DAYS": MAX_HOLD_DAYS,
-    "STOP_PCT": STOP_PCT,
-    "CAPITAL": CAPITAL,
-}
+SLOTS = _DEFAULTS["SLOTS"]
+HEAT_AVOID = _DEFAULTS["HEAT_AVOID"]
+HEAT_SELL = _DEFAULTS["HEAT_SELL"]
+MAX_HOLD_DAYS = _DEFAULTS["MAX_HOLD_DAYS"]
+STOP_PCT = _DEFAULTS["STOP_PCT"]
+CAPITAL = _DEFAULTS["CAPITAL"]
 
 _settings_cache: dict = {}
 _cache_ts: float = 0.0

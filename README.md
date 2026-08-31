@@ -311,7 +311,9 @@ python scheduler.py --now    # 수집·기록 (16:10 배치)
 
 ---
 
-## 환경변수 (.env)
+## 설정
+
+비밀값은 `.env`(환경변수)에, 운용 파라미터는 `config.json`에 둡니다. 코드에는 둘 다 없습니다.
 
 ```
 DB_URL=postgresql://...
@@ -325,10 +327,22 @@ KIS_MODE=paper       # paper=DB 시뮬레이션, live=증권사 주문
 DART_API_KEY=...     # opendart.fss.or.kr 무료 발급
 ```
 
-런타임 파라미터(`SLOTS`, `CAPITAL`, `HEAT_AVOID`, `HEAT_SELL`, `STOP_PCT`, `MAX_HOLD_DAYS`)는
-`settings` 테이블에서 60초 캐시로 읽습니다. 대시보드에서 바꾸면 즉시 반영됩니다.
-`settings`에는 폼에 없는 키도 둡니다 — `REBALANCE_EVERY`(`daily` 또는 `monthly`, 기본 `monthly`),
-`CAPITAL_<전략명>`(전략별 자본금),
+```json
+{
+  "costs":    { "SLIP_BPS": 20, "FEE_BPS": 1.5, "TAX_BPS": 20 },
+  "defaults": { "SLOTS": 10, "HEAT_AVOID": 7.0, "HEAT_SELL": 8.5,
+                "MAX_HOLD_DAYS": 20, "STOP_PCT": 0.07, "CAPITAL": 10000000 }
+}
+```
+
+`config.json`은 `config.py`를 임포트할 때 한 번 읽히므로 워커가 뜨는 시점에 로드됩니다.
+바꾸려면 파일을 고치고 스케줄러를 재시작합니다. 파일이 없거나 깨졌으면 그대로 죽습니다 —
+슬리피지나 자본금을 코드 기본값으로 조용히 대신하면 그 값으로 주문이 나갑니다.
+
+`costs`는 런타임 변경 대상이 아닙니다. 백테스트와 실행이 같은 비용 모델을 봐야 합니다.
+`defaults` 6개는 `settings` 테이블에서 60초 캐시로 덮어쓸 수 있고, 대시보드에서 바꾸면
+즉시 반영됩니다. `settings`에는 폼에 없는 키도 둡니다 —
+`REBALANCE_EVERY`(`daily` 또는 `monthly`, 기본 `monthly`), `CAPITAL_<전략명>`(전략별 자본금),
 `INIT_CAPITAL_<모드명>`(계좌에 처음 넣은 원금), `RETIRED_STRATEGIES`(자산 집계에서 제외할 전략,
 쉼표 구분), `LIVE_ENABLED`(실계좌 주문 허용).
 
