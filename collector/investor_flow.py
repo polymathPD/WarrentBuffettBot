@@ -2,6 +2,7 @@
 KIS OpenAPI 종목별 투자자매매동향(일별) 수집 → investor_flow
 (/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily, tr_id=FHPTJ04160001)
 
+review : 더이상 아래와 같은 내용을 주석에 넣어 트레이싱 불필요. 주석양만 늘어남. 이와 같이 이미 작업된것에 대한 혹은 시도했던것들에 대한 주석은 지울것
 과거에는 pykrx로 data.krx.co.kr을 스크래핑했으나, 대량 자동 조회가
 KRX 이용약관(제10조 제2호) 위반으로 탐지되어 IP가 1일간 차단된 바 있음.
 KRX 공식 Open API(openapi.krx.co.kr)는 투자자별 매매동향 자체를 제공하지
