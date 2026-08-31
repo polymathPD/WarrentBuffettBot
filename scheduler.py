@@ -110,11 +110,11 @@ def _store_targets(strategy: str, codes, rebal_d: str) -> None:
                    "updated_at = NOW()", (k, v))
 
 
-# 09:05과 13:10은 add_job을 두 번 부른 것이라 APScheduler가 서로 다른 id를 붙인다.
+# 10:30과 13:10은 add_job을 두 번 부른 것이라 APScheduler가 서로 다른 id를 붙인다.
 # max_instances(기본 1)는 잡 하나당 적용되므로 두 회차 사이에는 아무 배타 제어가 없고,
 # 기본 executor는 스레드 10개짜리 풀이다. 앞 회차가 증권사 응답을 기다리며 물려 있는
 # 동안 다음 회차가 시작되면 같은 계좌에 두 번 주문이 나간다 - 2026-08-26에 잔고 조회
-# 한 번이 재시도를 다 소진하는 데 26분이 걸렸으니 09:05이 13:10까지 이어질 수 있다.
+# 한 번이 재시도를 다 소진하는 데 26분이 걸렸으니 10:30이 13:10까지 이어질 수 있다.
 _OPEN_JOB_LOCK = 8260905
 
 
@@ -134,6 +134,19 @@ def _release_open_lock() -> None:
     db.execute("SELECT pg_advisory_unlock(%s)", (_OPEN_JOB_LOCK,))
 
 
+def valuation_job():
+    """장중 평가손익만 다시 찍는다. 매매는 없다.
+
+    16:10 전까지는 직전 거래일 종가가 그대로 남는다. 월요일 아침처럼 마지막 봉이
+    며칠 전 것이면 오늘 시가와 차이가 커 평가손익이 실제와 동떨어진다. live는
+    snapshot()이 KIS 실시간 잔고를 쓰므로 이 시각에 다시 찍으면 그대로 갱신되고,
+    paper는 그날 봉이 아직 없어 snapshot()의 priced 게이트에 걸려 건너뛴다.
+    """
+    today = date.today().strftime("%Y-%m-%d")
+    from recorder.equity import snapshot as eq_snapshot
+    eq_snapshot(today)
+
+
 def open_job():
     """앞선 회차가 아직 돌고 있으면 건너뛴다. 본체는 _open_job()."""
     if not _acquire_open_lock():
@@ -146,11 +159,15 @@ def open_job():
 
 
 def _open_job():
-    """개장 직후 리밸런싱 — 결정은 직전 거래일 데이터로, 체결은 오늘 시가 근처로.
+    """개장 후 리밸런싱 — 결정은 직전 거래일 데이터로, 체결은 오늘 시가 근처로.
 
     16:10 배치에서 떼어낸 이유는 체결 시각 때문이다. 검증한 규칙이 '신호일 다음
     거래일 시가'이고 모의투자 주문은 장중에만 체결된다. 마감 뒤에 주문을 낼 수는
     없다.
+
+    09:05이 아니라 10:30인 이유: 개장 직후는 호가·분위기가 아직 안 잡혀 있어
+    평가든 매매든 그 값을 믿기 위험하다. 시가에 최대한 붙이는 것보다 값이 안정된
+    뒤에 체결하는 쪽을 택했다.
 
     KIS_MODE=live면 증권사에 실제 주문을 내고 잔고로 체결을 확인한다. paper면
     DB 시뮬레이션이다. 지금까지 이 분기가 없어서 KIS_MODE는 읽히기만 하고
@@ -389,7 +406,7 @@ def daily_job():
 
     # 6. 퀄리티 리밸런싱은 여기서 하지 않는다.
     #    체결 규칙이 '신호일 다음 거래일 시가'인데 이 배치는 16:10, 장 마감 뒤다.
-    #    open_job()이 다음 거래일 09:05에 직전 거래일 데이터로 결정하고 주문한다.
+    #    open_job()이 다음 거래일 10:30에 직전 거래일 데이터로 결정하고 주문한다.
 
     # 6-2. 펀더멘털 진입: 직전 거래일 공시를 오늘 시가로 체결
     prev_day = _prev_trading_day(today)
@@ -449,10 +466,13 @@ def main(argv: list[str] | None = None) -> None:
     scheduler.add_job(daily_job, CronTrigger(
         day_of_week="mon-fri", hour=16, minute=10, timezone="Asia/Seoul"
     ))
-    # 평일 09:05 — 리밸런싱 주문. 검증한 체결 규칙이 "기준일 다음 거래일
-    # 시가"이므로 개장에 최대한 붙인다.
+    # 평일 10:00 — 평가손익만 다시 찍는다. 매매 없이 valuation_job() 참고.
+    scheduler.add_job(valuation_job, CronTrigger(
+        day_of_week="mon-fri", hour=10, minute=0, timezone="Asia/Seoul"
+    ))
+    # 평일 10:30 — 리밸런싱 주문. 개장 직후는 피한다. open_job() 참고.
     scheduler.add_job(open_job, CronTrigger(
-        day_of_week="mon-fri", hour=9, minute=5, timezone="Asia/Seoul"
+        day_of_week="mon-fri", hour=10, minute=30, timezone="Asia/Seoul"
     ))
     # 평일 13:10 — 보정 실행. 하는 일은 같고, 이미 목표에 맞으면 주문이 나가지
     # 않는다(adjust가 차이만 낸다).
@@ -464,7 +484,7 @@ def main(argv: list[str] | None = None) -> None:
     scheduler.add_job(open_job, CronTrigger(
         day_of_week="mon-fri", hour=13, minute=10, timezone="Asia/Seoul"
     ))
-    print("스케줄러 시작 — 평일 09:05·13:10 리밸런싱 / 16:10 수집 (Ctrl+C로 종료)")
+    print("스케줄러 시작 — 평일 10:00 평가 / 10:30·13:10 리밸런싱 / 16:10 수집 (Ctrl+C로 종료)")
     try:
         scheduler.start()
     except KeyboardInterrupt:

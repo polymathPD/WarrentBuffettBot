@@ -134,7 +134,8 @@
     <p>
       <strong>WarrenBuffett Bot</strong>은 DART 분기 재무로 종목을 고르고 Claude 에이전트가 공시 텍스트로
       가치 함정을 걸러내는 자동매매 시스템입니다. 운용 전략은 <code>quality_v1</code>(퀄리티/가치, 월별
-      리밸런싱, 손절 없음) 하나이며, 평일 09:05과 13:10에 리밸런싱 주문을 내고 16:10에 데이터를 수집·기록합니다.
+      리밸런싱, 손절 없음) 하나이며, 평일 10:30과 13:10에 리밸런싱 주문을 내고, 10:00에 평가손익만 다시
+      찍고, 16:10에 데이터를 수집·기록합니다.
       Railway PostgreSQL에 모든 상태를 저장하고 FastAPI 대시보드로 포지션·거래·백테스트를 확인합니다.
     </p>
 
@@ -195,7 +196,7 @@
     <h2>2. 디렉터리 구조</h2>
     <pre><code>WarrenBuffett/
 ├── config.py               # 전역 설정, DB 기반 런타임 파라미터
-├── scheduler.py            # APScheduler 엔트리 (09:05·13:10 open_job / 16:10 daily_job)
+├── scheduler.py            # APScheduler 엔트리 (10:00 valuation_job / 10:30·13:10 open_job / 16:10 daily_job)
 ├── setup_db.py             # DB 초기화 스크립트
 ├── requirements.txt / requirements-dev.txt / pytest.ini
 ├── runtime.txt             # Python 3.11
@@ -276,16 +277,29 @@
   <!-- ───── FLOW ───── -->
   <section id="flow">
     <h2>3. 실행 흐름</h2>
-    <p>APScheduler가 평일 두 번 돕니다. 주문과 수집을 한 시각에 몰 수 없기 때문입니다.</p>
+    <p>APScheduler가 평일 10:00·10:30·13:10·16:10 네 번 돕니다. 주문과 수집을 한 시각에 몰 수 없기 때문입니다.</p>
 
     <div class="callout callout-info">
-      <strong>배치를 둘로 나눈 이유</strong>
+      <strong>배치를 나눈 이유</strong>
       검증한 체결 규칙은 <strong>"기준일 다음 거래일 시가"</strong>입니다. 16:10은 장 마감 뒤라
       그 시점에 오늘 결정을 체결하려면 아직 없는 내일 시가가 필요하고, 증권사 주문은 장중에만
-      체결됩니다. 그래서 <strong>결정은 직전 거래일 데이터로, 주문은 다음 날 개장 직후</strong>에 냅니다.
+      체결됩니다. 그래서 <strong>결정은 직전 거래일 데이터로, 주문은 다음 날 장중</strong>에 냅니다.
+      개장 직후(09:05대)는 호가·분위기가 아직 안 잡혀 값을 믿기 위험하므로 10:30까지 미룹니다.
+      그 대신 10:00에 매매 없이 평가손익만 한 번 다시 찍어, 16:10 전까지 직전 거래일 종가에 머무는
+      시간을 줄입니다.
     </div>
 
-    <h3>09:05 · 13:10 <code>open_job()</code> — 퀄리티 리밸런싱</h3>
+    <h3>10:00 <code>valuation_job()</code> — 평가손익만 갱신</h3>
+    <div class="flow">
+      <div class="flow-step">
+        <div class="num">1</div>
+        <div class="body"><strong>recorder.equity.snapshot()</strong> 호출뿐입니다. 매매는 없습니다.
+        <code>live</code>는 KIS 실시간 잔고를 그대로 쓰므로 이 시각에 갱신되고, <code>paper</code>는
+        그날 일봉이 아직 없어 <code>snapshot()</code>의 게이트에 걸려 건너뜁니다</div>
+      </div>
+    </div>
+
+    <h3>10:30 · 13:10 <code>open_job()</code> — 퀄리티 리밸런싱</h3>
     <div class="flow">
       <div class="flow-step">
         <div class="num">1</div>
@@ -1323,7 +1337,7 @@ net_return = exit_px / entry_px - 1</code></pre>
 web:    uvicorn dashboard.app:app --host 0.0.0.0 --port $PORT
 worker: python scheduler.py</code></pre>
     <p><code>web</code>(FastAPI)과 <code>worker</code>(APScheduler)가 분리된 dyno에서 독립 실행됩니다.
-    스케줄러는 <code>Asia/Seoul</code> 타임존으로 평일 09:05·13:10 / 16:10 세 작업을 등록합니다.</p>
+    스케줄러는 <code>Asia/Seoul</code> 타임존으로 평일 10:00 / 10:30·13:10 / 16:10 네 작업을 등록합니다.</p>
 
     <h3>로컬 개발</h3>
     <pre><code>pip install -r requirements.txt

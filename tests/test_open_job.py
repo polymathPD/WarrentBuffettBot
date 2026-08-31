@@ -300,7 +300,7 @@ def test_missing_target_record_is_treated_as_work_to_do(live_run, mocker, capsys
 
 
 def test_open_job_skips_when_a_previous_run_still_holds_the_lock(mocker, mock_db, capsys):
-    """09:05이 아직 돌고 있으면 13:10은 주문을 내지 않는다.
+    """10:30이 아직 돌고 있으면 13:10은 주문을 내지 않는다.
 
     두 회차는 add_job을 두 번 부른 것이라 APScheduler id가 다르고, max_instances는
     잡 하나당 적용된다. 배타 제어가 없으면 같은 계좌에 두 잡이 동시에 주문을 낸다 -
