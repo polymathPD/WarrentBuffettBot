@@ -88,6 +88,8 @@ def collect(start_date: str = "20220101", end_date: str = None):
 
     print("일봉 수집 완료")
 
-# review : 따로 main문이 있어야 하는 이유가 있나?? 스크립트로 불리는게 아닌이상, collector 클래스를 만들어 관리하는게 좋아보임
+# review : collector하위의 모듈들이 스탠드얼론으로 불리기 위해 메인문이 있어왔지만 이제는 모두 지울것
+# review : collector 하위 모듈들 공통화 작업(base.py 만들고 abc 사용) 수행할것
+# review : 더이상 스탠드얼론으로 사용안될거니까 그에 맞게 테스트도 수정할것
 if __name__ == "__main__":
     collect()
