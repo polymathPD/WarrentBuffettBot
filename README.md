@@ -257,7 +257,7 @@ flowchart TD
 ## 단위 테스트
 
 DB / Claude API / KIS API / DART API를 전부 mock으로 격리한 순수 단위 테스트입니다
-(실제 네트워크·DB 연결 없이 수 초 내 완료). **31개 파일 328건.**
+(실제 네트워크·DB 연결 없이 수 초 내 완료). **31개 파일 329건.**
 
 ```bash
 pip install -r requirements-dev.txt
@@ -285,15 +285,6 @@ pip install -r requirements.txt
 # DB 초기화
 python setup_db.py
 
-# 데이터 수집 (순차 실행 — KIS 모의투자 계정은 초당 2건 한도)
-python collector/stock_daily.py      # 일봉 (pykrx)
-python collector/investor_flow.py    # 투자자별 수급 (KIS)
-python collector/credit_balance.py   # 신용잔고 (KIS)
-python collector/dart_corp_code.py   # DART 고유번호 매핑 (신규 상장 시 재실행)
-python collector/disclosure.py       # 공시 목록 (DART)
-python collector/financials.py       # 주요계정 재무 (DART)
-python collector/shares.py           # 발행주식수 (DART)
-
 # 신호 계산
 python processor/signals.py
 
@@ -306,8 +297,14 @@ python scheduler.py --open   # 리밸런싱 (10:30·13:10 배치)
 # 어느 경로로 실행하든 db.init_schema()가 먼저 돕니다. schema.sql은 전부
 # IF NOT EXISTS라 멱등이고, 컬럼을 추가한 뒤 배포만 하고 마이그레이션을
 # 잊는 사고를 막습니다.
-python scheduler.py --now    # 수집·기록 (16:10 배치)
+python scheduler.py --now    # 수집·기록 (16:10 배치, 수집기 전체를 순차 실행)
 ```
+
+> **수집기는 스케줄러를 통해서만 실행합니다.** 모듈마다 있던 `__main__` 진입점을
+> 없앴습니다. 수집기는 `collector/base.py`의 `Collector`를 구현한 클래스이고
+> (`StockDailyCollector`, `InvestorFlowCollector`, …), 진입점은 `run()` 하나입니다.
+> 특정 수집기만 돌려야 하면 `python scheduler.py --now` 대신 그 클래스를 임포트해
+> `run()`을 부릅니다 — 수집 범위는 생성자 인자로 줍니다.
 
 ---
 

@@ -208,6 +208,7 @@
 │   └── schema.sql          # 16개 테이블 DDL (멱등 마이그레이션 포함)
 │
 ├── collector/
+│   ├── base.py             # Collector ABC · KisDailyCollector · dart_get()
 │   ├── universe.py         # 수집 대상 종목 선정 (시가총액 필터)
 │   ├── stock_daily.py      # pykrx OHLCV (증분)
 │   ├── investor_flow.py    # KIS 투자자별 매매동향 (증분)
@@ -270,7 +271,7 @@
 ├── run_backtest_local.py   # 로컬 백테스트 + 검증
 ├── decile_analysis.py      # 분위수 분석
 ├── migrate_from_ref.py     # 외부 참조 DB 이관 (1회성)
-└── tests/                  # pytest 31개 파일 328건 (DB·API 전부 mock)</code></pre>
+└── tests/                  # pytest 31개 파일 329건 (DB·API 전부 mock)</code></pre>
   </section>
 
   <hr class="divider" />
@@ -355,17 +356,17 @@
     <div class="flow">
       <div class="flow-step">
         <div class="num">1</div>
-        <div class="body"><strong>collect_daily()</strong> — pykrx → <code>stock_daily</code> 증분 upsert</div>
+        <div class="body"><strong>StockDailyCollector().run()</strong> — pykrx → <code>stock_daily</code> 증분 upsert</div>
       </div>
       <div class="flow-connector"></div>
       <div class="flow-step">
         <div class="num">2</div>
-        <div class="body"><strong>collect_flow() / collect_kis()</strong> — KIS 투자자별 수급 · 신용잔고</div>
+        <div class="body"><strong>InvestorFlowCollector() / CreditBalanceCollector()</strong> — KIS 투자자별 수급 · 신용잔고</div>
       </div>
       <div class="flow-connector"></div>
       <div class="flow-step">
         <div class="num">3</div>
-        <div class="body"><strong>collect_disclosure() / collect_financials()</strong> — DART 공시 목록(마지막
+        <div class="body"><strong>DisclosureCollector() / FinancialsCollector()</strong> — DART 공시 목록(마지막
         수집일부터 이어받음)과 주요계정 재무(전 종목 40여 회 호출이라 매일 확인)</div>
       </div>
       <div class="flow-connector"></div>
@@ -622,6 +623,25 @@
   <!-- ───── COLLECTOR ───── -->
   <section id="collector">
     <h2>8. Collector 모듈 <small style="font-size:12px;font-weight:400;color:var(--muted)">collector/</small></h2>
+
+    <h3>base.py — 공통 뼈대</h3>
+    <p>수집기는 전부 <code>Collector</code>(ABC)를 구현한 클래스입니다. 공통 계약은 <code>run()</code>
+    하나이고, 수집 범위는 생성자 인자로 받습니다. 스케줄러의 <code>daily_job()</code>이 유일한
+    호출자입니다 — 모듈마다 있던 <code>__main__</code> 진입점은 없습니다.</p>
+    <table>
+      <tr><th>구성</th><th>쓰는 곳</th><th>담는 것</th></tr>
+      <tr><td><code>Collector</code></td><td>7개 수집기 전부</td><td><code>SOURCE</code>(커서 키) + 추상 <code>run()</code></td></tr>
+      <tr><td><code>KisDailyCollector</code></td><td>investor_flow, credit_balance</td><td>페이지네이션·증분 판정·커서 기록·5xx 재시도</td></tr>
+      <tr><td><code>dart_get()</code></td><td>disclosure, financials, shares</td><td>재시도 + status 판정(000/013/020)</td></tr>
+    </table>
+
+    <div class="callout callout-info">
+      <strong>KIS 두 수집기만 흐름을 공유하는 이유</strong>
+      <code>investor_flow</code>와 <code>credit_balance</code>는 API와 컬럼만 다르고 앵커를 과거로
+      당겨가는 루프가 같습니다. 하위 클래스는 요청 파라미터(<code>params()</code>)와 행
+      변환(<code>values()</code>)만 채웁니다. DART 세 개는 조회 단위가 서로 달라(기간 / 100종목 배치 /
+      종목 1건) 루프를 공유하지 않고, 재시도와 status 판정만 <code>dart_get()</code>으로 함께 씁니다.
+    </div>
 
     <h3>universe.py — 수집 대상 선정</h3>
     <p><code>target_codes(source)</code>가 <code>investor_flow</code>·<code>credit_balance</code> 두 수집기의
@@ -1230,7 +1250,7 @@ net_return     = sell_price(exit) / buy_price(entry) - 1</code></pre>
 
     <p>DB(<code>db.connection</code>) · Claude API · KIS API · DART API를 전부 mock으로 격리한 순수
     단위 테스트입니다. 실제 네트워크·DB 연결 없이 수 초 내 완료되므로 백필이나 스케줄러가 도는
-    중에도 안전하게 실행할 수 있습니다. <strong>31개 파일 328건.</strong></p>
+    중에도 안전하게 실행할 수 있습니다. <strong>31개 파일 329건.</strong></p>
 
     <pre><code>pip install -r requirements-dev.txt
 pytest tests/ -v</code></pre>
@@ -1425,7 +1445,7 @@ uvicorn dashboard.app:app --reload        # 대시보드 개발 서버</code></p
     <h3>모듈별 현황 요약</h3>
     <table>
       <tr><th>컴포넌트</th><th>파일</th><th>상태</th></tr>
-      <tr><td>시세·수급 수집</td><td>collector/stock_daily.py, investor_flow.py, credit_balance.py</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>시세·수급 수집</td><td>collector/base.py, stock_daily.py, investor_flow.py, credit_balance.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>공시·재무 수집</td><td>collector/disclosure.py, financials.py, shares.py, dart_corp_code.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>신호 계산</td><td>processor/signals.py, valuation.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>운용 전략</td><td>strategy/quality.py, filters.py</td><td><span class="status-prod">운영 중</span></td></tr>
@@ -1438,7 +1458,7 @@ uvicorn dashboard.app:app --reload        # 대시보드 개발 서버</code></p
       <tr><td>백테스터 · 결과 저장</td><td>backtester/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>연구 스크립트</td><td>research/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>웹 대시보드</td><td>dashboard/app.py</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>단위 테스트</td><td>tests/ (328건)</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>단위 테스트</td><td>tests/ (329건)</td><td><span class="status-prod">운영 중</span></td></tr>
     </table>
   </section>
 

@@ -16,62 +16,60 @@ import xml.etree.ElementTree as ET
 import requests
 import db.connection as db
 import config
-
-API_URL = "https://opendart.fss.or.kr/api/corpCode.xml"
-
-
-def fetch_xml() -> bytes:
-    """corpCode.xml(zip)을 받아 XML 바이트를 반환."""
-    if not config.DART_API_KEY:
-        raise RuntimeError(
-            "DART_API_KEY 미설정: opendart.fss.or.kr에서 인증키를 발급받아 .env에 넣으세요"
-        )
-
-    resp = requests.get(API_URL, params={"crtfc_key": config.DART_API_KEY}, timeout=60)
-    resp.raise_for_status()
-
-    # 키가 틀리거나 한도를 넘으면 zip이 아니라 status/message XML이 그대로 온다.
-    if resp.content[:2] != b"PK":
-        raise RuntimeError(f"zip 응답이 아님: {resp.content[:200]!r}")
-
-    with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
-        return z.read(z.namelist()[0])
+from collector.base import Collector
 
 
-def parse(xml_bytes: bytes) -> dict:
-    """stock_code -> corp_code. 종목코드가 있는 상장사만 남긴다."""
-    root = ET.fromstring(xml_bytes)
-    mapping = {}
-    for el in root.iter("list"):
-        stock = (el.findtext("stock_code") or "").strip()
-        corp = (el.findtext("corp_code") or "").strip()
-        if len(stock) == 6 and corp:
-            mapping[stock] = corp
-    return mapping
+class DartCorpCodeCollector(Collector):
+    SOURCE = "dart_corp_code"
+    API_URL = "https://opendart.fss.or.kr/api/corpCode.xml"
 
+    def fetch_xml(self) -> bytes:
+        """corpCode.xml(zip)을 받아 XML 바이트를 반환."""
+        if not config.DART_API_KEY:
+            raise RuntimeError(
+                "DART_API_KEY 미설정: opendart.fss.or.kr에서 인증키를 발급받아 .env에 넣으세요"
+            )
 
-def collect() -> int:
-    """매핑을 받아 instruments에 반영하고 갱신된 종목 수를 반환."""
-    mapping = parse(fetch_xml())
-    print(f"DART 상장사 {len(mapping):,}종목 수신")
+        resp = requests.get(self.API_URL,
+                            params={"crtfc_key": config.DART_API_KEY}, timeout=60)
+        resp.raise_for_status()
 
-    known = {r["code"] for r in db.fetchall("SELECT code FROM instruments")}
-    rows = [(corp, code) for code, corp in mapping.items() if code in known]
-    if rows:
-        db.executemany(
-            """UPDATE instruments SET dart_corp_code = v.corp
-               FROM (VALUES %s) AS v(corp, code)
-               WHERE instruments.code = v.code""",
-            rows,
-        )
+        # 키가 틀리거나 한도를 넘으면 zip이 아니라 status/message XML이 그대로 온다.
+        if resp.content[:2] != b"PK":
+            raise RuntimeError(f"zip 응답이 아님: {resp.content[:200]!r}")
 
-    filled = db.fetchone(
-        "SELECT COUNT(*) AS n FROM instruments WHERE dart_corp_code IS NOT NULL"
-    )["n"]
-    print(f"매핑 완료: {filled:,}/{len(known):,}종목 "
-          f"(미매핑 {len(known) - filled:,}종목: 상장폐지·비상장 등)")
-    return len(rows)
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+            return z.read(z.namelist()[0])
 
+    def parse(self, xml_bytes: bytes) -> dict:
+        """stock_code -> corp_code. 종목코드가 있는 상장사만 남긴다."""
+        root = ET.fromstring(xml_bytes)
+        mapping = {}
+        for el in root.iter("list"):
+            stock = (el.findtext("stock_code") or "").strip()
+            corp = (el.findtext("corp_code") or "").strip()
+            if len(stock) == 6 and corp:
+                mapping[stock] = corp
+        return mapping
 
-if __name__ == "__main__":
-    collect()
+    def run(self) -> int:
+        """매핑을 받아 instruments에 반영하고 갱신된 종목 수를 반환."""
+        mapping = self.parse(self.fetch_xml())
+        print(f"DART 상장사 {len(mapping):,}종목 수신")
+
+        known = {r["code"] for r in db.fetchall("SELECT code FROM instruments")}
+        rows = [(corp, code) for code, corp in mapping.items() if code in known]
+        if rows:
+            db.executemany(
+                """UPDATE instruments SET dart_corp_code = v.corp
+                   FROM (VALUES %s) AS v(corp, code)
+                   WHERE instruments.code = v.code""",
+                rows,
+            )
+
+        filled = db.fetchone(
+            "SELECT COUNT(*) AS n FROM instruments WHERE dart_corp_code IS NOT NULL"
+        )["n"]
+        print(f"매핑 완료: {filled:,}/{len(known):,}종목 "
+              f"(미매핑 {len(known) - filled:,}종목: 상장폐지·비상장 등)")
+        return len(rows)
