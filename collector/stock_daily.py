@@ -88,6 +88,6 @@ def collect(start_date: str = "20220101", end_date: str = None):
 
     print("일봉 수집 완료")
 
-
+# review : 따로 main문이 있어야 하는 이유가 있나?? 스크립트로 불리는게 아닌이상, collector 클래스를 만들어 관리하는게 좋아보임
 if __name__ == "__main__":
     collect()
