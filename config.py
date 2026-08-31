@@ -14,6 +14,8 @@ KIS_MODE = os.environ.get("KIS_MODE", "paper")
 DART_API_KEY = os.environ.get("DART_API_KEY", "")
 KRX_OPEN_API_KEY = os.environ.get("KRX_OPEN_API_KEY", "")
 
+# review : 환경변수가 아닌 아래의 값들은 json에 저장을하고, 스케쥴러 시작 시 이를 load하도록 변경 필요
+# review : 코드엔 하드코드 값이 없어야함
 SLIP_BPS = 20       # 슬리피지 편도 0.20%
 FEE_BPS = 1.5       # 수수료 0.015%
 TAX_BPS = 20        # 거래세 0.20% (매도 시)
