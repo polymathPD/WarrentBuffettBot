@@ -212,14 +212,25 @@ def _open_job():
     # 건너뛰면 이 기능을 처음 배포한 다음 날 아침이 통째로 조용히 지나간다.
     unfinished = codes != want
 
+    # 이 달 리밸런싱을 아직 안 했는가. 기준일까지 같으면 이미 한 것이다.
+    #
+    # 리밸런싱일에도 이 판정을 해야 한다. 하루 두 회차를 도는 것은 앞 회차가
+    # 끝내지 못한 일을 마무리하기 위함이지, 그 사이 가격이 움직인 만큼 다시
+    # 맞추기 위함이 아니다. 목표 수량은 slot_value // 현재가라 시세만 흔들려도
+    # 달라진다 — 2026-09-01 13:10 시세로는 5종목에 23만원어치 주문이 나갔고,
+    # 그중에는 그날 아침 169,000원에 산 영원무역홀딩스 1주를 169,300원에 되파는
+    # 것도 있었다. 회전율을 낮추는 것이 이 전략의 전제다.
     rebal_d = _quality_rebalance_date(today)
-    if rebal_d is None:
-        if not empty and not in_debt and not unfinished:
-            print("리밸런싱일 아님 - 건너뜀")
-            return
+    fresh = rebal_d is not None and want_d != rebal_d
+
+    if not (fresh or empty or in_debt or unfinished):
+        print("목표와 일치 - 건너뜀")
+        return
+
+    if not fresh:
         # 보정은 다시 랭킹하지 않는다. 직전 리밸런싱이 쓴 기준일을 그대로 써야
         # 월 1회 회전율이 유지된다 — 매일 다시 매기면 그게 일간 리밸런싱이다.
-        rebal_d = want_d if (unfinished and want_d) else _prev_trading_day(today)
+        rebal_d = want_d if (unfinished and want_d) else (rebal_d or _prev_trading_day(today))
         if rebal_d is None:
             print("직전 거래일 없음 - 건너뜀")
             return
@@ -232,7 +243,7 @@ def _open_job():
         else:
             why = (f"목표와 어긋나 보정 (빠진 것 {sorted(want - codes)}, "
                    f"남은 것 {sorted(codes - want)})")
-        print(f"리밸런싱일은 아니지만 {why}를 진행한다 ({rebal_d} 기준)")
+        print(f"새 리밸런싱은 아니지만 {why}를 진행한다 ({rebal_d} 기준)")
 
     def _op(v):
         return {k: v.get(k) for k in ("decision", "score", "rationale", "error")}

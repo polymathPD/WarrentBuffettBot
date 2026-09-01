@@ -325,3 +325,58 @@ def test_open_job_releases_the_lock_even_when_it_raises(mocker, mock_db):
         scheduler.open_job()
 
     assert rel.call_count == 1
+
+
+def test_second_run_of_a_rebalance_day_does_not_re_rank(live_run, mocker, capsys):
+    """회귀: 하루 두 회차는 '앞 회차의 잔여 처리'지 '가격 재추종'이 아니다.
+
+    2026-09-01 10:30이 목표 10종목을 정확히 채웠는데도 13:10이 다시 랭킹했다.
+    '목표와 일치하면 건너뛴다' 판정이 리밸런싱일이 아닐 때만 걸려 있었기 때문이다.
+    목표 수량은 slot_value // 현재가라 시세만 흔들려도 달라져, 그날 13:10 시세로는
+    5종목에 23만원어치 주문이 나갔다 — 아침 169,000원에 산 영원무역홀딩스 1주를
+    169,300원에 되파는 것까지 포함해서.
+    """
+    targets = {f"00{i:04d}" for i in range(SLOTS)}
+    mocker.patch.object(scheduler, "_stored_targets", return_value=(targets, "2026-08-31"))
+    holdings = {c: {"name": c, "qty": 100.0, "cur_px": 10_000.0} for c in targets}
+    snap = _snapshot(holdings, 0, 10_000_000, 10_000_000, settled_cash=0)
+
+    # 오늘은 리밸런싱일이고, 그 기준일로 이미 리밸런싱을 끝낸 상태다.
+    live_run(snap, rebal_d="2026-08-31")
+
+    assert "건너뜀" in capsys.readouterr().out
+    assert live_run.orders == []
+
+
+def test_first_run_of_a_rebalance_day_still_rebalances(live_run, mocker):
+    """직전 목표가 지난달 기준일이면 이 달 리밸런싱은 아직 안 한 것이다."""
+    from strategy import quality
+
+    targets = {f"00{i:04d}" for i in range(SLOTS)}
+    mocker.patch.object(scheduler, "_stored_targets", return_value=(targets, "2026-07-31"))
+    holdings = {c: {"name": c, "qty": 100.0, "cur_px": 10_000.0} for c in targets}
+    snap = _snapshot(holdings, 0, 10_000_000, 10_000_000, settled_cash=10_000_000)
+
+    live_run(snap, rebal_d="2026-08-31")
+
+    assert quality.get_targets.call_args[0][0] == "2026-08-31"
+    assert live_run.orders, "이 달 리밸런싱은 아직 안 했으므로 주문이 나가야 한다"
+
+
+def test_a_half_finished_rebalance_day_is_completed_without_re_ranking(live_run, mocker):
+    """앞 회차가 중간에 죽었으면 뒤 회차가 마무리한다 - 같은 기준일로.
+
+    _store_targets는 주문 전에 목표를 남기므로, 중간에 죽어도 기준일은 오늘 것이다.
+    다시 랭킹하지 않고 그 목표를 채우기만 해야 한다.
+    """
+    from strategy import quality
+
+    mocker.patch.object(scheduler, "_stored_targets",
+                        return_value=({f"00{i:04d}" for i in range(SLOTS)}, "2026-08-31"))
+    holdings = {"000000": {"name": "종목", "qty": 100.0, "cur_px": 10_000.0}}
+    snap = _snapshot(holdings, 0, 1_000_000, 10_000_000, settled_cash=9_000_000)
+
+    live_run(snap, rebal_d="2026-08-31")
+
+    assert quality.get_targets.call_args[0][0] == "2026-08-31"
+    assert live_run.orders, "목표에 못 미치므로 채워야 한다"
