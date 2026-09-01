@@ -12,82 +12,82 @@ import FinanceDataReader as fdr
 from datetime import date, timedelta
 import time
 import db.connection as db
-
-SOURCE = "stock_daily"
-SLEEP_SEC = 0.35  # KRX 요청 간격
+from collector.base import Collector
 
 
-def _get_tickers() -> list[str]:
-    df = fdr.StockListing('KRX')
-    return df['Code'].tolist()
+class StockDailyCollector(Collector):
+    SOURCE = "stock_daily"
+    SLEEP_SEC = 0.35  # KRX 요청 간격
 
+    def __init__(self, start_date: str = "20220101", end_date: str = None):
+        self.start_date = start_date
+        self.end_date = end_date
 
-def _last_collected(code: str):
-    row = db.fetchone(
-        "SELECT last_seen FROM collect_cursor WHERE source=%s AND code=%s",
-        (SOURCE, code),
-    )
-    return row["last_seen"].date() if row else None
+    def tickers(self) -> list[str]:
+        df = fdr.StockListing('KRX')
+        return df['Code'].tolist()
 
+    def last_collected(self, code: str):
+        row = db.fetchone(
+            "SELECT last_seen FROM collect_cursor WHERE source=%s AND code=%s",
+            (self.SOURCE, code),
+        )
+        return row["last_seen"].date() if row else None
 
-def collect(start_date: str = "20220101", end_date: str = None):
-    today = date.today()
-    end = end_date or today.strftime("%Y%m%d")
-    tickers = _get_tickers()
-    total = len(tickers)
-    errors = []
+    def run(self) -> None:
+        today = date.today()
+        end = self.end_date or today.strftime("%Y%m%d")
+        tickers = self.tickers()
+        total = len(tickers)
+        errors = []
 
-    print(f"수집 대상: {total}종목  기간: {start_date} ~ {end}")
+        print(f"수집 대상: {total}종목  기간: {self.start_date} ~ {end}")
 
-    for i, code in enumerate(tickers, 1):
-        try:
-            last = _last_collected(code)
-            if last:
-                if last >= today:
+        for i, code in enumerate(tickers, 1):
+            try:
+                last = self.last_collected(code)
+                if last:
+                    if last >= today:
+                        continue
+                    start = (last + timedelta(days=1)).strftime("%Y%m%d")
+                else:
+                    start = self.start_date
+
+                if start > end:
                     continue
-                start = (last + timedelta(days=1)).strftime("%Y%m%d")
-            else:
-                start = start_date
 
-            if start > end:
-                continue
+                df = krx.get_market_ohlcv(start, end, code)
+                if df is None or df.empty:
+                    continue
 
-            df = krx.get_market_ohlcv(start, end, code)
-            if df is None or df.empty:
-                continue
+                rows = [
+                    (code, d.date(), int(r["시가"]), int(r["고가"]),
+                     int(r["저가"]), int(r["종가"]), int(r["거래량"]))
+                    for d, r in df.iterrows()
+                ]
+                db.executemany(
+                    """INSERT INTO stock_daily (code, d, o, h, l, c, v)
+                       VALUES %s ON CONFLICT (code, d) DO NOTHING""",
+                    rows,
+                )
+                db.execute(
+                    """INSERT INTO collect_cursor (source, code, last_seen)
+                       VALUES (%s, %s, NOW())
+                       ON CONFLICT (source, code) DO UPDATE SET last_seen = NOW()""",
+                    (self.SOURCE, code),
+                )
 
-            rows = [
-                (code, d.date(), int(r["시가"]), int(r["고가"]),
-                 int(r["저가"]), int(r["종가"]), int(r["거래량"]))
-                for d, r in df.iterrows()
-            ]
-            db.executemany(
-                """INSERT INTO stock_daily (code, d, o, h, l, c, v)
-                   VALUES %s ON CONFLICT (code, d) DO NOTHING""",
-                rows,
-            )
-            db.execute(
-                """INSERT INTO collect_cursor (source, code, last_seen)
-                   VALUES (%s, %s, NOW())
-                   ON CONFLICT (source, code) DO UPDATE SET last_seen = NOW()""",
-                (SOURCE, code),
-            )
+            except Exception as e:
+                errors.append((code, str(e)))
 
-        except Exception as e:
-            errors.append((code, str(e)))
+            if i % 100 == 0 or i == total:
+                print(f"  [{i}/{total}] 완료  오류: {len(errors)}")
 
-        if i % 100 == 0 or i == total:
-            print(f"  [{i}/{total}] 완료  오류: {len(errors)}")
+            time.sleep(self.SLEEP_SEC)
 
-        time.sleep(SLEEP_SEC)
+        if errors:
+            print(f"\n오류 목록 ({len(errors)}건):")
+            for code, msg in errors[:20]:
+                print(f"  {code}: {msg}")
 
-    if errors:
-        print(f"\n오류 목록 ({len(errors)}건):")
-        for code, msg in errors[:20]:
-            print(f"  {code}: {msg}")
-
-    print("일봉 수집 완료")
-
-
-if __name__ == "__main__":
-    collect()
+        print("일봉 수집 완료")

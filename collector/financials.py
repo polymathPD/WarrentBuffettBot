@@ -18,18 +18,10 @@ load_dotenv()
 
 import time
 from datetime import date
-import requests
+
 import db.connection as db
 import config
-
-SOURCE = "financials"
-API_URL = "https://opendart.fss.or.kr/api/fnlttMultiAcnt.json"
-BATCH = 100            # API 상한
-SLEEP_SEC = 0.2
-MAX_RETRIES = 3
-RETRY_WAIT_SEC = 1.0
-
-NO_DATA = "013"        # 조회된 데이터가 없습니다 (오류가 아님)
+from collector.base import Collector, dart_get
 
 # 보고서 코드 -> 분기 표기
 REPORTS = {"11013": 1, "11012": 2, "11014": 3, "11011": 4}
@@ -61,57 +53,6 @@ def _amount(text: str):
     return -v if neg else v
 
 
-def fetch_batch(corp_codes: list[str], year: str, reprt_code: str) -> dict:
-    """주요계정 한 배치. 재시도해도 실패하면 예외를 올린다."""
-    params = {
-        "crtfc_key": config.DART_API_KEY,
-        "corp_code": ",".join(corp_codes),
-        "bsns_year": year,
-        "reprt_code": reprt_code,
-    }
-    last_err = None
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            resp = requests.get(API_URL, params=params, timeout=60)
-            resp.raise_for_status()
-            data = resp.json()
-            if data.get("status") not in ("000", NO_DATA):
-                raise RuntimeError(f"DART 오류 {data.get('status')}: {data.get('message')}")
-            return data
-        except Exception as e:
-            last_err = e
-            if attempt < MAX_RETRIES:
-                time.sleep(RETRY_WAIT_SEC * attempt)
-    raise last_err
-
-
-def _rows(data: dict, period: str, by_corp: dict) -> list[tuple]:
-    """
-    응답을 (종목, 재무제표구분)별로 모아 INSERT 행으로 만든다.
-    연결(CFS)이 있으면 연결을, 없으면 개별(OFS)을 쓴다.
-    """
-    picked: dict = {}
-    for item in data.get("list", []):
-        code = by_corp.get(item.get("corp_code"))
-        if not code:
-            continue
-        name = (item.get("account_nm") or "").replace(" ", "")
-        field = next((f for f, aliases in ACCOUNTS.items() if name in aliases), None)
-        if field is None:
-            continue
-        acc = picked.setdefault((code, item.get("fs_div")), {})
-        acc[field] = _amount(item.get("thstrm_amount"))
-
-    rows = []
-    for code in {c for c, _ in picked}:
-        fs_div = "CFS" if (code, "CFS") in picked else "OFS"
-        acc = picked.get((code, fs_div))
-        if not acc:
-            continue
-        rows.append((code, period, fs_div) + tuple(acc.get(f) for f in FIELDS))
-    return rows
-
-
 def latest_period(today: date = None) -> tuple[str, str]:
     """그 시점에 제출이 끝났을 가장 최근 보고서. 제출 기한 기준으로 고른다.
 
@@ -130,79 +71,113 @@ def latest_period(today: date = None) -> tuple[str, str]:
     return str(d.year - 2), "11011"      # 1~3월: 전년도분은 아직 제출 전
 
 
-def collect(year: str = None, reprt_code: str = None) -> int:
-    """
-    (year, reprt_code) 한 기간의 주요계정을 전 종목에 대해 수집한다.
-    reprt_code: 11013=1분기 11012=반기 11014=3분기 11011=사업보고서
-    둘 다 생략하면 그 시점에 제출이 끝났을 최근 보고서를 받는다.
-    """
-    if not config.DART_API_KEY:
-        print("DART_API_KEY 미설정: 재무 수집을 건너뜁니다")
-        return 0
+class FinancialsCollector(Collector):
+    SOURCE = "financials"
+    API_URL = "https://opendart.fss.or.kr/api/fnlttMultiAcnt.json"
+    BATCH = 100            # API 상한
+    SLEEP_SEC = 0.2
 
-    if year is None and reprt_code is None:
-        year, reprt_code = latest_period()
-    reprt_code = reprt_code or "11011"
-    if reprt_code not in REPORTS:
-        raise ValueError(f"reprt_code는 {list(REPORTS)} 중 하나여야 합니다: {reprt_code}")
+    def __init__(self, year: str = None, reprt_code: str = None):
+        """둘 다 생략하면 그 시점에 제출이 끝났을 최근 보고서를 받는다.
+        reprt_code: 11013=1분기 11012=반기 11014=3분기 11011=사업보고서
+        """
+        if year is None and reprt_code is None:
+            year, reprt_code = latest_period()
+        reprt_code = reprt_code or "11011"
+        if reprt_code not in REPORTS:
+            raise ValueError(f"reprt_code는 {list(REPORTS)} 중 하나여야 합니다: {reprt_code}")
+        self.year = year or str(date.today().year)
+        self.reprt_code = reprt_code
+        self.period = f"{self.year}Q{REPORTS[reprt_code]}"
 
-    year = year or str(date.today().year)
-    period = f"{year}Q{REPORTS[reprt_code]}"
+    def fetch_batch(self, corp_codes: list[str]) -> dict:
+        return dart_get(self.API_URL, {
+            "crtfc_key": config.DART_API_KEY,
+            "corp_code": ",".join(corp_codes),
+            "bsns_year": self.year,
+            "reprt_code": self.reprt_code,
+        }, timeout=60)
 
-    mapped = db.fetchall(
-        "SELECT code, dart_corp_code FROM instruments "
-        "WHERE dart_corp_code IS NOT NULL ORDER BY code"
-    )
-    if not mapped:
-        print("dart_corp_code 매핑 없음: collector/dart_corp_code.py를 먼저 실행하세요")
-        return 0
+    def rows(self, data: dict, by_corp: dict) -> list[tuple]:
+        """
+        응답을 (종목, 재무제표구분)별로 모아 INSERT 행으로 만든다.
+        연결(CFS)이 있으면 연결을, 없으면 개별(OFS)을 쓴다.
+        """
+        picked: dict = {}
+        for item in data.get("list", []):
+            code = by_corp.get(item.get("corp_code"))
+            if not code:
+                continue
+            name = (item.get("account_nm") or "").replace(" ", "")
+            field = next((f for f, aliases in ACCOUNTS.items() if name in aliases), None)
+            if field is None:
+                continue
+            acc = picked.setdefault((code, item.get("fs_div")), {})
+            acc[field] = _amount(item.get("thstrm_amount"))
 
-    by_corp = {r["dart_corp_code"]: r["code"] for r in mapped}
-    corp_codes = [r["dart_corp_code"] for r in mapped]
-    saved = failed = 0
+        rows = []
+        for code in {c for c, _ in picked}:
+            fs_div = "CFS" if (code, "CFS") in picked else "OFS"
+            acc = picked.get((code, fs_div))
+            if not acc:
+                continue
+            rows.append((code, self.period, fs_div) + tuple(acc.get(f) for f in FIELDS))
+        return rows
 
-    for i in range(0, len(corp_codes), BATCH):
-        batch = corp_codes[i:i + BATCH]
-        try:
-            data = fetch_batch(batch, year, reprt_code)
-        except Exception as e:
-            print(f"  [실패] 배치 {i // BATCH + 1}: {e}")
-            failed += 1
-            continue
+    def run(self) -> int:
+        """(year, reprt_code) 한 기간의 주요계정을 전 종목에 대해 수집한다."""
+        if not config.DART_API_KEY:
+            print("DART_API_KEY 미설정: 재무 수집을 건너뜁니다")
+            return 0
 
-        rows = _rows(data, period, by_corp)
-        if rows:
-            db.executemany(
-                """INSERT INTO financials
-                   (code, period, fs_div, revenue, op_income, net_income,
-                    assets, liabilities, equity)
-                   VALUES %s ON CONFLICT (code, period) DO UPDATE
-                   SET fs_div = EXCLUDED.fs_div,
-                       revenue = EXCLUDED.revenue,
-                       op_income = EXCLUDED.op_income,
-                       net_income = EXCLUDED.net_income,
-                       assets = EXCLUDED.assets,
-                       liabilities = EXCLUDED.liabilities,
-                       equity = EXCLUDED.equity""",
-                rows,
-            )
-            saved += len(rows)
-        time.sleep(SLEEP_SEC)
-
-    print(f"{period}: {saved:,}종목 저장 "
-          f"({len(corp_codes):,}종목 요청, 실패 배치 {failed})")
-
-    if not failed:
-        db.execute(
-            """INSERT INTO collect_cursor (source, code, last_seen)
-               VALUES (%s, %s, NOW()) ON CONFLICT (source, code)
-               DO UPDATE SET last_seen = NOW()""",
-            (SOURCE, period),
+        mapped = db.fetchall(
+            "SELECT code, dart_corp_code FROM instruments "
+            "WHERE dart_corp_code IS NOT NULL ORDER BY code"
         )
-    return saved
+        if not mapped:
+            print("dart_corp_code 매핑 없음: DartCorpCodeCollector를 먼저 실행하세요")
+            return 0
 
+        by_corp = {r["dart_corp_code"]: r["code"] for r in mapped}
+        corp_codes = [r["dart_corp_code"] for r in mapped]
+        saved = failed = 0
 
-if __name__ == "__main__":
-    y = sys.argv[1] if len(sys.argv) > 1 else None
-    r = sys.argv[2] if len(sys.argv) > 2 else "11011"
-    collect(y, r)
+        for i in range(0, len(corp_codes), self.BATCH):
+            batch = corp_codes[i:i + self.BATCH]
+            try:
+                data = self.fetch_batch(batch)
+            except Exception as e:
+                print(f"  [실패] 배치 {i // self.BATCH + 1}: {e}")
+                failed += 1
+                continue
+
+            rows = self.rows(data, by_corp)
+            if rows:
+                db.executemany(
+                    """INSERT INTO financials
+                       (code, period, fs_div, revenue, op_income, net_income,
+                        assets, liabilities, equity)
+                       VALUES %s ON CONFLICT (code, period) DO UPDATE
+                       SET fs_div = EXCLUDED.fs_div,
+                           revenue = EXCLUDED.revenue,
+                           op_income = EXCLUDED.op_income,
+                           net_income = EXCLUDED.net_income,
+                           assets = EXCLUDED.assets,
+                           liabilities = EXCLUDED.liabilities,
+                           equity = EXCLUDED.equity""",
+                    rows,
+                )
+                saved += len(rows)
+            time.sleep(self.SLEEP_SEC)
+
+        print(f"{self.period}: {saved:,}종목 저장 "
+              f"({len(corp_codes):,}종목 요청, 실패 배치 {failed})")
+
+        if not failed:
+            db.execute(
+                """INSERT INTO collect_cursor (source, code, last_seen)
+                   VALUES (%s, %s, NOW()) ON CONFLICT (source, code)
+                   DO UPDATE SET last_seen = NOW()""",
+                (self.SOURCE, self.period),
+            )
+        return saved

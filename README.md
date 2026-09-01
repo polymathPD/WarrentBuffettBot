@@ -257,7 +257,7 @@ flowchart TD
 ## 단위 테스트
 
 DB / Claude API / KIS API / DART API를 전부 mock으로 격리한 순수 단위 테스트입니다
-(실제 네트워크·DB 연결 없이 수 초 내 완료). **31개 파일 328건.**
+(실제 네트워크·DB 연결 없이 수 초 내 완료). **31개 파일 329건.**
 
 ```bash
 pip install -r requirements-dev.txt
@@ -285,15 +285,6 @@ pip install -r requirements.txt
 # DB 초기화
 python setup_db.py
 
-# 데이터 수집 (순차 실행 — KIS 모의투자 계정은 초당 2건 한도)
-python collector/stock_daily.py      # 일봉 (pykrx)
-python collector/investor_flow.py    # 투자자별 수급 (KIS)
-python collector/credit_balance.py   # 신용잔고 (KIS)
-python collector/dart_corp_code.py   # DART 고유번호 매핑 (신규 상장 시 재실행)
-python collector/disclosure.py       # 공시 목록 (DART)
-python collector/financials.py       # 주요계정 재무 (DART)
-python collector/shares.py           # 발행주식수 (DART)
-
 # 신호 계산
 python processor/signals.py
 
@@ -306,12 +297,20 @@ python scheduler.py --open   # 리밸런싱 (10:30·13:10 배치)
 # 어느 경로로 실행하든 db.init_schema()가 먼저 돕니다. schema.sql은 전부
 # IF NOT EXISTS라 멱등이고, 컬럼을 추가한 뒤 배포만 하고 마이그레이션을
 # 잊는 사고를 막습니다.
-python scheduler.py --now    # 수집·기록 (16:10 배치)
+python scheduler.py --now    # 수집·기록 (16:10 배치, 수집기 전체를 순차 실행)
 ```
+
+> **수집기는 스케줄러를 통해서만 실행합니다.** 모듈마다 있던 `__main__` 진입점을
+> 없앴습니다. 수집기는 `collector/base.py`의 `Collector`를 구현한 클래스이고
+> (`StockDailyCollector`, `InvestorFlowCollector`, …), 진입점은 `run()` 하나입니다.
+> 특정 수집기만 돌려야 하면 `python scheduler.py --now` 대신 그 클래스를 임포트해
+> `run()`을 부릅니다 — 수집 범위는 생성자 인자로 줍니다.
 
 ---
 
-## 환경변수 (.env)
+## 설정
+
+비밀값은 `.env`(환경변수)에, 운용 파라미터는 `config.json`에 둡니다. 코드에는 둘 다 없습니다.
 
 ```
 DB_URL=postgresql://...
@@ -325,10 +324,22 @@ KIS_MODE=paper       # paper=DB 시뮬레이션, live=증권사 주문
 DART_API_KEY=...     # opendart.fss.or.kr 무료 발급
 ```
 
-런타임 파라미터(`SLOTS`, `CAPITAL`, `HEAT_AVOID`, `HEAT_SELL`, `STOP_PCT`, `MAX_HOLD_DAYS`)는
-`settings` 테이블에서 60초 캐시로 읽습니다. 대시보드에서 바꾸면 즉시 반영됩니다.
-`settings`에는 폼에 없는 키도 둡니다 — `REBALANCE_EVERY`(`daily` 또는 `monthly`, 기본 `monthly`),
-`CAPITAL_<전략명>`(전략별 자본금),
+```json
+{
+  "costs":    { "SLIP_BPS": 20, "FEE_BPS": 1.5, "TAX_BPS": 20 },
+  "defaults": { "SLOTS": 10, "HEAT_AVOID": 7.0, "HEAT_SELL": 8.5,
+                "MAX_HOLD_DAYS": 20, "STOP_PCT": 0.07, "CAPITAL": 10000000 }
+}
+```
+
+`config.json`은 `config.py`를 임포트할 때 한 번 읽히므로 워커가 뜨는 시점에 로드됩니다.
+바꾸려면 파일을 고치고 스케줄러를 재시작합니다. 파일이 없거나 깨졌으면 그대로 죽습니다 —
+슬리피지나 자본금을 코드 기본값으로 조용히 대신하면 그 값으로 주문이 나갑니다.
+
+`costs`는 런타임 변경 대상이 아닙니다. 백테스트와 실행이 같은 비용 모델을 봐야 합니다.
+`defaults` 6개는 `settings` 테이블에서 60초 캐시로 덮어쓸 수 있고, 대시보드에서 바꾸면
+즉시 반영됩니다. `settings`에는 폼에 없는 키도 둡니다 —
+`REBALANCE_EVERY`(`daily` 또는 `monthly`, 기본 `monthly`), `CAPITAL_<전략명>`(전략별 자본금),
 `INIT_CAPITAL_<모드명>`(계좌에 처음 넣은 원금), `RETIRED_STRATEGIES`(자산 집계에서 제외할 전략,
 쉼표 구분), `LIVE_ENABLED`(실계좌 주문 허용).
 

@@ -439,24 +439,24 @@ def daily_job():
     print(f"[스케줄러] 일일 실행 시작: {today}")
 
     # 1. 일봉 수집
-    from collector.stock_daily import collect as collect_daily
-    collect_daily()
+    from collector.stock_daily import StockDailyCollector
+    StockDailyCollector().run()
 
     # 2. 수급 수집
-    from collector.investor_flow import collect as collect_flow
-    collect_flow()
+    from collector.investor_flow import InvestorFlowCollector
+    InvestorFlowCollector().run()
 
     # 3. 신용잔고 (KIS API)
-    from collector.credit_balance import collect_kis
-    collect_kis()
+    from collector.credit_balance import CreditBalanceCollector
+    CreditBalanceCollector().run()
 
     # 3-1. 공시 (DART) — 마지막 수집일부터 오늘까지 이어받는다
-    from collector.disclosure import collect as collect_disclosure
-    collect_disclosure()
+    from collector.disclosure import DisclosureCollector
+    DisclosureCollector().run()
 
     # 3-2. 재무 (DART) — 분기마다 갱신되지만 전 종목이 40여 회 호출이라 매일 확인한다
-    from collector.financials import collect as collect_financials
-    collect_financials()
+    from collector.financials import FinancialsCollector
+    FinancialsCollector().run()
 
     # 4. 신호 계산
     from processor.signals import compute_for_date

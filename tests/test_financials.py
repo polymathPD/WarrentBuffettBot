@@ -2,7 +2,10 @@
 from datetime import date
 import pytest
 
-from collector import financials as fin
+import config
+from collector.financials import (
+    FinancialsCollector, FIELDS, _amount, latest_period,
+)
 
 
 def _item(corp, fs_div, account, amount):
@@ -10,13 +13,19 @@ def _item(corp, fs_div, account, amount):
             "account_nm": account, "thstrm_amount": amount}
 
 
+def _rows(data, period, by_corp):
+    year, q = period[:4], int(period[-1])
+    reprt = {1: "11013", 2: "11012", 3: "11014", 4: "11011"}[q]
+    return FinancialsCollector(year, reprt).rows(data, by_corp)
+
+
 def test_amount_parsing():
-    assert fin._amount("44,425,929,000,000") == 44425929000000
-    assert fin._amount("-1,234") == -1234
-    assert fin._amount("(1,234)") == -1234
-    assert fin._amount("") is None
-    assert fin._amount("-") is None
-    assert fin._amount(None) is None
+    assert _amount("44,425,929,000,000") == 44425929000000
+    assert _amount("-1,234") == -1234
+    assert _amount("(1,234)") == -1234
+    assert _amount("") is None
+    assert _amount("-") is None
+    assert _amount(None) is None
 
 
 def test_rows_prefers_consolidated_statements():
@@ -28,7 +37,7 @@ def test_rows_prefers_consolidated_statements():
         _item("00126380", "OFS", "영업이익", "20,000"),
     ]}
 
-    rows = fin._rows(data, "2025Q4", {"00126380": "005930"})
+    rows = _rows(data, "2025Q4", {"00126380": "005930"})
 
     assert len(rows) == 1
     code, period, fs_div = rows[0][:3]
@@ -40,7 +49,7 @@ def test_rows_falls_back_to_separate_statements():
     """연결재무제표를 내지 않는 회사는 개별을 쓴다."""
     data = {"list": [_item("00126380", "OFS", "매출액", "200,000")]}
 
-    rows = fin._rows(data, "2025Q4", {"00126380": "005930"})
+    rows = _rows(data, "2025Q4", {"00126380": "005930"})
 
     assert rows[0][2] == "OFS"
     assert rows[0][3] == 200000
@@ -54,8 +63,8 @@ def test_rows_accepts_account_name_variants():
         _item("00126380", "CFS", "법인세차감전 순이익", "700"),   # 저장 대상 아님
     ]}
 
-    rows = fin._rows(data, "2025Q4", {"00126380": "005930"})
-    values = dict(zip(fin.FIELDS, rows[0][3:]))
+    rows = _rows(data, "2025Q4", {"00126380": "005930"})
+    values = dict(zip(FIELDS, rows[0][3:]))
 
     assert values["revenue"] == 1000
     assert values["net_income"] == -500
@@ -65,7 +74,7 @@ def test_rows_accepts_account_name_variants():
 def test_rows_skips_unmapped_companies():
     data = {"list": [_item("99999999", "CFS", "매출액", "1,000")]}
 
-    assert fin._rows(data, "2025Q4", {"00126380": "005930"}) == []
+    assert _rows(data, "2025Q4", {"00126380": "005930"}) == []
 
 
 @pytest.mark.parametrize("today, expected", [
@@ -76,36 +85,37 @@ def test_rows_skips_unmapped_companies():
     (date(2026, 2, 10), ("2024", "11011")),   # 전년도분은 아직 제출 전
 ])
 def test_latest_period_follows_filing_deadlines(today, expected):
-    assert fin.latest_period(today) == expected
+    assert latest_period(today) == expected
 
 
 def test_collect_batches_by_api_limit(mock_db, mocker):
     """100종목 상한에 맞춰 배치를 나눈다 (120종목 -> 2회 호출)."""
-    mocker.patch.object(fin.config, "DART_API_KEY", "dummy")
+    mocker.patch.object(config, "DART_API_KEY", "dummy")
     mock_db.fetchall.return_value = [
         {"code": f"{i:06d}", "dart_corp_code": f"{i:08d}"} for i in range(120)
     ]
-    fetch = mocker.patch.object(fin, "fetch_batch", return_value={"status": "013"})
+    fetch = mocker.patch.object(FinancialsCollector, "fetch_batch",
+                                return_value={"status": "013"})
 
-    fin.collect("2025", "11011")
+    FinancialsCollector("2025", "11011").run()
 
     assert fetch.call_count == 2
     assert len(fetch.call_args_list[0][0][0]) == 100
     assert len(fetch.call_args_list[1][0][0]) == 20
 
 
-def test_collect_rejects_unknown_report_code(mock_db, mocker):
-    mocker.patch.object(fin.config, "DART_API_KEY", "dummy")
-
+def test_collect_rejects_unknown_report_code():
+    """생성자에서 걸러야 한다 — 잘못된 코드로 API를 부르면 기간이 엉킨 채 저장된다."""
     with pytest.raises(ValueError, match="reprt_code"):
-        fin.collect("2025", "99999")
+        FinancialsCollector("2025", "99999")
 
 
 def test_collect_skips_cursor_when_a_batch_fails(mock_db, mocker):
-    mocker.patch.object(fin.config, "DART_API_KEY", "dummy")
+    mocker.patch.object(config, "DART_API_KEY", "dummy")
     mock_db.fetchall.return_value = [{"code": "005930", "dart_corp_code": "00126380"}]
-    mocker.patch.object(fin, "fetch_batch", side_effect=RuntimeError("DART 오류 800"))
+    mocker.patch.object(FinancialsCollector, "fetch_batch",
+                        side_effect=RuntimeError("DART 오류 800"))
 
-    fin.collect("2025", "11011")
+    FinancialsCollector("2025", "11011").run()
 
     assert not any("collect_cursor" in str(c[0][0]) for c in mock_db.execute.call_args_list)

@@ -1,0 +1,15 @@
+{
+  "costs": {
+    "SLIP_BPS": 20,
+    "FEE_BPS": 1.5,
+    "TAX_BPS": 20
+  },
+  "defaults": {
+    "SLOTS": 10,
+    "HEAT_AVOID": 7.0,
+    "HEAT_SELL": 8.5,
+    "MAX_HOLD_DAYS": 20,
+    "STOP_PCT": 0.07,
+    "CAPITAL": 10000000
+  }
+}
