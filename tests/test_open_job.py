@@ -380,3 +380,26 @@ def test_a_half_finished_rebalance_day_is_completed_without_re_ranking(live_run,
 
     assert quality.get_targets.call_args[0][0] == "2026-08-31"
     assert live_run.orders, "목표에 못 미치므로 채워야 한다"
+
+
+def test_the_ledger_is_reconciled_even_when_no_orders_go_out(live_run, mocker, capsys):
+    """회귀: 장부↔잔고 대조는 주문과 무관하므로 건너뛰는 회차에서도 해야 한다.
+
+    2026-09-01 KG케미칼 225주가 실제로 체결됐는데 45초 폴링이 못 봐서 trades에도
+    positions에도 한 줄이 없었다. 증권사 보유와 목표는 10종목으로 일치했으므로
+    다음 회차가 "목표와 일치 - 건너뜀"으로 끝났고, 대조는 주문을 낸 회차 끝에만
+    있어서 장부가 어긋난 채 다음 리밸런싱일까지 남을 뻔했다.
+    """
+    from executor import live
+
+    rec = mocker.patch.object(live, "reconcile_positions", return_value=["001390"])
+    targets = {f"00{i:04d}" for i in range(SLOTS)}
+    mocker.patch.object(scheduler, "_stored_targets", return_value=(targets, "2026-08-31"))
+    holdings = {c: {"name": c, "qty": 100.0, "cur_px": 10_000.0} for c in targets}
+    snap = _snapshot(holdings, 0, 10_000_000, 10_000_000, settled_cash=0)
+
+    live_run(snap, rebal_d="2026-08-31")     # 할 일 없음 → 주문 없이 건너뜀
+
+    assert live_run.orders == [], "주문은 나가면 안 된다"
+    assert rec.called, "건너뛰더라도 잔고 대조는 해야 한다"
+    assert "잔고와 어긋나 바로잡음" in capsys.readouterr().out

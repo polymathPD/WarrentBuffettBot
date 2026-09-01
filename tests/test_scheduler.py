@@ -75,26 +75,37 @@ def test_prev_trading_day_none_when_no_bars(mock_db):
 
 # --- _quality_rebalance_date -------------------------------------------------
 #
-# 체결 규칙이 '기준일 다음 거래일 시가'이므로, 기준일을 전월 마지막 거래일로 두면
-# 체결일이 그 달의 첫 거래일이 된다. research/quality_backtest.rebalance_dates가
-# 같은 규칙을 쓴다 — 한쪽만 고치면 운용과 검증이 조용히 갈라진다.
+# 체결 규칙이 '기준일 다음 거래일 시가'이므로, 기준일을 직전 거래일로 두면 체결일이
+# 오늘이 된다. monthly면 오늘이 그 달의 첫 거래일일 때만 돈다.
+# research/quality_backtest.rebalance_dates가 monthly와 같은 규칙을 쓴다 —
+# 한쪽만 고치면 운용과 검증이 조용히 갈라진다.
+
+
+def _db(mock_db, prev, every=None):
+    """_prev_trading_day와 _rebalance_every가 같은 fetchone을 쓰므로 SQL로 가른다."""
+    def _one(sql, params=None):
+        if "REBALANCE_EVERY" in sql:
+            return {"value": every} if every else None
+        return {"d": prev}
+    mock_db.fetchone.side_effect = _one
+
 
 def test_rebalances_on_the_first_trading_day_of_the_month(mock_db):
     """직전 거래일이 지난달이면 오늘이 이 달의 첫 거래일이다."""
-    mock_db.fetchone.return_value = {"d": date(2026, 8, 31)}
+    _db(mock_db, date(2026, 8, 31))
 
     assert scheduler._quality_rebalance_date("2026-09-01") == "2026-08-31"
 
 
 def test_does_not_rebalance_on_later_days_of_the_month(mock_db):
     """직전 거래일이 같은 달이면 첫 거래일이 이미 지났다."""
-    mock_db.fetchone.return_value = {"d": date(2026, 9, 1)}
+    _db(mock_db, date(2026, 9, 1))
 
     assert scheduler._quality_rebalance_date("2026-09-02") is None
 
 
 def test_first_trading_day_is_found_across_a_year_boundary(mock_db):
-    mock_db.fetchone.return_value = {"d": date(2026, 12, 30)}
+    _db(mock_db, date(2026, 12, 30))
 
     assert scheduler._quality_rebalance_date("2027-01-04") == "2026-12-30"
 
@@ -106,15 +117,34 @@ def test_the_months_first_day_is_not_read_from_todays_bar(mock_db):
     '이 달의 첫 거래일'을 물으면 오늘이 없어 매달 첫 거래일이 통째로 밀린다.
     직전 거래일 하나만 조회해야 한다.
     """
-    mock_db.fetchone.return_value = {"d": date(2026, 8, 31)}
+    _db(mock_db, date(2026, 8, 31))
 
     scheduler._quality_rebalance_date("2026-09-01")
 
-    assert mock_db.fetchone.call_count == 1
-    assert "d < %s::date" in mock_db.fetchone.call_args[0][0]
+    bars = [c for c in mock_db.fetchone.call_args_list if "stock_daily" in c[0][0]]
+    assert len(bars) == 1
+    assert "d < %s::date" in bars[0][0][0]
 
 
 def test_no_rebalance_without_a_previous_trading_day(mock_db):
-    mock_db.fetchone.return_value = {"d": None}
+    _db(mock_db, None)
 
     assert scheduler._quality_rebalance_date("2026-09-01") is None
+
+
+# --- 주기 설정 ---------------------------------------------------------------
+
+def test_daily_setting_rebalances_on_any_trading_day(mock_db):
+    """REBALANCE_EVERY=daily면 달력을 보지 않고 매 거래일 돈다."""
+    _db(mock_db, date(2026, 9, 1), every="daily")
+
+    assert scheduler._quality_rebalance_date("2026-09-02") == "2026-09-01"
+
+
+def test_the_frequency_falls_back_to_monthly(mock_db):
+    """설정이 없으면 백테스트가 검증한 주기로 돌아간다 — 회전 비용을 내는 쪽이
+    기본값이 되면 안 된다."""
+    _db(mock_db, date(2026, 9, 1))          # REBALANCE_EVERY 미설정
+
+    assert scheduler._rebalance_every() == "monthly"
+    assert scheduler._quality_rebalance_date("2026-09-02") is None

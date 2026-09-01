@@ -64,19 +64,36 @@ def _prev_trading_day(today: str):
     return row["d"].strftime("%Y-%m-%d") if row and row["d"] else None
 
 
+def _rebalance_every() -> str:
+    """리밸런싱 주기. settings의 REBALANCE_EVERY, 없으면 'monthly'.
+
+    코드 기본값을 monthly로 두는 이유는 그것이 백테스트가 검증한 주기이기 때문이다.
+    daily는 실행 경로를 매일 밟아 버그를 빨리 드러내려고 켜는 것이고, 회전 비용을
+    대가로 낸다 — 시세만 움직여도 목표 수량(slot_value // 현재가)이 달라지므로
+    2026-09-01 시세로 재보니 하루 약 937원, 연 2.3%였다. 설정이 사라지면 검증된
+    쪽으로 돌아가는 게 맞다.
+    """
+    import db.connection as db
+    row = db.fetchone("SELECT value FROM settings WHERE key = 'REBALANCE_EVERY'")
+    return (row["value"] if row and row["value"] else "monthly").strip().lower()
+
+
 def _quality_rebalance_date(today: str):
     """오늘 시가로 체결할 퀄리티 전략 리밸런싱 기준일.
 
     체결 규칙은 '기준일 다음 거래일 시가'다(research/quality_backtest.py와 동일).
-    기준일을 전월 마지막 거래일로 두면 체결일이 이 달의 첫 거래일이 된다.
+    기준일을 직전 거래일로 두면 체결일이 오늘이 된다.
 
-    오늘이 첫 거래일인지는 직전 거래일이 지난달인지로 판별한다. stock_daily에
-    "이 달의 첫 거래일"을 물어볼 수는 없다 — 오늘 봉은 16:10 배치가 넣으므로
-    리밸런싱이 도는 10:30에는 아직 없고, 그러면 매달 첫 거래일이 통째로 밀린다.
+    monthly면 오늘이 이 달의 첫 거래일일 때만 리밸런싱한다. 오늘이 첫 거래일인지는
+    직전 거래일이 지난달인지로 판별한다 — stock_daily에 "이 달의 첫 거래일"을 물어볼
+    수는 없다. 오늘 봉은 16:10 배치가 넣으므로 리밸런싱이 도는 10:30에는 아직 없고,
+    그러면 매달 첫 거래일이 통째로 밀린다.
     """
     prev = _prev_trading_day(today)
     if prev is None:
         return None
+    if _rebalance_every() == "daily":
+        return prev
     if prev[:7] == today[:7]:      # 같은 달 = 오늘은 첫 거래일이 아니다
         return None
     return prev
@@ -188,6 +205,18 @@ def _open_job():
         except Exception as e:
             print(f"잔고 조회 실패 - 건너뜀: {type(e).__name__} {str(e)[:100]}")
             return
+        # 장부를 잔고에 맞추는 것은 주문이 아니라 정리다. 건너뛰기 판정보다 앞에
+        # 둬야 한다 — 체결이 늦게 잡혀 adjust()가 아무것도 기록하지 못한 종목은
+        # 이 자리에서만 복구된다. 2026-09-01 KG케미칼 225주가 실제로 체결됐는데
+        # 45초 폴링이 못 봐서 trades·positions에 한 줄도 없었고, 증권사 보유와
+        # 목표는 일치했으므로 다음 회차가 그대로 건너뛰었다.
+        try:
+            fixed = live.reconcile_positions(snap, quality.STRATEGY)
+            if fixed:
+                print(f"  잔고와 어긋나 바로잡음: {', '.join(fixed)}")
+        except Exception as e:
+            print(f"  [잔고 대조 실패] {type(e).__name__} {str(e)[:100]}")
+
         codes = set(snap["holdings"])
         empty = not codes
         # 미수(외상매수)는 T+2에 반대매매로 끝난다. 달력을 기다리면 늦는다.
