@@ -463,6 +463,79 @@ def account_snapshot() -> dict:
             "raw_summary": summary}
 
 
+def _last_close(code: str) -> float:
+    row = db.fetchone(
+        "SELECT c FROM stock_daily WHERE code=%s ORDER BY d DESC LIMIT 1", (code,))
+    return float(row["c"]) if row else 0.0
+
+
+def record_today_trades(snapshot: dict, strategy: str) -> int:
+    """잔고와 장부의 차이를 그날의 매매로 기록한다. 기록한 건수를 돌려준다.
+
+    KIS의 thdt_buyqty/thdt_sll_qty는 장 마감 뒤 어느 시점에 bfdy_* 로 넘어간다
+    (2026-09-01 21:30 확인: 그날 산 KG케미칼 225주가 thdt_buyqty=0,
+    bfdy_buy_qty=225였다). 그 경계 시각을 알 수 없으므로 그 필드에 기대지 않는다.
+    positions는 회차마다 잔고에 맞춰지므로 positions(직전 상태)와 잔고(현재)의 차이가
+    그 사이에 일어난 매매이고, 이 차이는 증권사의 날짜 경계와 무관하다.
+
+    전량 매도한 종목은 잔고 응답에서 아예 사라진다(2026-09-01 성우하이텍·일진홀딩스).
+    잔고만 훑으면 그 매도를 못 보므로 positions 쪽에서 시작해야 한다.
+
+    같은 종목을 하루에 사고팔면 순증감만 남는다. 리밸런싱은 한 종목을 한 방향으로만
+    거래하므로 실무상 문제되지 않는다.
+
+    빠진 것을 더하기만 한다. 지우고 다시 쓰면 안 된다 — positions는 낮 동안 이미
+    부분적으로 잔고에 맞춰져 있어서, 차이에는 '아직 기록되지 않은 것'만 남는다.
+    2026-09-01에 그 차이가 KG케미칼 하나였는데 그날 기록 9건을 지우고 1건만 다시
+    써서 나머지가 사라졌다. positions가 곧 '우리가 기록한 것'이므로, 잔고와의 차이가
+    정확히 '기록하지 못한 것'이다.
+
+    차이가 없으면 아무것도 하지 않으므로 여러 번 돌려도 안전하다.
+    """
+    held = snapshot["holdings"]
+    before = {r["code"]: (float(r["qty"]), float(r["entry_px"]), r["name"])
+              for r in db.fetchall(
+                  "SELECT code, name, qty, entry_px FROM positions "
+                  "WHERE strategy=%s AND mode=%s", (strategy, MODE))}
+
+    moves = []
+    for code in sorted(set(before) | set(held)):
+        q0, a0, old_name = before.get(code, (0.0, 0.0, None))
+        h = held.get(code)
+        q1 = h["qty"] if h else 0.0
+        d = q1 - q0
+        if d == 0:
+            continue
+        name = (h["name"] if h else old_name) or code
+        if d > 0:
+            # 매수 단가는 이 종목의 매입평균 변화에서 나온다. 종목 자신의 값만 쓰므로
+            # 다른 종목의 체결이 섞이지 않는다. 신규 편입이면 q0=0이라 매입평균 그대로다.
+            px = (q1 * h["avg_px"] - q0 * a0) / d
+        else:
+            # 매도 단가는 증권사가 종목별로 주지 않는다(계좌 전체 매도금액뿐이라
+            # 귀속이 안 된다). 현재가로 대신하고, 잔고에서 사라진 종목은 마지막 종가로.
+            px = (h["cur_px"] if h else 0.0) or _last_close(code)
+        if px <= 0:
+            print(f"[{MODE} 장부 보류] {code} {name} - 단가를 만들 수 없어 건너뛴다")
+            continue
+        moves.append((code, name, d, px))
+
+    if not moves:
+        return 0
+
+    db.executemany(
+        """INSERT INTO trades (mode, side, code, name, qty, price, amount, strategy,
+                               exit_reason)
+           VALUES %s""",
+        [(MODE, "buy" if d > 0 else "sell", code, name, abs(d), px, px * abs(d),
+          strategy, None if d > 0 else "rebalance") for code, name, d, px in moves])
+
+    for code, name, d, px in moves:
+        print(f"[{MODE} 장부] {code} {name}  {d:+.0f}주 @ {px:,.0f}"
+              + ("" if d > 0 else "  (매도가는 현재가 기준 추정)"))
+    return len(moves)
+
+
 def check_today_ledger(tol: float = 1.0) -> bool:
     """우리 장부의 오늘 합계를 증권사 집계와 맞춰 본다. 어긋나면 그날 안에 알린다.
 

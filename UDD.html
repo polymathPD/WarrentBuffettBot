@@ -196,7 +196,7 @@
     <h2>2. 디렉터리 구조</h2>
     <pre><code>WarrenBuffett/
 ├── config.py               # 전역 설정, DB 기반 런타임 파라미터
-├── scheduler.py            # APScheduler 엔트리 (10:00 valuation_job / 10:30·13:10 open_job / 16:10 daily_job)
+├── scheduler.py            # APScheduler 엔트리 (10:00 평가 / 10:30·13:10 리밸런싱 / 15:40 정산 / 16:10 수집)
 ├── setup_db.py             # DB 초기화 스크립트
 ├── requirements.txt / requirements-dev.txt / pytest.ini
 ├── runtime.txt             # Python 3.11
@@ -269,7 +269,7 @@
 ├── run_backtest_local.py   # 로컬 백테스트 + 검증
 ├── decile_analysis.py      # 분위수 분석
 ├── migrate_from_ref.py     # 외부 참조 DB 이관 (1회성)
-└── tests/                  # pytest 30개 파일 318건 (DB·API 전부 mock)</code></pre>
+└── tests/                  # pytest 31개 파일 328건 (DB·API 전부 mock)</code></pre>
   </section>
 
   <hr class="divider" />
@@ -1220,7 +1220,7 @@ net_return     = sell_price(exit) / buy_price(entry) - 1</code></pre>
 
     <p>DB(<code>db.connection</code>) · Claude API · KIS API · DART API를 전부 mock으로 격리한 순수
     단위 테스트입니다. 실제 네트워크·DB 연결 없이 수 초 내 완료되므로 백필이나 스케줄러가 도는
-    중에도 안전하게 실행할 수 있습니다. <strong>30개 파일 318건.</strong></p>
+    중에도 안전하게 실행할 수 있습니다. <strong>31개 파일 328건.</strong></p>
 
     <pre><code>pip install -r requirements-dev.txt
 pytest tests/ -v</code></pre>
@@ -1344,7 +1344,7 @@ net_return = exit_px / entry_px - 1</code></pre>
 web:    uvicorn dashboard.app:app --host 0.0.0.0 --port $PORT
 worker: python scheduler.py</code></pre>
     <p><code>web</code>(FastAPI)과 <code>worker</code>(APScheduler)가 분리된 dyno에서 독립 실행됩니다.
-    스케줄러는 <code>Asia/Seoul</code> 타임존으로 평일 10:00 / 10:30·13:10 / 16:10 네 작업을 등록합니다.</p>
+    스케줄러는 <code>Asia/Seoul</code> 타임존으로 평일 10:00 / 10:30·13:10 / 15:40 / 16:10 다섯 작업을 등록합니다.</p>
 
     <h3>로컬 개발</h3>
     <pre><code>pip install -r requirements.txt
@@ -1428,7 +1428,7 @@ uvicorn dashboard.app:app --reload        # 대시보드 개발 서버</code></p
       <tr><td>백테스터 · 결과 저장</td><td>backtester/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>연구 스크립트</td><td>research/*.py</td><td><span class="status-prod">운영 중</span></td></tr>
       <tr><td>웹 대시보드</td><td>dashboard/app.py</td><td><span class="status-prod">운영 중</span></td></tr>
-      <tr><td>단위 테스트</td><td>tests/ (318건)</td><td><span class="status-prod">운영 중</span></td></tr>
+      <tr><td>단위 테스트</td><td>tests/ (328건)</td><td><span class="status-prod">운영 중</span></td></tr>
     </table>
   </section>
 

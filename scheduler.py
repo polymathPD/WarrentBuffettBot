@@ -160,6 +160,41 @@ def valuation_job():
     eq_snapshot(today)
 
 
+def settle_job():
+    """장 마감 뒤 장부를 잔고에 맞춘다. 주문은 내지 않는다.
+
+    발주와 확인을 시간축에서 분리한다. KIS 잔고는 체결을 수십 초씩 늦게 반영하는데,
+    주문 직후에 확인하면 그 지연을 이길 수 없다 — 2026-09-01 KG케미칼 225주가
+    실제로 체결됐는데 45초 폴링이 못 봐서 trades에 한 줄도 남지 않았다. 장이 끝난
+    뒤 읽으면 그날의 최종 잔고라 기다릴 이유가 없다.
+
+    발주 회차의 잠금을 함께 쓴다. 주문은 내지 않지만 오늘 거래 기록을 지우고 다시
+    쓰므로, 앞 회차가 아직 주문 중이면 그 기록과 겹친다.
+    """
+    if config.KIS_MODE != "live":
+        print("[정산] KIS_MODE가 live가 아니다 - 건너뜀")
+        return
+    if not _acquire_open_lock():
+        print("[정산] 앞선 회차가 아직 끝나지 않았다 - 건너뜀")
+        return
+    try:
+        from executor import live
+        from strategy import quality
+        try:
+            snap = live.account_snapshot()
+        except Exception as e:
+            print(f"[정산] 잔고 조회 실패 - 건너뜀: {type(e).__name__} {str(e)[:100]}")
+            return
+        print(f"=== 정산 {date.today()} ===")
+        n = live.record_today_trades(snap, quality.STRATEGY)
+        print(f"[정산] 거래 {n}건 기록")
+        fixed = live.reconcile_positions(snap, quality.STRATEGY)
+        if fixed:
+            print(f"[정산] 잔고와 어긋나 바로잡음: {', '.join(fixed)}")
+    finally:
+        _release_open_lock()
+
+
 def open_job():
     """앞선 회차가 아직 돌고 있으면 건너뛴다. 본체는 _open_job()."""
     if not _acquire_open_lock():
@@ -510,6 +545,13 @@ def main(argv: list[str] | None = None) -> None:
     scheduler.add_job(open_job, CronTrigger(
         day_of_week="mon-fri", hour=10, minute=30, timezone="Asia/Seoul"
     ))
+    # 평일 15:40 — 정산. 장 마감(15:30) 직후라 잔고가 그날의 최종값이다.
+    # daily_job(16:10)에 붙이지 않는 이유는 그쪽이 collect_daily()부터 시작하기
+    # 때문이다 — 수집이 13시간 걸린 날이 있었고, 그 뒤에 매달리면 수집이 막히는 날
+    # 장부도 같이 사라진다.
+    scheduler.add_job(settle_job, CronTrigger(
+        day_of_week="mon-fri", hour=15, minute=40, timezone="Asia/Seoul"
+    ))
     # 평일 13:10 — 보정 실행. 하는 일은 같고, 이미 목표에 맞으면 주문이 나가지
     # 않는다(adjust가 차이만 낸다).
     #
@@ -520,7 +562,7 @@ def main(argv: list[str] | None = None) -> None:
     scheduler.add_job(open_job, CronTrigger(
         day_of_week="mon-fri", hour=13, minute=10, timezone="Asia/Seoul"
     ))
-    print("스케줄러 시작 — 평일 10:00 평가 / 10:30·13:10 리밸런싱 / 16:10 수집 (Ctrl+C로 종료)")
+    print("스케줄러 시작 — 평일 10:00 평가 / 10:30·13:10 리밸런싱 / 15:40 정산 / 16:10 수집 (Ctrl+C로 종료)")
     try:
         scheduler.start()
     except KeyboardInterrupt:
