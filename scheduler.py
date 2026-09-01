@@ -68,20 +68,16 @@ def _quality_rebalance_date(today: str):
     """오늘 시가로 체결할 퀄리티 전략 리밸런싱 기준일.
 
     체결 규칙은 '기준일 다음 거래일 시가'다(research/quality_backtest.py와 동일).
-    16:10 배치 시점에는 내일 봉이 없으므로, 오늘 체결할 대상은 '직전 거래일'이고
-    그 직전 거래일이 그 달의 첫 거래일일 때만 리밸런싱한다.
-    """
-    import db.connection as db
+    기준일을 전월 마지막 거래일로 두면 체결일이 이 달의 첫 거래일이 된다.
 
+    오늘이 첫 거래일인지는 직전 거래일이 지난달인지로 판별한다. stock_daily에
+    "이 달의 첫 거래일"을 물어볼 수는 없다 — 오늘 봉은 16:10 배치가 넣으므로
+    리밸런싱이 도는 10:30에는 아직 없고, 그러면 매달 첫 거래일이 통째로 밀린다.
+    """
     prev = _prev_trading_day(today)
     if prev is None:
         return None
-    row = db.fetchone(
-        """SELECT MIN(d) AS d FROM stock_daily
-            WHERE d >= date_trunc('month', %s::date) AND d <= %s::date""",
-        (prev, prev),
-    )
-    if not row or not row["d"] or row["d"].strftime("%Y-%m-%d") != prev:
+    if prev[:7] == today[:7]:      # 같은 달 = 오늘은 첫 거래일이 아니다
         return None
     return prev
 

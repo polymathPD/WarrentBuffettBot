@@ -304,7 +304,7 @@
       <div class="flow-step">
         <div class="num">1</div>
         <div class="body"><strong>리밸런싱일 판정</strong> — <code>_quality_rebalance_date()</code>가 직전 거래일이
-        그 달의 첫 거래일일 때만 기준일을 돌려줍니다. 다만 <strong>보유가 하나도 없거나 계좌가 미수 상태이면</strong>
+        오늘이 그 달의 첫 거래일일 때만(= 직전 거래일이 지난달일 때만) 기준일을 돌려줍니다. 다만 <strong>보유가 하나도 없거나 계좌가 미수 상태이면</strong>
         달력을 무시하고 직전 거래일 기준으로 진행합니다</div>
       </div>
       <div class="flow-connector"></div>
@@ -1281,7 +1281,7 @@ pytest tests/ -v</code></pre>
 
     <h3>quality_v1 편입 체크리스트</h3>
     <ol style="margin: 8px 0 16px 20px; line-height: 2.2;">
-      <li>기준일이 그 달의 첫 거래일 (또는 해당 전략 보유가 0)</li>
+      <li>오늘이 그 달의 첫 거래일 = 기준일(직전 거래일)이 지난달 (또는 해당 전략 보유가 0)</li>
       <li>재무가 <strong>기간종료 + 90일</strong>이 지나 공시된 것</li>
       <li>시가총액 ≥ 3,000억 (시점별 발행주식수 × 종가)</li>
       <li>TTM 순이익 &gt; 0 · TTM 매출 &gt; 0 · 자본총계 &gt; 0</li>

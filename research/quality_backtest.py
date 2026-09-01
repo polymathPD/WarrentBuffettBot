@@ -45,16 +45,28 @@ MONTHLY = tuple(range(1, 13))         # 월별
 
 
 def rebalance_dates(all_dates, start, end, months=REBAL_MONTHS):
-    """리밸런싱 월의 첫 거래일.
+    """리밸런싱 기준일 — 리밸런싱 월 첫 거래일의 직전 거래일(= 전월 마지막 거래일).
+
+    체결은 기준일 다음 거래일 시가(simulate의 fill)이므로 실제 체결일이 그 달의
+    첫 거래일이 된다. 운용의 scheduler._quality_rebalance_date와 같은 규칙이다.
+    기준일을 첫 거래일로 잡으면 체결이 둘째 거래일로 밀린다.
 
     월별로 돌려도 미래 정보는 새지 않는다. 재무는 기간종료+90일 규칙으로 걸러지고,
     매달 바뀌는 것은 가격(=시가총액)뿐이라 PBR·PER 순위만 새로 매겨진다.
     분기 리밸런싱은 3.3년에 구간이 8개뿐이라 무엇도 확정할 수 없었다."""
+    pos = {d: i for i, d in enumerate(all_dates)}
     s = pd.Series(all_dates)
     s = s[(s >= pd.Timestamp(start)) & (s <= pd.Timestamp(end))]
     key = s.dt.year * 100 + s.dt.month
     first = s.groupby(key).min()
-    return sorted(d for d in first if d.month in months)
+    out = []
+    for d in first:
+        if d.month not in months:
+            continue
+        i = pos[d] - 1
+        if i >= 0:                 # 구간 맨 앞 달은 직전 거래일이 없어 건너뛴다
+            out.append(all_dates[i])
+    return sorted(out)
 
 
 def simulate(px, fin, kind, slots, start, end, min_marcap=pb.MIN_MARCAP,

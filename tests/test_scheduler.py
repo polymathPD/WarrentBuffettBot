@@ -71,3 +71,50 @@ def test_prev_trading_day_none_when_no_bars(mock_db):
     mock_db.fetchone.return_value = {"d": None}
 
     assert scheduler._prev_trading_day("2026-08-18") is None
+
+
+# --- _quality_rebalance_date -------------------------------------------------
+#
+# 체결 규칙이 '기준일 다음 거래일 시가'이므로, 기준일을 전월 마지막 거래일로 두면
+# 체결일이 그 달의 첫 거래일이 된다. research/quality_backtest.rebalance_dates가
+# 같은 규칙을 쓴다 — 한쪽만 고치면 운용과 검증이 조용히 갈라진다.
+
+def test_rebalances_on_the_first_trading_day_of_the_month(mock_db):
+    """직전 거래일이 지난달이면 오늘이 이 달의 첫 거래일이다."""
+    mock_db.fetchone.return_value = {"d": date(2026, 8, 31)}
+
+    assert scheduler._quality_rebalance_date("2026-09-01") == "2026-08-31"
+
+
+def test_does_not_rebalance_on_later_days_of_the_month(mock_db):
+    """직전 거래일이 같은 달이면 첫 거래일이 이미 지났다."""
+    mock_db.fetchone.return_value = {"d": date(2026, 9, 1)}
+
+    assert scheduler._quality_rebalance_date("2026-09-02") is None
+
+
+def test_first_trading_day_is_found_across_a_year_boundary(mock_db):
+    mock_db.fetchone.return_value = {"d": date(2026, 12, 30)}
+
+    assert scheduler._quality_rebalance_date("2027-01-04") == "2026-12-30"
+
+
+def test_the_months_first_day_is_not_read_from_todays_bar(mock_db):
+    """오늘 봉으로 판정하면 안 된다.
+
+    리밸런싱은 10:30에 도는데 오늘 일봉은 16:10 배치가 넣는다. stock_daily에
+    '이 달의 첫 거래일'을 물으면 오늘이 없어 매달 첫 거래일이 통째로 밀린다.
+    직전 거래일 하나만 조회해야 한다.
+    """
+    mock_db.fetchone.return_value = {"d": date(2026, 8, 31)}
+
+    scheduler._quality_rebalance_date("2026-09-01")
+
+    assert mock_db.fetchone.call_count == 1
+    assert "d < %s::date" in mock_db.fetchone.call_args[0][0]
+
+
+def test_no_rebalance_without_a_previous_trading_day(mock_db):
+    mock_db.fetchone.return_value = {"d": None}
+
+    assert scheduler._quality_rebalance_date("2026-09-01") is None
