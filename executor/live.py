@@ -220,8 +220,17 @@ def _find_holding(code: str) -> dict | None:
     return None
 
 
-def _today_traded() -> tuple[float, float]:
-    """오늘 누적 매수대금·매도대금. 주문 전후로 읽으면 그 주문의 실제 대금이 나온다.
+def _today_traded() -> tuple[float, float, dict[str, float]]:
+    """오늘 누적 매수대금·매도대금과, 종목별 오늘 매도수량.
+
+    앞의 두 값은 계좌 전체 합계다. 주문 전후로 읽어 차분을 내면 그 주문의 대금이
+    나오지만, 그 사이에 다른 종목이 체결되면 그 대금도 함께 들어온다 — KIS는 체결을
+    비동기로 집계하므로 앞 종목의 체결이 뒤 종목의 구간에 늦게 잡힌다. 2026-09-01
+    리밸런싱에서 일진홀딩스 76주 대금이 대한유화 2주 구간에 섞여, 산출가가
+    583,100원(현재가 98,900원의 5.9배)으로 나왔다.
+
+    세 번째 값이 그 판정용이다. 종목별 thdt_sll_qty는 계좌 합계와 달리 종목 귀속이
+    보장되므로, 이 구간에 다른 종목의 매도수량도 늘었다면 차분을 믿을 수 없다.
 
     모의계좌에는 체결 단가를 주는 API가 없다 — 일별주문체결조회는 rt_cd=0에 빈
     응답이고, 실현손익·기간별매매손익은 '없는 서비스 코드'다. 잔고 요약의 이
@@ -229,8 +238,11 @@ def _today_traded() -> tuple[float, float]:
     """
     b = get_balance()
     summary = (b.get("output2") or [{}])[0]
+    sold = {it["pdno"]: float(it.get("thdt_sll_qty") or 0)
+            for it in b.get("output1", []) if it.get("pdno")}
     return (float(summary.get("thdt_buy_amt") or 0),
-            float(summary.get("thdt_sll_amt") or 0))
+            float(summary.get("thdt_sll_amt") or 0),
+            sold)
 
 
 def _settled_cash() -> float:
@@ -462,7 +474,7 @@ def check_today_ledger(tol: float = 1.0) -> bool:
     thdt_buy_amt / thdt_sll_amt는 증권사가 집계한 값이라 우리 계산이 아니다.
     산출식이 또 틀려도 이 한 줄 비교에는 걸린다.
     """
-    buy_amt, sell_amt = _today_traded()
+    buy_amt, sell_amt, _sold = _today_traded()
     row = db.fetchone(
         """SELECT COALESCE(SUM(CASE WHEN side='buy' THEN amount END), 0) AS b,
                   COALESCE(SUM(CASE WHEN side='sell' THEN amount END), 0) AS s
@@ -611,7 +623,17 @@ def adjust(code: str, name: str, target_qty: int, strategy: str,
         avg_after = float(_field(after, "pchs_avg_pric", code)) if after else 0.0
         delta = cur_qty * avg_after - cur * avg_before
     else:
-        delta = _today_traded()[1] - traded_before[1]
+        traded_after = _today_traded()
+        delta = traded_after[1] - traded_before[1]
+        # 계좌 전체 매도금액은 종목 귀속이 안 된다. 이 구간에 다른 종목도 팔렸다면
+        # 그 대금이 섞여 있으므로 차분을 쓰지 않는다. ±30% 가드만으로는 부족하다 —
+        # 섞인 금액이 작으면 그럴듯한 값이 되어 조용히 통과한다.
+        also = sorted(c for c, q in traded_after[2].items()
+                      if c != code and q > traded_before[2].get(c, 0.0))
+        if also:
+            print(f"[{MODE} 단가 보류] {code} {name} - 같은 구간에 {', '.join(also)}도 "
+                  f"팔려 계좌 매도금액을 이 종목 몫으로 볼 수 없다")
+            delta = 0.0
 
     ref_px = float(snapshot["holdings"].get(code, {}).get("cur_px") or 0.0)
     px = delta / abs(filled) if delta > 0 else 0.0
@@ -627,6 +649,12 @@ def adjust(code: str, name: str, target_qty: int, strategy: str,
     new_qty = cur_qty
     delta = int(target_qty - cur)
 
+    # 원가는 증권사가 계산한 매입평균단가를 그대로 쓴다. 체결가는 이번에 사고판
+    # 가격이라 보유 전체의 원가가 아니다 — 추가 매수하면 그 회차 단가가 원가를
+    # 덮고, 일부만 판 날에는 판 가격이 원가로 들어간다. 대한유화가 실제 원가
+    # 81,794원인데 매도 추정가 98,900원으로 적혀 있었다(2026-09-01).
+    entry_px = float(_field(after, "pchs_avg_pric", code)) if after else px
+
     if new_qty > 0:
         db.execute(
             """INSERT INTO positions (code, strategy, name, entry_date, entry_px, qty,
@@ -635,7 +663,7 @@ def adjust(code: str, name: str, target_qty: int, strategy: str,
                ON CONFLICT (code, strategy, mode) DO UPDATE
                  SET qty = EXCLUDED.qty, entry_px = EXCLUDED.entry_px,
                      agents = COALESCE(EXCLUDED.agents, positions.agents)""",
-            (code, strategy, name, date.today(), px, new_qty, MODE,
+            (code, strategy, name, date.today(), entry_px, new_qty, MODE,
              json.dumps(agents_summary, ensure_ascii=False) if agents_summary else None))
     else:
         db.execute("DELETE FROM positions WHERE code=%s AND strategy=%s AND mode=%s",

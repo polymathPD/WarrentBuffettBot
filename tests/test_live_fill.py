@@ -23,7 +23,7 @@ def broker(mocker, mock_db):
     mock_db.fetchone.return_value = {"c": 10_000.0}
 
     state = {"qty": 0.0, "orders": [], "db": mock_db}
-    mocker.patch.object(live, "_today_traded", return_value=(0.0, 0.0))
+    mocker.patch.object(live, "_today_traded", return_value=(0.0, 0.0, {}))
 
     # 폴링 자체는 여기서 검증하지 않는다 - 잔고가 얼마로 보이는지만 준다.
     mocker.patch.object(
@@ -203,7 +203,7 @@ def test_fill_price_comes_from_the_brokers_daily_total(broker, mocker):
     # 주문 전 (매수 0, 매도 0) → 주문 후 (매수 0, 매도 1,030,000). 현재가 10,000
     # 대비 +3%다 - 국내 주식은 하루 ±30%가 한도라 그 밖의 값은 체결가일 수 없고
     # _PX_SANITY에 걸린다.
-    mocker.patch.object(live, "_today_traded", side_effect=[(0.0, 0.0), (0.0, 1_030_000.0)])
+    mocker.patch.object(live, "_today_traded", side_effect=[(0.0, 0.0, {}), (0.0, 1_030_000.0, {"000000": 100.0})])
 
     def _after(code, expected):
         broker["qty"] = 0.0
@@ -276,7 +276,7 @@ def test_buy_price_ignores_another_stocks_fill(broker, mocker):
     누락됐다. 종목별 매입금액 차분은 이런 끼어듦에 오염되지 않는다.
     """
     mocker.patch.object(live, "_today_traded",
-                        side_effect=[(0.0, 0.0), (3_000_000.0, 0.0)])
+                        side_effect=[(0.0, 0.0, {}), (3_000_000.0, 0.0, {})])
 
     def _after(code, expected):
         broker["qty"] = 100.0
@@ -296,7 +296,7 @@ def test_buy_price_ignores_another_stocks_fill(broker, mocker):
 def test_topping_up_prices_only_the_new_shares(broker, mocker):
     """이미 들고 있는 종목을 더 살 때, 기존 보유분의 매입금액을 빼야 한다."""
     broker["qty"] = 100.0
-    mocker.patch.object(live, "_today_traded", return_value=(0.0, 0.0))
+    mocker.patch.object(live, "_today_traded", return_value=(0.0, 0.0, {}))
 
     def _after(code, expected):
         broker["qty"] = 120.0
@@ -325,7 +325,7 @@ def test_impossible_price_is_rejected(broker, mocker, capsys):
     broker["qty"] = 100.0
     mocker.patch.object(live, "_pending_sell_qty", return_value=0.0)
     mocker.patch.object(live, "_today_traded",
-                        side_effect=[(0.0, 0.0), (0.0, 3_370_000.0)])
+                        side_effect=[(0.0, 0.0, {}), (0.0, 3_370_000.0, {"000000": 100.0})])
 
     def _after(code, expected):
         broker["qty"] = 0.0
@@ -347,7 +347,7 @@ def test_ledger_check_flags_a_mismatch(mocker, mock_db, capsys):
     2026-08-25(매도가가 매입평균가)도 2026-08-26(앞 종목 체결이 섞임)도 이틀 뒤에
     손으로 대조해서 찾았다. 두 번 다 이 비교 하나로 그날 걸렸을 것이다.
     """
-    mocker.patch.object(live, "_today_traded", return_value=(70_760.0, 48_000.0))
+    mocker.patch.object(live, "_today_traded", return_value=(70_760.0, 48_000.0, {}))
     mock_db.fetchone.return_value = {"b": 43_620.0, "s": 48_000.0}
 
     assert live.check_today_ledger() is False
@@ -357,7 +357,7 @@ def test_ledger_check_flags_a_mismatch(mocker, mock_db, capsys):
 
 
 def test_ledger_check_passes_when_totals_agree(mocker, mock_db, capsys):
-    mocker.patch.object(live, "_today_traded", return_value=(70_760.0, 48_000.0))
+    mocker.patch.object(live, "_today_traded", return_value=(70_760.0, 48_000.0, {}))
     mock_db.fetchone.return_value = {"b": 70_760.0, "s": 48_000.0}
 
     assert live.check_today_ledger() is True
@@ -392,3 +392,83 @@ def test_token_retry_backoff_is_short_for_a_timeout(mocker):
     live._get_token()
 
     assert slept == [live._TOKEN_NET_BACKOFF_S], slept
+
+
+def test_a_concurrent_sell_disqualifies_the_account_wide_total(broker, mocker, capsys):
+    """회귀: 같은 구간에 다른 종목도 팔렸으면 계좌 매도금액을 이 종목 몫으로 못 쓴다.
+
+    2026-09-01 리밸런싱이 성우하이텍 → 일진홀딩스 → 대한유화 순으로 팔았는데,
+    일진홀딩스 76주 대금이 KIS 집계에 늦게 반영되어 대한유화 2주 구간에 섞였다.
+    산출가가 583,100원 — 현재가 98,900원의 5.9배였다.
+
+    ±30% 가드만으로는 부족하다. 섞인 금액이 작으면 그럴듯한 값이 되어 조용히
+    통과한다. 종목별 thdt_sll_qty는 귀속이 보장되므로 그것으로 판정한다.
+    """
+    broker["qty"] = 100.0
+    mocker.patch.object(live, "_pending_sell_qty", return_value=0.0)
+    # 이 종목은 100주를 팔았고, 그 사이 999999도 76주 팔렸다.
+    mocker.patch.object(live, "_today_traded", side_effect=[
+        (0.0, 0.0, {"000000": 0.0, "999999": 0.0}),
+        (0.0, 1_100_000.0, {"000000": 100.0, "999999": 76.0}),
+    ])
+
+    def _after(code, expected):
+        broker["qty"] = 0.0
+        return {"pdno": code, "hldg_qty": "0", "pchs_avg_pric": "10000"}, 0.0
+    mocker.patch.object(live, "_wait_for_fill", side_effect=_after)
+
+    live.adjust("000000", "테스트", 0, "quality_v1", _snap(100.0))
+
+    out = capsys.readouterr().out
+    assert "단가 보류" in out and "999999" in out, out
+    ins = [c for c in broker["db"].execute.call_args_list
+           if "INSERT INTO trades" in c[0][0]]
+    assert ins[0][0][1][4] == 10_000.0, "현재가로 대체해야 한다"
+
+
+def test_the_account_wide_total_is_used_when_nothing_else_sold(broker, mocker):
+    """다른 종목이 팔리지 않았으면 계좌 증분이 이 종목 몫이 맞다."""
+    broker["qty"] = 100.0
+    mocker.patch.object(live, "_pending_sell_qty", return_value=0.0)
+    mocker.patch.object(live, "_today_traded", side_effect=[
+        (0.0, 0.0, {"000000": 0.0, "999999": 12.0}),
+        (0.0, 1_030_000.0, {"000000": 100.0, "999999": 12.0}),   # 999999는 그대로
+    ])
+
+    def _after(code, expected):
+        broker["qty"] = 0.0
+        return {"pdno": code, "hldg_qty": "0", "pchs_avg_pric": "10000"}, 0.0
+    mocker.patch.object(live, "_wait_for_fill", side_effect=_after)
+
+    live.adjust("000000", "테스트", 0, "quality_v1", _snap(100.0))
+
+    ins = [c for c in broker["db"].execute.call_args_list
+           if "INSERT INTO trades" in c[0][0]]
+    assert ins[0][0][1][4] == 10_300.0, "1,030,000 / 100주 = 10,300"
+
+
+def test_cost_basis_comes_from_the_broker_not_the_fill_price(broker, mocker):
+    """회귀: entry_px는 이번 체결가가 아니라 증권사의 매입평균단가다.
+
+    추가 매수하면 그 회차 단가가 보유 전체의 원가를 덮고, 일부만 판 날에는 판
+    가격이 원가로 들어간다. 2026-09-01 대한유화는 실제 원가 81,794원인데 매도
+    추정가 98,900원으로 적혀 있었다 — 21% 어긋난 값이 대시보드 손익의 분모였다.
+    """
+    broker["qty"] = 100.0          # 이미 100주 보유 (평균 10,000원)
+
+    def _after(code, expected):
+        broker["qty"] = 120.0
+        # 20주를 12,000원에 더 사서 (1,000,000 + 240,000) / 120 = 10,333.3333.
+        return {"pdno": code, "hldg_qty": "120", "pchs_avg_pric": "10333.3333"}, 120.0
+    mocker.patch.object(live, "_wait_for_fill", side_effect=_after)
+
+    live.adjust("000000", "테스트", 120, "quality_v1", _snap(100.0))
+
+    pos = [c for c in broker["db"].execute.call_args_list
+           if "INSERT INTO positions" in c[0][0]]
+    entry_px = pos[0][0][1][4]
+    assert entry_px == 10_333.3333, f"증권사 매입평균단가여야 한다: {entry_px}"
+
+    trd = [c for c in broker["db"].execute.call_args_list
+           if "INSERT INTO trades" in c[0][0]]
+    assert round(trd[0][0][1][4]) == 12_000, "거래 장부에는 이번 체결가가 남아야 한다"
